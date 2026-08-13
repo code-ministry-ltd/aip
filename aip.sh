@@ -282,6 +282,147 @@ _aip_outfit() {
   printf "Profile '%s' now wears %s\n" "$1" "$2"
 }
 
+_aip_clone() {
+  [ "$#" -eq 2 ] || {
+    _aip_error 'usage: aip clone SOURCE TARGET'
+    return 2
+  }
+  local source_name=$1 target_name=$2 source_path target_path temporary
+  _aip_require_profile "$source_name" || return
+  [ ! -L "$(_aip_profile_path "$source_name")" ] || {
+    _aip_error 'source profile path must not be a symbolic link'
+    return 1
+  }
+  _aip_validate_name "$target_name" || {
+    _aip_error "invalid profile name '$target_name'"
+    return 2
+  }
+  git var GIT_AUTHOR_IDENT >/dev/null 2>&1 || {
+    _aip_error 'Git identity is not configured; set user.name and user.email'
+    return 1
+  }
+  source_path=$(_aip_profile_path "$source_name")
+  target_path=$(_aip_profile_path "$target_name")
+  [ ! -e "$target_path" ] || {
+    _aip_error "destination already exists: $target_path"
+    return 1
+  }
+  temporary=$(mktemp -d "$_AIP_PROFILE_ROOT/.aip-$target_name.XXXXXX") || return
+  rmdir "$temporary" || return
+  if ! git clone --no-hardlinks -q "$source_path" "$temporary" ||
+     ! rm -rf "$temporary/.git" ||
+     ! git -C "$temporary" init -q -b main ||
+     ! git -C "$temporary" add -A ||
+     ! git -C "$temporary" commit -q -m "aip: clone $source_name" ||
+     ! mv "$temporary" "$target_path"; then
+    rm -rf "$temporary"
+    _aip_error "could not clone profile '$source_name'"
+    return 1
+  fi
+  printf "Cloned profile '%s' to '%s' at %s\n" "$source_name" "$target_name" "$target_path"
+}
+
+_aip_has_unfinished_git_operation() {
+  local git_dir=$1/.git
+  [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] ||
+    [ -f "$git_dir/MERGE_HEAD" ] || [ -f "$git_dir/CHERRY_PICK_HEAD" ] ||
+    [ -f "$git_dir/REVERT_HEAD" ] || [ -f "$git_dir/BISECT_START" ]
+}
+
+_aip_delete() {
+  local name=${1-} force=0 path risks= remote_configured=0 default_name=
+  [ -n "$name" ] || {
+    _aip_error 'usage: aip delete NAME [--force]'
+    return 2
+  }
+  shift
+  if [ "${1-}" = --force ] && [ "$#" -eq 1 ]; then force=1; shift; fi
+  [ "$#" -eq 0 ] || {
+    _aip_error 'usage: aip delete NAME [--force]'
+    return 2
+  }
+  _aip_require_profile "$name" || return
+  path=$(_aip_profile_path "$name")
+  [ ! -L "$path" ] || {
+    _aip_error 'profile path must not be a symbolic link'
+    return 1
+  }
+  [ "${AIP_PROFILE-}" != "$name" ] || {
+    _aip_error "cannot delete session profile '$name'; select another profile first"
+    return 1
+  }
+  [ "$(cd "$_AIP_PROFILE_ROOT" && pwd -P)" = "$(cd "${path%/*}" && pwd -P)" ] || {
+    _aip_error 'refusing to delete a profile outside the profile root'
+    return 1
+  }
+
+  [ -z "$(git -C "$path" status --porcelain 2>/dev/null)" ] || risks='uncommitted changes'
+  _aip_has_unfinished_git_operation "$path" && risks="${risks:+$risks, }unfinished Git operation"
+  if git -C "$path" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    [ -z "$(git -C "$path" rev-list '@{upstream}..HEAD')" ] || risks="${risks:+$risks, }unpushed commits"
+  else
+    risks="${risks:+$risks, }unpushed commits (no upstream)"
+  fi
+  [ -z "$(git -C "$path" remote)" ] || remote_configured=1
+
+  if [ "$force" -ne 1 ]; then
+    if [ ! -t 0 ]; then
+      _aip_error "deletion requires confirmation${risks:+ ($risks)}; rerun with --force"
+      return 1
+    fi
+    printf "Delete profile '%s' at %s%s? [y/N] " "$name" "$path" "${risks:+ ($risks)}" >&2
+    local answer
+    IFS= read -r answer || return 1
+    case $answer in y|Y|yes|YES) ;; *) _aip_error 'deletion cancelled'; return 1 ;; esac
+  fi
+
+  default_name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default" 2>/dev/null) || default_name=
+  rm -rf -- "$path" || return
+  if [ "$default_name" = "$name" ]; then rm -f "$_AIP_PROFILE_ROOT/.default" || return; fi
+  printf 'Deleted %s; ' "$path"
+  if [ "$remote_configured" -eq 1 ]; then
+    printf 'recoverable from its configured Git remote.\n'
+  else
+    printf 'no configured remote is available for recovery.\n'
+  fi
+}
+
+_aip_doctor() {
+  [ "$#" -le 1 ] || {
+    _aip_error 'usage: aip doctor [NAME]'
+    return 2
+  }
+  _aip_resolve_profile "${1-}" || return
+  local path link pair expected errors=0 harness
+  path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
+  if [ -L "$path" ]; then printf 'ERROR: profile path must not be a symbolic link\n'; errors=1; fi
+  command -v git >/dev/null 2>&1 || { printf 'ERROR: Git was not found\n'; errors=1; }
+  git var GIT_AUTHOR_IDENT >/dev/null 2>&1 || { printf 'ERROR: configure Git user.name and user.email\n'; errors=1; }
+  git -C "$path" status --porcelain >/dev/null 2>&1 || { printf 'ERROR: profile Git repository is unreadable\n'; errors=1; }
+
+  for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
+    link=${pair%%:*}
+    expected=${pair#*:}
+    if [ ! -L "$path/$link" ] || [ "$(readlink "$path/$link" 2>/dev/null)" != "$expected" ]; then
+      printf 'ERROR: %s should link to %s\n' "$link" "$expected"
+      errors=1
+    fi
+  done
+  for link in .aip/outfit .gitignore AGENTS.md claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+    if [ ! -f "$path/$link" ]; then printf 'ERROR: required file is missing: %s\n' "$link"; errors=1; fi
+  done
+  if [ "$errors" -eq 0 ]; then printf 'OK: profile layout and links\n'; fi
+
+  for harness in claude codex pi opencode; do
+    if _aip_find_real_command "$harness" >/dev/null 2>&1; then
+      printf 'OK: %s executable found\n' "$harness"
+    else
+      printf 'WARN: %s executable was not found; install it before using this wrapper\n' "$harness"
+    fi
+  done
+  [ "$errors" -eq 0 ]
+}
+
 _aip_list() {
   [ "$#" -eq 0 ] || {
     _aip_error 'usage: aip list'
@@ -442,7 +583,10 @@ aip() {
   shift
   case $command in
     create) _aip_create "$@" ;;
+    clone) _aip_clone "$@" ;;
     default) _aip_default "$@" ;;
+    delete) _aip_delete "$@" ;;
+    doctor) _aip_doctor "$@" ;;
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
     outfit) _aip_outfit "$@" ;;
