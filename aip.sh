@@ -19,8 +19,7 @@ _aip_validate_name() {
 _aip_validate_outfit() {
   [ -n "${1-}" ] && [ "${#1}" -le 64 ] || return 1
   case $1 in
-    *'
-'*|*''*) return 1 ;;
+    *[[:cntrl:]]*) return 1 ;;
   esac
 }
 
@@ -42,6 +41,28 @@ _aip_read_name_file() {
   printf '%s\n' "$first"
 }
 
+_aip_read_outfit() {
+  local outfit
+  outfit=$(cat "$1" 2>/dev/null) || return 1
+  _aip_validate_outfit "$outfit" || return 1
+  printf '%s\n' "$outfit"
+}
+
+_aip_find_project_marker() {
+  local dir=$PWD parent
+  while :; do
+    if [ -e "$dir/.aip-profile" ]; then
+      _AIP_PROJECT_MARKER=$dir/.aip-profile
+      _AIP_PROJECT_NAME=$(_aip_read_name_file "$_AIP_PROJECT_MARKER") || return 2
+      return 0
+    fi
+    [ "$dir" = / ] && return 1
+    parent=${dir%/*}
+    [ -n "$parent" ] || parent=/
+    dir=$parent
+  done
+}
+
 _aip_require_profile() {
   local name=$1 path
   _aip_validate_name "$name" || {
@@ -60,7 +81,7 @@ _aip_require_profile() {
 }
 
 _aip_resolve_profile() {
-  local explicit=${1-} marker dir parent name
+  local explicit=${1-} name
 
   if [ -n "$explicit" ]; then
     _aip_require_profile "$explicit" || return
@@ -76,24 +97,19 @@ _aip_resolve_profile() {
     return 0
   fi
 
-  dir=$PWD
-  while :; do
-    marker=$dir/.aip-profile
-    if [ -e "$marker" ]; then
-      name=$(_aip_read_name_file "$marker") || {
-        _aip_error "invalid project marker '$marker'"
-        return 2
-      }
-      _aip_require_profile "$name" || return
-      _AIP_RESOLVED_NAME=$name
-      _AIP_RESOLVED_SOURCE="project ($marker)"
+  _aip_find_project_marker
+  case $? in
+    0)
+      _aip_require_profile "$_AIP_PROJECT_NAME" || return
+      _AIP_RESOLVED_NAME=$_AIP_PROJECT_NAME
+      _AIP_RESOLVED_SOURCE="project ($_AIP_PROJECT_MARKER)"
       return 0
-    fi
-    [ "$dir" = / ] && break
-    parent=${dir%/*}
-    [ -n "$parent" ] || parent=/
-    dir=$parent
-  done
+      ;;
+    2)
+      _aip_error "invalid project marker '$_AIP_PROJECT_MARKER'"
+      return 2
+      ;;
+  esac
 
   if [ -e "$_AIP_PROFILE_ROOT/.default" ]; then
     name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default") || {
@@ -199,6 +215,107 @@ _aip_which() {
   _aip_profile_path "$_AIP_RESOLVED_NAME"
 }
 
+_aip_write_marker() {
+  local destination=$1 name=$2 temporary
+  temporary=$(mktemp "${destination}.XXXXXX") || return
+  if ! printf '%s\n' "$name" >"$temporary" || ! mv "$temporary" "$destination"; then
+    rm -f "$temporary"
+    return 1
+  fi
+}
+
+_aip_default() {
+  [ "$#" -le 1 ] || {
+    _aip_error 'usage: aip default [NAME]'
+    return 2
+  }
+  if [ "$#" -eq 0 ]; then
+    _aip_read_name_file "$_AIP_PROFILE_ROOT/.default" || {
+      _aip_error 'no default profile is set'
+      return 1
+    }
+    return
+  fi
+  _aip_require_profile "$1" || return
+  mkdir -p "$_AIP_PROFILE_ROOT" || return
+  _aip_write_marker "$_AIP_PROFILE_ROOT/.default" "$1" || return
+  printf "Default profile is now '%s'\n" "$1"
+}
+
+_aip_local() {
+  [ "$#" -le 1 ] || {
+    _aip_error 'usage: aip local [NAME|--remove]'
+    return 2
+  }
+  if [ "$#" -eq 0 ]; then
+    _aip_read_name_file "$PWD/.aip-profile" || {
+      _aip_error 'no profile marker exists in the current directory'
+      return 1
+    }
+    return
+  fi
+  if [ "$1" = --remove ]; then
+    [ -e "$PWD/.aip-profile" ] || {
+      _aip_error 'no profile marker exists in the current directory'
+      return 1
+    }
+    rm -f "$PWD/.aip-profile" || return
+    printf 'Removed %s/.aip-profile\n' "$PWD"
+    return
+  fi
+  _aip_require_profile "$1" || return
+  _aip_write_marker "$PWD/.aip-profile" "$1" || return
+  printf "This directory now uses profile '%s'\n" "$1"
+}
+
+_aip_outfit() {
+  [ "$#" -eq 2 ] || {
+    _aip_error 'usage: aip outfit NAME OUTFIT'
+    return 2
+  }
+  _aip_require_profile "$1" || return
+  _aip_validate_outfit "$2" || {
+    _aip_error 'outfit must be one printable, non-empty line of at most 64 characters'
+    return 2
+  }
+  printf '%s\n' "$2" >"$(_aip_profile_path "$1")/.aip/outfit" || return
+  printf "Profile '%s' now wears %s\n" "$1" "$2"
+}
+
+_aip_list() {
+  [ "$#" -eq 0 ] || {
+    _aip_error 'usage: aip list'
+    return 2
+  }
+  local path name outfit tags default_name= project_name= found=0
+  default_name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default" 2>/dev/null) || default_name=
+  if _aip_find_project_marker 2>/dev/null; then project_name=$_AIP_PROJECT_NAME; fi
+  for path in "$_AIP_PROFILE_ROOT"/*; do
+    [ -d "$path/.git" ] || continue
+    name=${path##*/}
+    _aip_validate_name "$name" || continue
+    outfit=$(_aip_read_outfit "$path/.aip/outfit") || outfit='invalid outfit'
+    tags=
+    [ "${AIP_PROFILE-}" = "$name" ] && tags="$tags [session]"
+    [ "$project_name" = "$name" ] && tags="$tags [project]"
+    [ "$default_name" = "$name" ] && tags="$tags [default]"
+    printf '%s — %s%s\n' "$name" "$outfit" "$tags"
+    found=1
+  done
+  [ "$found" -eq 1 ] || printf 'No profiles. Create one with: aip create NAME\n'
+}
+
+_aip_git_summary() {
+  local path=$1 state upstream
+  if [ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]; then state=changes; else state=clean; fi
+  if git -C "$path" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    upstream=$(git -C "$path" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) || upstream=upstream
+  else
+    upstream='local only'
+  fi
+  printf '%s, %s\n' "$state" "$upstream"
+}
+
 _aip_status() {
   [ "$#" -eq 0 ] || {
     _aip_error "unknown option '$1'"
@@ -207,9 +324,10 @@ _aip_status() {
   _aip_resolve_profile '' || return
   local path outfit harness availability
   path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
-  outfit=$(cat "$path/.aip/outfit" 2>/dev/null) || outfit=unknown
+  outfit=$(_aip_read_outfit "$path/.aip/outfit") || outfit='invalid outfit'
   printf '🐵 %s — %s\n' "$_AIP_RESOLVED_NAME" "$outfit"
   printf 'Selected by: %s\nPath: %s\n' "$_AIP_RESOLVED_SOURCE" "$path"
+  printf 'Git: %s' "$(_aip_git_summary "$path")"
   printf 'Harnesses:'
   for harness in claude codex pi opencode; do
     if _aip_find_real_command "$harness" >/dev/null 2>&1; then availability=available; else availability=missing; fi
@@ -324,6 +442,10 @@ aip() {
   shift
   case $command in
     create) _aip_create "$@" ;;
+    default) _aip_default "$@" ;;
+    list) _aip_list "$@" ;;
+    local) _aip_local "$@" ;;
+    outfit) _aip_outfit "$@" ;;
     run) _aip_run "$@" ;;
     use) _aip_use "$@" ;;
     which) _aip_which "$@" ;;
