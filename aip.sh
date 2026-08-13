@@ -1,0 +1,348 @@
+# aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
+
+: "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
+
+_aip_error() {
+  printf 'aip: %s\n' "$*" >&2
+}
+
+_aip_validate_name() {
+  case ${1-} in
+    ''|*[!a-z0-9_-]*|-*|_*|*-|*_) return 1 ;;
+  esac
+  [ "${#1}" -le 64 ] || return 1
+  case $1 in
+    *..*) return 1 ;;
+  esac
+}
+
+_aip_validate_outfit() {
+  [ -n "${1-}" ] && [ "${#1}" -le 64 ] || return 1
+  case $1 in
+    *'
+'*|*''*) return 1 ;;
+  esac
+}
+
+_aip_profile_path() {
+  printf '%s/%s\n' "$_AIP_PROFILE_ROOT" "$1"
+}
+
+_aip_read_name_file() {
+  [ -f "$1" ] || return 1
+  local first extra
+  {
+    IFS= read -r first || [ -n "$first" ] || return 1
+    if IFS= read -r extra; then
+      return 1
+    fi
+  } <"$1"
+  first=${first%"$(printf '\r')"}
+  _aip_validate_name "$first" || return 1
+  printf '%s\n' "$first"
+}
+
+_aip_require_profile() {
+  local name=$1 path
+  _aip_validate_name "$name" || {
+    _aip_error "invalid profile name '$name'"
+    return 2
+  }
+  path=$(_aip_profile_path "$name")
+  [ -d "$path" ] || {
+    _aip_error "profile '$name' does not exist"
+    return 2
+  }
+  [ -d "$path/.git" ] || {
+    _aip_error "profile '$name' is not a Git repository; run 'aip doctor $name'"
+    return 2
+  }
+}
+
+_aip_resolve_profile() {
+  local explicit=${1-} marker dir parent name
+
+  if [ -n "$explicit" ]; then
+    _aip_require_profile "$explicit" || return
+    _AIP_RESOLVED_NAME=$explicit
+    _AIP_RESOLVED_SOURCE=explicit
+    return 0
+  fi
+
+  if [ -n "${AIP_PROFILE-}" ]; then
+    _aip_require_profile "$AIP_PROFILE" || return
+    _AIP_RESOLVED_NAME=$AIP_PROFILE
+    _AIP_RESOLVED_SOURCE=session
+    return 0
+  fi
+
+  dir=$PWD
+  while :; do
+    marker=$dir/.aip-profile
+    if [ -e "$marker" ]; then
+      name=$(_aip_read_name_file "$marker") || {
+        _aip_error "invalid project marker '$marker'"
+        return 2
+      }
+      _aip_require_profile "$name" || return
+      _AIP_RESOLVED_NAME=$name
+      _AIP_RESOLVED_SOURCE="project ($marker)"
+      return 0
+    fi
+    [ "$dir" = / ] && break
+    parent=${dir%/*}
+    [ -n "$parent" ] || parent=/
+    dir=$parent
+  done
+
+  if [ -e "$_AIP_PROFILE_ROOT/.default" ]; then
+    name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default") || {
+      _aip_error "invalid default profile marker '$_AIP_PROFILE_ROOT/.default'"
+      return 2
+    }
+    _aip_require_profile "$name" || return
+    _AIP_RESOLVED_NAME=$name
+    _AIP_RESOLVED_SOURCE=default
+    return 0
+  fi
+
+  _aip_error "no profile selected; run 'aip create NAME' then 'aip use NAME'"
+  return 2
+}
+
+_aip_write_profile_files() {
+  local path=$1 outfit=$2
+  mkdir -p "$path/.aip" "$path/skills" "$path/claude" "$path/codex" "$path/pi" "$path/opencode" || return
+  printf '%s\n' "$outfit" >"$path/.aip/outfit" || return
+  printf '%s\n' '# Common profile instructions' >"$path/AGENTS.md" || return
+  printf '%s\n' '@../AGENTS.md' '' '# Claude Code instructions' >"$path/claude/CLAUDE.md" || return
+  printf '%s\n' '# Codex instructions' >"$path/codex/instructions.md" || return
+  printf '%s\n' '# Pi instructions' >"$path/pi/APPEND_SYSTEM.md" || return
+  printf '%s\n' '# aip-managed runtime exclusions' '.aip/sync.lock/' >"$path/.gitignore" || return
+  ln -s ../skills "$path/claude/skills" || return
+  ln -s ../AGENTS.md "$path/codex/AGENTS.md" || return
+  ln -s ../skills "$path/codex/skills" || return
+  ln -s ../AGENTS.md "$path/pi/AGENTS.md" || return
+  ln -s ../skills "$path/pi/skills" || return
+  ln -s ../AGENTS.md "$path/opencode/AGENTS.md" || return
+  ln -s ../skills "$path/opencode/skills" || return
+}
+
+_aip_create() {
+  local name=${1-} outfit=plain destination temporary
+  [ -n "$name" ] || {
+    _aip_error 'usage: aip create NAME [--outfit OUTFIT]'
+    return 2
+  }
+  shift
+  if [ "${1-}" = --outfit ] && [ "$#" -eq 2 ]; then
+    outfit=$2
+    shift 2
+  fi
+  [ "$#" -eq 0 ] || {
+    _aip_error 'usage: aip create NAME [--outfit OUTFIT]'
+    return 2
+  }
+  _aip_validate_name "$name" || {
+    _aip_error "invalid profile name '$name'"
+    return 2
+  }
+  _aip_validate_outfit "$outfit" || {
+    _aip_error 'outfit must be one non-empty line of at most 64 characters'
+    return 2
+  }
+  command -v git >/dev/null 2>&1 || {
+    _aip_error 'Git is required'
+    return 1
+  }
+  git var GIT_AUTHOR_IDENT >/dev/null 2>&1 || {
+    _aip_error "Git identity is not configured; set user.name and user.email"
+    return 1
+  }
+
+  mkdir -p "$_AIP_PROFILE_ROOT" || return
+  destination=$(_aip_profile_path "$name")
+  [ ! -e "$destination" ] || {
+    _aip_error "destination already exists: $destination"
+    return 1
+  }
+  temporary=$(mktemp -d "$_AIP_PROFILE_ROOT/.aip-$name.XXXXXX") || return
+  if ! _aip_write_profile_files "$temporary" "$outfit" ||
+     ! git -C "$temporary" init -q -b main ||
+     ! git -C "$temporary" add .aip/outfit .gitignore AGENTS.md skills claude/CLAUDE.md claude/skills codex/AGENTS.md codex/instructions.md codex/skills pi/AGENTS.md pi/APPEND_SYSTEM.md pi/skills opencode/AGENTS.md opencode/skills ||
+     ! git -C "$temporary" commit -q -m 'aip: create profile' ||
+     ! mv "$temporary" "$destination"; then
+    rm -rf "$temporary"
+    _aip_error "could not create profile '$name'"
+    return 1
+  fi
+  printf "Created profile '%s' at %s\n" "$name" "$destination"
+}
+
+_aip_use() {
+  [ "$#" -eq 1 ] || {
+    _aip_error 'usage: aip use NAME'
+    return 2
+  }
+  _aip_require_profile "$1" || return
+  AIP_PROFILE=$1
+  export AIP_PROFILE
+  printf "Using profile '%s' for this shell\n" "$1"
+}
+
+_aip_which() {
+  [ "$#" -le 1 ] || {
+    _aip_error 'usage: aip which [NAME]'
+    return 2
+  }
+  _aip_resolve_profile "${1-}" || return
+  _aip_profile_path "$_AIP_RESOLVED_NAME"
+}
+
+_aip_status() {
+  [ "$#" -eq 0 ] || {
+    _aip_error "unknown option '$1'"
+    return 2
+  }
+  _aip_resolve_profile '' || return
+  local path outfit harness availability
+  path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
+  outfit=$(cat "$path/.aip/outfit" 2>/dev/null) || outfit=unknown
+  printf '🐵 %s — %s\n' "$_AIP_RESOLVED_NAME" "$outfit"
+  printf 'Selected by: %s\nPath: %s\n' "$_AIP_RESOLVED_SOURCE" "$path"
+  printf 'Harnesses:'
+  for harness in claude codex pi opencode; do
+    if _aip_find_real_command "$harness" >/dev/null 2>&1; then availability=available; else availability=missing; fi
+    printf ' %s=%s' "$harness" "$availability"
+  done
+  printf '\n'
+}
+
+_aip_is_harness() {
+  case ${1-} in
+    claude|codex|pi|opencode) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_aip_find_real_command() {
+  local name=$1 remaining directory candidate
+  remaining=${_AIP_REAL_PATH-${PATH-}}:
+  while [ -n "$remaining" ]; do
+    directory=${remaining%%:*}
+    remaining=${remaining#*:}
+    [ -n "$directory" ] || directory=.
+    candidate=$directory/$name
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_aip_sync_profile() {
+  # The local/remote Git lifecycle is added as its own tested slice.
+  return 0
+}
+
+_aip_run_harness() (
+  local explicit=$1 harness=$2 profile_path real child_status instructions
+  shift 2
+
+  _aip_is_harness "$harness" || {
+    _aip_error "unknown harness '$harness'; expected claude, codex, pi, or opencode"
+    return 2
+  }
+  _aip_resolve_profile "$explicit" || return
+  profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
+  real=$(_aip_find_real_command "$harness") || {
+    _aip_error "$harness executable was not found in PATH"
+    return 127
+  }
+  _aip_sync_profile "$profile_path" before || return
+
+  case $harness in
+    claude)
+      CLAUDE_CONFIG_DIR=$profile_path/claude
+      export CLAUDE_CONFIG_DIR
+      "$real" "$@"
+      child_status=$?
+      ;;
+    codex)
+      CODEX_HOME=$profile_path/codex
+      export CODEX_HOME
+      instructions=$(cat "$profile_path/codex/instructions.md") || return
+      "$real" -c "developer_instructions=$instructions" "$@"
+      child_status=$?
+      ;;
+    pi)
+      PI_CODING_AGENT_DIR=$profile_path/pi
+      export PI_CODING_AGENT_DIR
+      "$real" "$@"
+      child_status=$?
+      ;;
+    opencode)
+      OPENCODE_CONFIG_DIR=$profile_path/opencode
+      export OPENCODE_CONFIG_DIR
+      "$real" "$@"
+      child_status=$?
+      ;;
+  esac
+
+  _aip_sync_profile "$profile_path" after || :
+  return "$child_status"
+)
+
+_aip_run() {
+  [ "$#" -ge 1 ] || {
+    _aip_error 'usage: aip run [NAME] HARNESS [ARGS...]'
+    return 2
+  }
+  local explicit= harness
+  if _aip_is_harness "$1"; then
+    harness=$1
+    shift
+  else
+    [ "$#" -ge 2 ] || {
+      _aip_error "unknown harness '$1'; expected claude, codex, pi, or opencode"
+      return 2
+    }
+    explicit=$1
+    harness=$2
+    shift 2
+  fi
+  _aip_run_harness "$explicit" "$harness" "$@"
+}
+
+aip() {
+  if [ "$#" -eq 0 ]; then
+    _aip_status
+    return
+  fi
+  local command=$1
+  shift
+  case $command in
+    create) _aip_create "$@" ;;
+    run) _aip_run "$@" ;;
+    use) _aip_use "$@" ;;
+    which) _aip_which "$@" ;;
+    *) _aip_error "unknown command '$command'"; return 2 ;;
+  esac
+}
+
+claude() {
+  _aip_run_harness '' claude "$@"
+}
+
+codex() {
+  _aip_run_harness '' codex "$@"
+}
+
+pi() {
+  _aip_run_harness '' pi "$@"
+}
+
+opencode() {
+  _aip_run_harness '' opencode "$@"
+}
