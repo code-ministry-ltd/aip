@@ -55,6 +55,21 @@ setup() {
   grep -F "CLAUDE_CONFIG_DIR=$_AIP_PROFILE_ROOT/work/claude" "$FAKE_CAPTURE"
 }
 
+@test "after-run sync failure never replaces the child exit status" {
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'printf "credential material\n" > "$CLAUDE_CONFIG_DIR/../codex/auth.json"'
+    printf '%s\n' 'git -C "$CLAUDE_CONFIG_DIR/.." add -f codex/auth.json'
+    printf '%s\n' 'exit 37'
+  } >"$FAKE_BIN/claude"
+  chmod +x "$FAKE_BIN/claude"
+
+  run claude
+
+  [ "$status" -eq 37 ]
+  [[ "$output" == *'forbidden credential or runtime path is tracked'* ]]
+}
+
 @test "aip run accepts an explicit profile before the harness" {
   create_profile personal
 

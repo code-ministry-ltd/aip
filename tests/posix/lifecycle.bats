@@ -7,17 +7,18 @@ setup() {
   create_profile work suit
 }
 
-@test "clone creates an isolated profile from tracked HEAD content" {
+@test "clone checkpoints safe source changes, then creates an isolated profile from tracked HEAD" {
   printf 'committed instructions\n' >"$_AIP_PROFILE_ROOT/work/AGENTS.md"
   git -C "$_AIP_PROFILE_ROOT/work" add AGENTS.md
   git -C "$_AIP_PROFILE_ROOT/work" commit -q -m 'customise source'
+  printf 'checkpointed instructions\n' >"$_AIP_PROFILE_ROOT/work/AGENTS.md"
   printf 'runtime only\n' >"$_AIP_PROFILE_ROOT/work/claude/session.json"
   git -C "$_AIP_PROFILE_ROOT/work" remote add origin "$BATS_TEST_TMPDIR/not-a-real-remote"
 
   run aip clone work client-copy
 
   [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/client-copy/AGENTS.md")" = 'committed instructions' ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/client-copy/AGENTS.md")" = 'checkpointed instructions' ]
   [ ! -e "$_AIP_PROFILE_ROOT/client-copy/claude/session.json" ]
   [ -z "$(git -C "$_AIP_PROFILE_ROOT/client-copy" remote)" ]
   [ "$(git -C "$_AIP_PROFILE_ROOT/client-copy" rev-list --count HEAD)" -eq 1 ]
@@ -95,3 +96,28 @@ setup() {
   [[ "$output" == *'ERROR: codex/skills should link to ../skills'* ]]
 }
 
+@test "doctor fails when a known credential file is tracked" {
+  printf 'credential material\n' >"$_AIP_PROFILE_ROOT/work/codex/auth.json"
+  git -C "$_AIP_PROFILE_ROOT/work" add -f codex/auth.json
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'ERROR: remove forbidden tracked content'* ]]
+}
+
+@test "doctor reports a stale lock without changing it and sync later removes it" {
+  mkdir "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock"
+  printf '99999999\n' >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/pid"
+  hostname >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/host"
+  printf 'old\n' >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/token"
+
+  run aip doctor work
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'WARN: stale sync lock found'* ]]
+  [ -d "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock" ]
+
+  run aip sync work
+  [ "$status" -eq 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock" ]
+}
