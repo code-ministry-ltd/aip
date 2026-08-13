@@ -33,12 +33,8 @@ setup() {
 
   codex -c 'developer_instructions=user override' prompt >/dev/null
 
-  mapfile -t args < <(grep '^arg=' "$FAKE_CAPTURE")
-  [ "${args[0]}" = 'arg=-c' ]
-  [ "${args[1]}" = 'arg=developer_instructions=Codex only — keep this text.' ]
-  [ "${args[2]}" = 'arg=-c' ]
-  [ "${args[3]}" = 'arg=developer_instructions=user override' ]
-  [ "${args[4]}" = 'arg=prompt' ]
+  expected=$(printf '%s\n' 'arg=-c' 'arg=developer_instructions=Codex only — keep this text.' 'arg=-c' 'arg=developer_instructions=user override' 'arg=prompt')
+  [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
 }
 
 @test "wrapper restores a pre-existing selector and returns the child status" {

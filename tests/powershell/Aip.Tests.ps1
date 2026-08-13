@@ -374,4 +374,28 @@ Describe 'Git checkpoint and sync' {
         (Get-Content (Join-Path $lock 'token') -Raw).Trim() | Should -Be 'held-by-test'
     }
 }
+
+Describe 'installer' {
+    It 'installs per-user without duplicating or replacing unrelated profile content' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        'Set-Variable KeepThis yes' | Set-Content -LiteralPath $profilePath
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            Test-Path (Join-Path $installRoot 'aip.ps1') | Should -BeTrue
+            $content = Get-Content -LiteralPath $profilePath -Raw
+            $content | Should -Match 'Set-Variable KeepThis yes'
+            ([regex]::Matches($content, '(?m)^# >>> aip >>>$')).Count | Should -Be 1
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+}
 }
