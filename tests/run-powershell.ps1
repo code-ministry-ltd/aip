@@ -19,9 +19,9 @@ New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
 $configuration = New-PesterConfiguration
 $configuration.Run.Path = Join-Path $PSScriptRoot 'powershell'
 $configuration.Run.Exit = $true
+if ($env:AIP_PESTER_FILTER) { $configuration.Filter.FullName = $env:AIP_PESTER_FILTER }
 $configuration.TestResult.Enabled = $true
 $configuration.TestResult.OutputFormat = 'NUnitXml'
 $configuration.TestResult.OutputPath = Join-Path $resultsDirectory 'pester.xml'
 
 Invoke-Pester -Configuration $configuration
-

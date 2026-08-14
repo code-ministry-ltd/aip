@@ -1,9 +1,8 @@
 $global:LASTEXITCODE = 0
 
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    [Console]::Error.WriteLine('aip: PowerShell 7 or later is required')
+if ($PSVersionTable.PSVersion -lt [version]'7.3') {
     $global:LASTEXITCODE = 1
-    return
+    throw 'aip: PowerShell 7.3 or later is required'
 }
 
 $sourceFile = Join-Path $PSScriptRoot 'aip.ps1'
@@ -32,8 +31,8 @@ try {
     $quotedSource = $installedFile.Replace("'", "''")
     $sourceLine = ". '$quotedSource'"
     $profileContent = Get-Content -LiteralPath $shellProfile -Raw
-    if ($profileContent -match '(?m)^# >>> aip >>>$') {
-        if ($profileContent -notmatch "(?m)^$([regex]::Escape($sourceLine))$" -or $profileContent -notmatch '(?m)^# <<< aip <<<$') {
+    if ($profileContent -match '(?m)^# >>> aip >>>\r?$') {
+        if ($profileContent -notmatch "(?m)^$([regex]::Escape($sourceLine))\r?$" -or $profileContent -notmatch '(?m)^# <<< aip <<<\r?$') {
             throw 'an existing aip profile block is not recognised; remove it manually and retry'
         }
     }
@@ -45,7 +44,6 @@ try {
     Write-Output "Installed aip. Restart PowerShell or run: $sourceLine"
 }
 catch {
-    [Console]::Error.WriteLine("aip: $($_.Exception.Message)")
     $global:LASTEXITCODE = 1
+    throw [InvalidOperationException]::new("aip: $($_.Exception.Message)", $_.Exception)
 }
-

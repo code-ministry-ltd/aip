@@ -9,7 +9,7 @@ Each profile is an ordinary directory under `~/agent-profiles`. It has one commo
 ## Requirements
 
 - Git, with `user.name` and `user.email` configured.
-- macOS, Linux or WSL with Bash/Zsh; or native Windows with PowerShell 7+, Git for Windows and Developer Mode enabled for symbolic links.
+- macOS, Linux or WSL with Bash/Zsh; or native Windows with PowerShell 7.3+, Git for Windows and Developer Mode enabled for symbolic links. Before cloning a profile on Windows, run `git config --global core.symlinks true` and `git config --global core.longpaths true` so Git checks out the shared-resource links and long portable paths correctly.
 - Any of `claude`, `codex`, `pi` or `opencode` that you want to use.
 
 ## Install
@@ -22,7 +22,7 @@ On Bash or Zsh:
 bash install.sh
 ```
 
-On PowerShell 7:
+On PowerShell 7.3 or newer:
 
 ```powershell
 ./install.ps1
@@ -81,6 +81,8 @@ If Codex-specific instructions exist, aip places its `-c developer_instructions=
 ## Git synchronisation
 
 aip automatically tracks its own metadata and instruction links, common instructions, all new files under `skills/`, and changes or deletions to files you deliberately tracked with Git. It does **not** automatically add unknown native harness files.
+
+Tracked filenames must use printable ASCII and avoid Windows-reserved characters/names, trailing dots or spaces, `.git` components and case-only collisions, so the same profile can be checked out on every supported platform. File contents remain UTF-8 and may use Unicode. Git submodules are not supported inside profiles; commit shared skill files directly instead. The seven aip-created relative links are the only supported symbolic links: additional symlinks, junctions and other reparse points are rejected so native harness state cannot escape the profile.
 
 To connect a profile to an existing remote, use ordinary Git:
 
@@ -158,7 +160,7 @@ GitHub Actions runs the complete Bats suite on Linux/macOS and Pester on native 
 
 ## Uninstall
 
-Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.zshrc` or your PowerShell profile, then delete the installed integration file:
+Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed integration file:
 
 - POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/aip.sh`
 - Windows: `$env:LOCALAPPDATA\aip\aip.ps1`

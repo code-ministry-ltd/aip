@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_directory=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+script_directory=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source_file=$script_directory/aip.sh
 install_root=${_AIP_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/aip}
 
@@ -9,7 +9,16 @@ if [[ -n ${_AIP_SHELL_PROFILE:-} ]]; then
   shell_profile=$_AIP_SHELL_PROFILE
 else
   case ${SHELL##*/} in
-    bash) shell_profile=$HOME/.bashrc ;;
+    bash)
+      if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+        if [ -e "$HOME/.bash_profile" ]; then shell_profile=$HOME/.bash_profile
+        elif [ -e "$HOME/.bash_login" ]; then shell_profile=$HOME/.bash_login
+        elif [ -e "$HOME/.profile" ]; then shell_profile=$HOME/.profile
+        else shell_profile=$HOME/.bash_profile
+        fi
+      else shell_profile=$HOME/.bashrc
+      fi
+      ;;
     zsh) shell_profile=$HOME/.zshrc ;;
     *)
       printf 'aip: supported login shells are Bash and Zsh; set SHELL correctly and retry\n' >&2

@@ -30,7 +30,9 @@ jobs:
       - name: Install test dependencies
         run: npm ci
       - name: Run Bats suite
-        run: npm run test:posix -- --report-formatter junit --output test-results
+        run: |
+          mkdir -p test-results
+          npm run test:posix -- --report-formatter junit --output test-results
       - name: Upload Bats report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

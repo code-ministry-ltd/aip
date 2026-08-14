@@ -11,12 +11,28 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "profile names reject paths, dots, edge separators, uppercase, and overlength input" {
+@test "profile names reject paths, dots, edge separators, uppercase, reserved devices, and overlength input" {
   local name
-  for name in '../work' 'a/b' 'a.b' '-work' 'work_' 'Work' "$(printf 'a%.0s' {1..65})" ''; do
+  for name in '../work' 'a/b' 'a.b' '-work' 'work_' 'Work' con aux com1 lpt9 "$(printf 'a%.0s' {1..65})" ''; do
     run _aip_validate_name "$name"
     [ "$status" -ne 0 ]
   done
+}
+
+@test "profile-name validation ignores caller nocasematch" {
+  run bash -c 'shopt -s nocasematch; source "$AIP_SOURCE"; aip CREATE work'
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work" ]
+
+  run bash -c 'shopt -s nocasematch; source "$AIP_SOURCE"; _aip_is_harness CLAUDE'
+
+  [ "$status" -ne 0 ]
+
+  run bash -c 'shopt -s nocasematch; source "$AIP_SOURCE"; aip create Work'
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/Work" ]
 }
 
 @test "create builds the approved profile atomically with relative links and an initial commit" {
@@ -26,12 +42,27 @@ setup() {
   [ -d "$_AIP_PROFILE_ROOT/work/skills" ]
   [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = 'suit' ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/claude/skills")" = '../skills' ]
+  [ "$(head -n 1 "$_AIP_PROFILE_ROOT/work/claude/CLAUDE.md")" = '@../AGENTS.md' ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/AGENTS.md")" = '../AGENTS.md' ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/pi/skills")" = '../skills' ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/opencode/AGENTS.md")" = '../AGENTS.md' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -s codex/AGENTS.md | cut -d' ' -f1)" = '120000' ]
   [ "$(git -C "$_AIP_PROFILE_ROOT/work" branch --show-current)" = 'main' ]
+  [ "$(stat -c '%a' "$_AIP_PROFILE_ROOT/work" 2>/dev/null || stat -f '%Lp' "$_AIP_PROFILE_ROOT/work")" = '700' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT/work" config --bool core.symlinks)" = 'true' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- skills/.gitkeep)" = 'skills/.gitkeep' ]
   [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" status --porcelain)" ]
   [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-list --count HEAD)" -eq 1 ]
+}
+
+@test "stock Zsh can create a complete profile" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+
+  run zsh -c 'source "$AIP_SOURCE"; aip create work --outfit suit'
+
+  [ "$status" -eq 0 ]
+  [ -d "$_AIP_PROFILE_ROOT/work/.git" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT/work" status --porcelain)" = '' ]
 }
 
 @test "create refuses an existing destination without changing it" {
@@ -43,6 +74,28 @@ setup() {
   [ "$status" -ne 0 ]
   [ "$(cat "$_AIP_PROFILE_ROOT/work/existing")" = 'keep' ]
   [ ! -e "$_AIP_PROFILE_ROOT/work/.git" ]
+}
+
+@test "create does not nest or overwrite a destination that appears during publication" {
+  local real_mv fake_mv="$FAKE_BIN/mv" raced="$BATS_TEST_TMPDIR/publication-raced"
+  real_mv=$(command -v mv)
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'if [ ! -e "$RACED" ]; then'
+    printf '%s\n' '  : >"$RACED"'
+    printf '%s\n' '  mkdir -p "$2/.git"'
+    printf '%s\n' '  printf "competitor\n" >"$2/keep"'
+    printf '%s\n' 'fi'
+    printf 'exec %s "$@"\n' "$real_mv"
+  } >"$fake_mv"
+  chmod +x "$fake_mv"
+  export RACED="$raced"
+
+  run aip create raced
+
+  [ "$status" -ne 0 ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/raced/keep")" = competitor ]
+  [ ! -d "$_AIP_PROFILE_ROOT/raced/raced" ]
 }
 
 @test "use selects an existing profile for the current shell and which prints its path" {
@@ -77,4 +130,3 @@ setup() {
   [[ "$output" == *'Selected by: session'* ]]
   [[ "$output" == *"Path: $_AIP_PROFILE_ROOT/work"* ]]
 }
-
