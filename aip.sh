@@ -236,7 +236,25 @@ _aip_utf8_length() (
   LC_ALL=$utf8_locale
   export LC_ALL
   printf '%s' "$value" | command iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
-  case $value in *[[:cntrl:]]*) return 1 ;; esac
+  # Reject C0/C1 controls and DEL by codepoint. The locale's [[:cntrl:]] class is
+  # not portable (e.g. macOS en_US.UTF-8 does not classify U+0085 as control),
+  # so walk the UTF-8 bytes explicitly; iconv above guarantees they are valid.
+  printf '%s' "$value" | command od -A n -t u1 -v | command awk '
+    { for (i = 1; i <= NF; i++) byte[n++] = $i + 0 }
+    END {
+      i = 0
+      while (i < n) {
+        c = byte[i]
+        if (c >= 128 && c < 192) { i++; continue }
+        if (c < 128) { cp = c; len = 1 }
+        else if (c < 224) { cp = c - 192; len = 2 }
+        else if (c < 240) { cp = c - 224; len = 3 }
+        else { cp = c - 240; len = 4 }
+        for (j = 1; j < len; j++) cp = cp * 64 + (byte[i + j] - 128)
+        i += len
+        if (cp < 32 || cp == 127 || (cp >= 128 && cp <= 159)) exit 1
+      }
+    }' || return 1
   printf '%s\n' "${#value}"
 )
 
@@ -250,7 +268,7 @@ _aip_validate_outfit() {
 _aip_validate_utf8_text_file() {
   local file=$1
   command iconv -f UTF-8 -t UTF-8 "$file" >/dev/null 2>&1 || return 1
-  command od -A n -t u1 "$file" | command awk '{ for (i = 1; i <= NF; i++) if ($i == 0) invalid = 1 } END { exit invalid }'
+  command od -A n -t u1 -v "$file" | command awk '{ for (i = 1; i <= NF; i++) if ($i == 0) invalid = 1 } END { exit invalid }'
 }
 
 _aip_profile_path() {
