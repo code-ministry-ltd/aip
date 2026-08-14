@@ -207,9 +207,11 @@ setup() {
   [ "$(cat "$_AIP_PROFILE_ROOT/.default")" = work ]
   [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = jacket ]
 
-  run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip outfit work coat && aip sync work'
-  [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = coat ]
+  if command -v zsh >/dev/null; then
+    run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip outfit work coat && aip sync work'
+    [ "$status" -eq 0 ]
+    [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = coat ]
+  fi
 }
 
 @test "list shows profiles and their session, project, and default selections" {
