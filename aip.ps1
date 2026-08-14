@@ -726,7 +726,9 @@ function Test-AipLayout {
     foreach ($link in $links.GetEnumerator()) {
         $literalPath = Join-Path $ProfilePath $link.Key
         $item = Get-Item -LiteralPath $literalPath -Force -ErrorAction SilentlyContinue
-        $target = if ($null -ne $item) { [string]$item.Target } else { '' }
+        # On Windows, .Target reports relative links with backslashes; normalize
+        # to the forward-slash form aip stores and validates.
+        $target = if ($null -ne $item) { ([string]$item.Target).Replace('\', '/') } else { '' }
         if ($null -eq $item -or $item.LinkType -ne 'SymbolicLink' -or $target -ne $link.Value) {
             if ($Report) { Write-Output "ERROR: $($link.Key) should link to $($link.Value)" }
             if ($Report) { Write-Output "FIX: enable Windows Developer Mode, remove the broken item, then run New-Item -ItemType SymbolicLink -Path '$literalPath' -Target '$($link.Value)'" }
