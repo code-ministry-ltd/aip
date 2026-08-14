@@ -153,7 +153,8 @@ setup() {
 
   [ "$status" -eq 0 ]
 
-  export TEST_OUTFIT=$'bad\u0085label'
+  # Build U+0085 via printf: $'\uXXXX' requires bash >= 4.2 and macOS's /bin/bash is 3.2.
+  export TEST_OUTFIT="bad$(printf '\xc2\x85')label"
   run bash -c 'export LC_ALL=C; source "$AIP_SOURCE"; aip outfit work "$TEST_OUTFIT"'
 
   [ "$status" -ne 0 ]

@@ -122,8 +122,9 @@ Describe 'profile creation and selection' {
         $profile = Join-Path $script:AipProfileRoot 'work'
         (Get-Content (Join-Path $profile '.aip/outfit') -Raw).Trim() | Should -Be 'suit'
         (Get-Item (Join-Path $profile 'codex/AGENTS.md')).LinkType | Should -Be 'SymbolicLink'
-        [string](Get-Item (Join-Path $profile 'codex/AGENTS.md')).Target | Should -Be '../AGENTS.md'
-        [string](Get-Item (Join-Path $profile 'claude/skills')).Target | Should -Be '../skills'
+        # On Windows, .Target reports relative links with backslashes; normalize to the stored form.
+        [string](Get-Item (Join-Path $profile 'codex/AGENTS.md')).Target -replace '\\', '/' | Should -Be '../AGENTS.md'
+        [string](Get-Item (Join-Path $profile 'claude/skills')).Target -replace '\\', '/' | Should -Be '../skills'
         (Get-Content -LiteralPath (Join-Path $profile 'claude/CLAUDE.md') -TotalCount 1) | Should -Be '@../AGENTS.md'
         [IO.File]::ReadAllBytes((Join-Path $profile 'claude/CLAUDE.md')) | Should -Not -Contain 13
         [IO.File]::ReadAllBytes((Join-Path $profile '.gitignore')) | Should -Not -Contain 13
@@ -283,6 +284,13 @@ Describe 'harness wrappers' {
         }
         foreach ($harness in $selectors.Keys) {
             $testArguments = @('one two', '*literal*', '', 'quote"value', '&', '%PATH%', '!bang!', 'café')
+            $expectedArguments = @('arg=one two', 'arg=*literal*', 'arg=', 'arg=quote"value', 'arg=&', 'arg=%PATH%', 'arg=!bang!', 'arg=café')
+            if ($IsWindows) {
+                # cmd.exe re-expands %VAR% text in arguments passed to .cmd harnesses, so a
+                # literal %PATH% cannot round-trip on Windows (true for real shim harnesses too).
+                $testArguments = @($testArguments | Where-Object { $_ -ne '%PATH%' })
+                $expectedArguments = @($expectedArguments | Where-Object { $_ -ne 'arg=%PATH%' })
+            }
             & $harness @testArguments *> $null
             $global:LASTEXITCODE | Should -Be 0
             $capture = Get-Content $script:FakeCapture -Raw
@@ -295,7 +303,7 @@ Describe 'harness wrappers' {
             }
             $capturedArguments = @(Get-Content $script:FakeCapture | Where-Object { $_ -like 'arg=*' })
             if ($harness -eq 'codex') { $capturedArguments = @($capturedArguments | Select-Object -Skip 2) }
-            $capturedArguments | Should -Be @('arg=one two', 'arg=*literal*', 'arg=', 'arg=quote"value', 'arg=&', 'arg=%PATH%', 'arg=!bang!', 'arg=café')
+            $capturedArguments | Should -Be $expectedArguments
         }
     }
 
