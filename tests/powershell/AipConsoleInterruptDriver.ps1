@@ -1,11 +1,15 @@
 # Standalone driver for the 'native Windows Ctrl-C' test.
 #
-# This must run as its own process, never inside the Pester host: the test
-# fires a console CTRL_C_EVENT at the child's console while this driver is
-# attached to it. If the event ever reaches the attached process, only this
-# disposable process can die - the host that reports the test result must
-# stay alive so the failure is visible instead of silently killing the
-# whole Pester run (which masked the entire Windows suite).
+# Two invariants keep this test from destroying the suite around it:
+# 1. This must run as its own process, never inside the Pester host. If a
+#    console control event ever reaches the attached process, only this
+#    disposable process can die - the host that reports the test result
+#    must stay alive so the failure is visible instead of silently killing
+#    the whole Pester run (which masked the entire Windows suite).
+# 2. The child is started with CREATE_NEW_PROCESS_GROUP (group id = its
+#    process id) and the event targets that exact group, never group 0
+#    ("foreground"): on a headless CI console the attached sender is the
+#    foreground group, so group 0 kills the sender instead of the child.
 #
 # Usage:
 #   pwsh -NoProfile -File AipConsoleInterruptDriver.ps1 `
@@ -101,13 +105,20 @@ public static class AipConsoleInterruptDriver {
 
     public static int Run(string pwsh, string script, string readyPath, uint waitMilliseconds) {
         const uint CreateNewConsole = 0x00000010;
+        const uint CreateNewProcessGroup = 0x00000200;
         const uint AttachParentProcess = 0xFFFFFFFF;
         const uint WaitTimeout = 0x00000102;
         var startup = new STARTUPINFO { cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO)) };
         PROCESS_INFORMATION process;
         var command = new StringBuilder("\"" + pwsh + "\" -NoProfile -File \"" + script + "\"");
+        // CREATE_NEW_PROCESS_GROUP makes the child's process group id equal
+        // to its process id, so the Ctrl-C can be sent to that exact group.
+        // Targeting group 0 ("foreground") is unreliable: on a headless CI
+        // console the attached sender ends up being the foreground group and
+        // the event kills the sender instead of the child.
         if (!CreateProcess(pwsh, command, IntPtr.Zero, IntPtr.Zero, false,
-                CreateNewConsole, IntPtr.Zero, null, ref startup, out process)) {
+                CreateNewConsole | CreateNewProcessGroup, IntPtr.Zero, null,
+                ref startup, out process)) {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "could not start interrupt test process");
         }
         try {
@@ -124,7 +135,7 @@ public static class AipConsoleInterruptDriver {
             }
             SetConsoleCtrlHandler(IgnoreCtrl, true);
             try {
-                if (!GenerateConsoleCtrlEvent(0, 0)) {
+                if (!GenerateConsoleCtrlEvent(0, process.dwProcessId)) {
                     TerminateProcess(process.hProcess, 1);
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "could not send Ctrl-C");
                 }
