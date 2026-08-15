@@ -1528,6 +1528,11 @@ function Invoke-AipHarness {
             else { [Environment]::SetEnvironmentVariable($variable, $null, 'Process') }
             if ($hadArgumentPassing) { $PSNativeCommandArgumentPassing = $previousArgumentPassing }
             else { Remove-Variable -Name PSNativeCommandArgumentPassing -Scope Local -ErrorAction SilentlyContinue }
+            if ($IsWindows -and ($childStatus -eq 3221225786 -or $childStatus -eq -1073741510)) {
+                # Native Ctrl-C terminates children with STATUS_CONTROL_C_EXIT (0xC000013A,
+                # signed or unsigned); report the conventional 130 instead.
+                $childStatus = 130
+            }
             $global:LASTEXITCODE = $childStatus
         }
     }

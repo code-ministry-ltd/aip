@@ -570,8 +570,14 @@ public static class AipConsoleInterruptDriver {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(uint processId);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate bool ConsoleCtrlHandler(uint controlEvent);
+
+    // Static so the delegate stays alive while it is registered.
+    private static readonly ConsoleCtrlHandler IgnoreCtrl = _ => true;
+
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
+    private static extern bool SetConsoleCtrlHandler(ConsoleCtrlHandler handler, bool add);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
@@ -608,7 +614,7 @@ public static class AipConsoleInterruptDriver {
                 TerminateProcess(process.hProcess, 1);
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "could not attach to interrupt test console");
             }
-            SetConsoleCtrlHandler(IntPtr.Zero, true);
+            SetConsoleCtrlHandler(IgnoreCtrl, true);
             try {
                 if (!GenerateConsoleCtrlEvent(0, 0)) {
                     TerminateProcess(process.hProcess, 1);
@@ -618,7 +624,7 @@ public static class AipConsoleInterruptDriver {
             finally {
                 FreeConsole();
                 AttachConsole(AttachParentProcess);
-                SetConsoleCtrlHandler(IntPtr.Zero, false);
+                SetConsoleCtrlHandler(IgnoreCtrl, false);
             }
             if (WaitForSingleObject(process.hProcess, 30000) == WaitTimeout) {
                 TerminateProcess(process.hProcess, 1);
