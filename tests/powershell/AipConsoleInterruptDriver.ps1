@@ -119,17 +119,38 @@ public static class AipConsoleInterruptDriver {
         IntPtr consoleOutput, string buffer, uint numberOfCharsToWrite,
         out uint numberOfCharsWritten, IntPtr reserved);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetConsoleProcessList([Out] uint[] processList, uint size);
+
+    // Diagnostics surfaced through the timeout/exit messages.
+    private static string PromptWrite = "not-attempted";
+
     // Best-effort: type 'Y' into the console input buffer so cmd.exe's
     // "Terminate batch job (Y/N)?" prompt (raised by the Ctrl-C event) is
-    // answered on a headless console. Failures are ignored: if the prompt
-    // never appears the buffered input is never consumed, and if the write
-    // fails the child simply does not exit and the wait times out loudly.
+    // answered on a headless console. Failures are recorded, not thrown: if
+    // the prompt never appears the buffered input is never consumed, and if
+    // the write fails the child simply does not exit and the wait times out
+    // loudly.
     private static void AnswerBatchTerminationPrompt() {
         const int StdInputHandle = -10;
         var input = GetStdHandle(StdInputHandle);
-        if (input == IntPtr.Zero || input == new IntPtr(-1)) { return; }
+        if (input == IntPtr.Zero || input == new IntPtr(-1)) {
+            PromptWrite = "no-input-handle";
+            return;
+        }
         uint written;
-        WriteConsole(input, "Y\r", 2, out written, IntPtr.Zero);
+        var ok = WriteConsole(input, "Y\r", 2, out written, IntPtr.Zero);
+        PromptWrite = ok ? $"ok({written})" : $"failed(err={Marshal.GetLastWin32Error()})";
+    }
+
+    private static string DescribeConsoleState() {
+        var pids = new uint[64];
+        if (!GetConsoleProcessList(pids, (uint)pids.Length)) {
+            return $"console-state=unavailable(err={Marshal.GetLastWin32Error()})";
+        }
+        var list = "";
+        for (var i = 0; i < pids.Length && pids[i] != 0; i++) { list += pids[i] + " "; }
+        return $"attached=[{list.Trim()}] prompt-write={PromptWrite}";
     }
 
     public static int Run(string pwsh, string script, string readyPath, uint waitMilliseconds) {
@@ -163,25 +184,28 @@ public static class AipConsoleInterruptDriver {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "could not attach to interrupt test console");
             }
             SetConsoleCtrlHandler(IgnoreCtrl, true);
+            uint status;
             try {
                 if (!GenerateConsoleCtrlEvent(0, process.dwProcessId)) {
                     TerminateProcess(process.hProcess, 1);
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "could not send Ctrl-C");
                 }
                 AnswerBatchTerminationPrompt();
+                // Wait while still attached: a timeout diagnostic needs the
+                // child console's process list, not the parent console's.
+                if (WaitForSingleObject(process.hProcess, waitMilliseconds) == WaitTimeout) {
+                    var state = DescribeConsoleState();
+                    TerminateProcess(process.hProcess, 1);
+                    throw new TimeoutException($"interrupted wrapper did not exit; {state}");
+                }
+                if (!GetExitCodeProcess(process.hProcess, out status)) {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "could not read interrupted wrapper status");
+                }
             }
             finally {
                 FreeConsole();
                 AttachConsole(AttachParentProcess);
                 SetConsoleCtrlHandler(IgnoreCtrl, false);
-            }
-            if (WaitForSingleObject(process.hProcess, waitMilliseconds) == WaitTimeout) {
-                TerminateProcess(process.hProcess, 1);
-                throw new TimeoutException("interrupted wrapper did not exit");
-            }
-            uint status;
-            if (!GetExitCodeProcess(process.hProcess, out status)) {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "could not read interrupted wrapper status");
             }
             return unchecked((int)status);
         }
