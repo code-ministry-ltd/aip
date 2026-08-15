@@ -492,7 +492,7 @@ exit 130
 @echo off
 echo changed by ctrl-c>>"%CLAUDE_CONFIG_DIR%\..\AGENTS.md"
 > "%AIP_INTERRUPT_READY%" echo ready
-ping -n 31 127.0.0.1 >nul
+ping -n 20 127.0.0.1 >nul
 exit /b 0
 '@ | Set-Content -LiteralPath $fake -Encoding ascii
         $quotedRepository = $script:RepositoryRoot.Replace("'", "''")
@@ -500,15 +500,9 @@ exit /b 0
         $quotedFakeBin = $script:FakeBin.Replace("'", "''")
         @"
 . '$quotedRepository/aip.ps1'
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class AipChildConsoleControl {
-    [DllImport("kernel32.dll")]
-    public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add);
-}
-'@
-[void][AipChildConsoleControl]::SetConsoleCtrlHandler([IntPtr]::Zero, `$false)
+# The child keeps pwsh's default console Ctrl-C handler on purpose: the
+# interrupt must be observed by the child so aip can checkpoint the change
+# and exit 130, not have the OS kill the process outright.
 `$script:AipProfileRoot = '$quotedRoot'
 `$env:AIP_PROFILE = 'work'
 `$script:AipRealPath = '$quotedFakeBin'
@@ -523,7 +517,7 @@ exit `$global:LASTEXITCODE
         $env:AIP_INTERRUPT_READY = $ready
         try {
             $pwsh = (Get-Command pwsh -CommandType Application).Path
-            $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready
+            $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready -WaitMilliseconds 45000
             $global:LASTEXITCODE | Should -Be 0
             $status | Should -Be '130'
         }
