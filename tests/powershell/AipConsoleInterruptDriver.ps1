@@ -111,9 +111,6 @@ public static class AipConsoleInterruptDriver {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetStdHandle(int nStdHandle);
-
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool WriteConsole(
         IntPtr consoleOutput, string buffer, uint numberOfCharsToWrite,
@@ -122,25 +119,39 @@ public static class AipConsoleInterruptDriver {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleProcessList([Out] uint[] processList, uint size);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateFile(
+        string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr securityAttributes,
+        uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
     // Diagnostics surfaced through the timeout/exit messages.
     private static string PromptWrite = "not-attempted";
 
-    // Best-effort: type 'Y' into the console input buffer so cmd.exe's
-    // "Terminate batch job (Y/N)?" prompt (raised by the Ctrl-C event) is
-    // answered on a headless console. Failures are recorded, not thrown: if
-    // the prompt never appears the buffered input is never consumed, and if
-    // the write fails the child simply does not exit and the wait times out
-    // loudly.
+    // Best-effort: type 'Y' into the child console's input buffer so
+    // cmd.exe's "Terminate batch job (Y/N)?" prompt (raised by the Ctrl-C
+    // event) is answered on a headless console. The input is opened via
+    // CONIN$ rather than GetStdHandle: this process inherits a redirected
+    // stdin pipe from the CI runner, so the standard input handle points at
+    // the pipe, not the attached console. Failures are recorded, not
+    // thrown: if the prompt never appears the buffered input is never
+    // consumed, and if the write fails the child simply does not exit and
+    // the wait times out loudly.
     private static void AnswerBatchTerminationPrompt() {
-        const int StdInputHandle = -10;
-        var input = GetStdHandle(StdInputHandle);
-        if (input == IntPtr.Zero || input == new IntPtr(-1)) {
-            PromptWrite = "no-input-handle";
+        const uint GenericWrite = 0x40000000;
+        const uint FileShareReadWrite = 3;
+        const uint OpenExisting = 3;
+        var conin = CreateFile("CONIN$", GenericWrite, FileShareReadWrite, IntPtr.Zero,
+                               OpenExisting, 0, IntPtr.Zero);
+        if (conin == IntPtr.Zero || conin == new IntPtr(-1)) {
+            PromptWrite = $"no-conin(err={Marshal.GetLastWin32Error()})";
             return;
         }
-        uint written;
-        var ok = WriteConsole(input, "Y\r", 2, out written, IntPtr.Zero);
-        PromptWrite = ok ? $"ok({written})" : $"failed(err={Marshal.GetLastWin32Error()})";
+        try {
+            uint written;
+            var ok = WriteConsole(conin, "Y\r", 2, out written, IntPtr.Zero);
+            PromptWrite = ok ? $"ok({written})" : $"failed(err={Marshal.GetLastWin32Error()})";
+        }
+        finally { CloseHandle(conin); }
     }
 
     private static string DescribeConsoleState() {
