@@ -487,14 +487,14 @@ exit 130
         $profile = Join-Path $script:AipProfileRoot 'work'
         $ready = Join-Path $TestDrive 'interrupt-ready'
         $runner = Join-Path $TestDrive 'interrupt-runner.ps1'
-        $fake = Get-AipRealCommand 'claude'
-        @'
-@echo off
-echo changed by ctrl-c>>"%CLAUDE_CONFIG_DIR%\..\AGENTS.md"
-> "%AIP_INTERRUPT_READY%" echo ready
-ping -n 20 127.0.0.1 >nul
-exit /b 0
-'@ | Set-Content -LiteralPath $fake -Encoding ascii
+        # The fake 'claude' is ping.exe renamed: a real PE executable, so no
+        # cmd.exe batch sits in the child's process tree. A batch would pause
+        # at 'Terminate batch job (Y/N)?' on the Ctrl-C event and wait for
+        # console input a headless CI console never provides; ping runs for
+        # its -n duration and dies natively on the event, which is exactly
+        # the long-running, interruptible child the test needs.
+        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\ping.exe') `
+            -Destination (Join-Path $script:FakeBin 'claude.exe') -Force
         $quotedRepository = $script:RepositoryRoot.Replace("'", "''")
         $quotedRoot = $script:AipProfileRoot.Replace("'", "''")
         $quotedFakeBin = $script:FakeBin.Replace("'", "''")
@@ -506,7 +506,11 @@ exit /b 0
 `$script:AipProfileRoot = '$quotedRoot'
 `$env:AIP_PROFILE = 'work'
 `$script:AipRealPath = '$quotedFakeBin'
-claude
+# Change the checkpointed content and signal ready before starting the
+# long-running child, so the interrupt arrives while it is running.
+Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by ctrl-c'
+Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'
+claude -n 25 127.0.0.1
 exit `$global:LASTEXITCODE
 "@ | Set-Content -LiteralPath $runner -Encoding utf8NoBOM
         # The driver must run as its own process: the Ctrl-C it fires targets

@@ -10,14 +10,14 @@
 #    process id) and the event targets that exact group, never group 0
 #    ("foreground"): on a headless CI console the attached sender is the
 #    foreground group, so group 0 kills the sender instead of the child.
-# 3. After the event, the driver types 'Y' into the child console's input
-#    buffer: the fake child is a batch script, and on Ctrl-C cmd.exe pauses
-#    the batch at "Terminate batch job (Y/N)?" waiting for input that no
-#    headless console will ever provide. aip launches the harness unredirected
-#    (standalone native), so pwsh will not kill the batch itself - it waits
-#    for it. Console input is buffered, so the 'Y' is consumed when the
-#    prompt appears regardless of timing, and is harmless if the prompt
-#    never appears (the child never reads input).
+# 3. The fake harness child must be a real executable (the test uses
+#    ping.exe renamed), never a .cmd/.bat: a batch would pause at
+#    "Terminate batch job (Y/N)?" on the Ctrl-C event and wait for console
+#    input a headless CI console never provides, and aip launches the
+#    harness unredirected (standalone native), so pwsh will not kill the
+#    batch itself - it waits for it. The driver also settles 500ms after
+#    the ready signal so the child's long-running command has joined the
+#    process group before the event is sent.
 #
 # Usage:
 #   pwsh -NoProfile -File AipConsoleInterruptDriver.ps1 `
@@ -112,48 +112,10 @@ public static class AipConsoleInterruptDriver {
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool WriteConsole(
-        IntPtr consoleOutput, string buffer, uint numberOfCharsToWrite,
-        out uint numberOfCharsWritten, IntPtr reserved);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleProcessList([Out] uint[] processList, uint size);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr CreateFile(
-        string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr securityAttributes,
-        uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
-
-    // Diagnostics surfaced through the timeout/exit messages.
-    private static string PromptWrite = "not-attempted";
-
-    // Best-effort: type 'Y' into the child console's input buffer so
-    // cmd.exe's "Terminate batch job (Y/N)?" prompt (raised by the Ctrl-C
-    // event) is answered on a headless console. The input is opened via
-    // CONIN$ rather than GetStdHandle: this process inherits a redirected
-    // stdin pipe from the CI runner, so the standard input handle points at
-    // the pipe, not the attached console. Failures are recorded, not
-    // thrown: if the prompt never appears the buffered input is never
-    // consumed, and if the write fails the child simply does not exit and
-    // the wait times out loudly.
-    private static void AnswerBatchTerminationPrompt() {
-        const uint GenericWrite = 0x40000000;
-        const uint FileShareReadWrite = 3;
-        const uint OpenExisting = 3;
-        var conin = CreateFile("CONIN$", GenericWrite, FileShareReadWrite, IntPtr.Zero,
-                               OpenExisting, 0, IntPtr.Zero);
-        if (conin == IntPtr.Zero || conin == new IntPtr(-1)) {
-            PromptWrite = $"no-conin(err={Marshal.GetLastWin32Error()})";
-            return;
-        }
-        try {
-            uint written;
-            var ok = WriteConsole(conin, "Y\r", 2, out written, IntPtr.Zero);
-            PromptWrite = ok ? $"ok({written})" : $"failed(err={Marshal.GetLastWin32Error()})";
-        }
-        finally { CloseHandle(conin); }
-    }
-
+    // Timeout diagnostic: which processes are still attached to the child
+    // console (this driver includes itself - it queries while attached).
     private static string DescribeConsoleState() {
         var pids = new uint[64];
         if (!GetConsoleProcessList(pids, (uint)pids.Length)) {
@@ -161,7 +123,7 @@ public static class AipConsoleInterruptDriver {
         }
         var list = "";
         for (var i = 0; i < pids.Length && pids[i] != 0; i++) { list += pids[i] + " "; }
-        return $"attached=[{list.Trim()}] prompt-write={PromptWrite}";
+        return $"attached=[{list.Trim()}]";
     }
 
     public static int Run(string pwsh, string script, string readyPath, uint waitMilliseconds) {
@@ -189,6 +151,10 @@ public static class AipConsoleInterruptDriver {
                 TerminateProcess(process.hProcess, 1);
                 throw new TimeoutException("harness did not become ready");
             }
+            // The ready file is written just before the child starts its
+            // long-running command; give that command a moment to join the
+            // child's process group so the event reaches it.
+            Thread.Sleep(500);
             FreeConsole();
             if (!AttachConsole(process.dwProcessId)) {
                 TerminateProcess(process.hProcess, 1);
@@ -201,7 +167,6 @@ public static class AipConsoleInterruptDriver {
                     TerminateProcess(process.hProcess, 1);
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "could not send Ctrl-C");
                 }
-                AnswerBatchTerminationPrompt();
                 // Wait while still attached: a timeout diagnostic needs the
                 // child console's process list, not the parent console's.
                 if (WaitForSingleObject(process.hProcess, waitMilliseconds) == WaitTimeout) {
