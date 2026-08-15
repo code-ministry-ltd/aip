@@ -10,6 +10,14 @@
 #    process id) and the event targets that exact group, never group 0
 #    ("foreground"): on a headless CI console the attached sender is the
 #    foreground group, so group 0 kills the sender instead of the child.
+# 3. After the event, the driver types 'Y' into the child console's input
+#    buffer: the fake child is a batch script, and on Ctrl-C cmd.exe pauses
+#    the batch at "Terminate batch job (Y/N)?" waiting for input that no
+#    headless console will ever provide. aip launches the harness unredirected
+#    (standalone native), so pwsh will not kill the batch itself - it waits
+#    for it. Console input is buffered, so the 'Y' is consumed when the
+#    prompt appears regardless of timing, and is harmless if the prompt
+#    never appears (the child never reads input).
 #
 # Usage:
 #   pwsh -NoProfile -File AipConsoleInterruptDriver.ps1 `
@@ -103,6 +111,27 @@ public static class AipConsoleInterruptDriver {
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteConsole(
+        IntPtr consoleOutput, string buffer, uint numberOfCharsToWrite,
+        out uint numberOfCharsWritten, IntPtr reserved);
+
+    // Best-effort: type 'Y' into the console input buffer so cmd.exe's
+    // "Terminate batch job (Y/N)?" prompt (raised by the Ctrl-C event) is
+    // answered on a headless console. Failures are ignored: if the prompt
+    // never appears the buffered input is never consumed, and if the write
+    // fails the child simply does not exit and the wait times out loudly.
+    private static void AnswerBatchTerminationPrompt() {
+        const int StdInputHandle = -10;
+        var input = GetStdHandle(StdInputHandle);
+        if (input == IntPtr.Zero || input == new IntPtr(-1)) { return; }
+        uint written;
+        WriteConsole(input, "Y\r", 2, out written, IntPtr.Zero);
+    }
+
     public static int Run(string pwsh, string script, string readyPath, uint waitMilliseconds) {
         const uint CreateNewConsole = 0x00000010;
         const uint CreateNewProcessGroup = 0x00000200;
@@ -139,6 +168,7 @@ public static class AipConsoleInterruptDriver {
                     TerminateProcess(process.hProcess, 1);
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "could not send Ctrl-C");
                 }
+                AnswerBatchTerminationPrompt();
             }
             finally {
                 FreeConsole();
