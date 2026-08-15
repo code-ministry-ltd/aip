@@ -1446,7 +1446,7 @@ exit 1
         aip sync work *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'remote profile has an invalid required link'
-        [string](Get-Item (Join-Path $profile 'codex/skills')).Target | Should -Be '../skills'
+        [string](Get-Item (Join-Path $profile 'codex/skills')).Target -replace '\\', '/' | Should -Be '../skills'
     }
 
     It 'rejects optional remote links before they enter a harness directory' {
