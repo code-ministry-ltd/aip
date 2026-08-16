@@ -487,22 +487,25 @@ exit 130
         $profile = Join-Path $script:AipProfileRoot 'work'
         $ready = Join-Path $TestDrive 'interrupt-ready'
         $runner = Join-Path $TestDrive 'interrupt-runner.ps1'
-        # The fake 'claude' is pwsh.exe renamed, running a small script:
-        # write the ready signal, then run ping for its -n duration. The
-        # ready signal must come from inside the fake, immediately before
-        # the long-running part: aip does pre-run work (before-sync git
-        # operations) between the runner's call and the child launch, so a
-        # ready written earlier lets the interrupt land before the long
-        # command exists. No .cmd/.bat is involved anywhere: a batch would
-        # pause at 'Terminate batch job (Y/N)?' on the event and wait for
-        # console input a headless CI console never provides.
+        # The fake 'claude' is Windows PowerShell 5.1 renamed, running a
+        # small script: write the ready signal, then run ping for its -n
+        # duration. Windows PowerShell's powershell.exe is a self-contained
+        # PE, unlike pwsh.exe, which is a .NET apphost that needs pwsh.dll
+        # beside it and does not work when copied alone. The ready signal
+        # must come from inside the fake, immediately before the long-running
+        # part: aip does pre-run work (before-sync git operations) between
+        # the runner's call and the child launch, so a ready written earlier
+        # lets the interrupt land before the long command exists. No
+        # .cmd/.bat is involved anywhere: a batch would pause at 'Terminate
+        # batch job (Y/N)?' on the event and wait for console input a
+        # headless CI console never provides.
         $fakeScript = Join-Path $TestDrive 'fake-claude.ps1'
         @(
             'trap { exit 130 }',
             "Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'",
             'ping -n 25 127.0.0.1'
         ) | Set-Content -LiteralPath $fakeScript -Encoding utf8NoBOM
-        Copy-Item -LiteralPath (Get-Command pwsh -CommandType Application).Path `
+        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
             -Destination (Join-Path $script:FakeBin 'claude.exe') -Force
         $quotedRepository = $script:RepositoryRoot.Replace("'", "''")
         $quotedRoot = $script:AipProfileRoot.Replace("'", "''")
