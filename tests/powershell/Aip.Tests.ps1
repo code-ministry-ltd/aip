@@ -90,6 +90,13 @@ AfterEach {
     $env:GIT_CONFIG_NOSYSTEM = $null
 }
 
+It 'reports the embedded version and rejects extra arguments' {
+    aip version | Should -Be 'aip 0.1.0'
+    $global:LASTEXITCODE | Should -Be 0
+    aip version extra *> $null
+    $global:LASTEXITCODE | Should -Not -Be 0
+}
+
 Describe 'profile creation and selection' {
     It 'validates profile names strictly and portably' {
         Test-AipProfileName 'client-42_name' | Should -BeTrue

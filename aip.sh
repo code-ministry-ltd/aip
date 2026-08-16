@@ -1,9 +1,15 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
+_AIP_VERSION='0.1.0'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
+}
+
+_aip_version() {
+  [ "$#" -eq 0 ] || { _aip_error 'usage: aip version'; return 2; }
+  printf 'aip %s\n' "$_AIP_VERSION"
 }
 
 _aip_clear_git_routing() {
@@ -995,7 +1001,8 @@ _aip_is_command() {
   [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = run ] ||
-    [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = which ]
+    [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = version ] ||
+    [ "${1-}" = which ]
 }
 
 _aip_find_real_command() {
@@ -1677,6 +1684,7 @@ aip() {
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;
+    version) _aip_version "$@" ;;
     which) _aip_which "$@" ;;
   esac
 }
