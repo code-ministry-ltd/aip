@@ -500,10 +500,16 @@ exit 130
         # batch job (Y/N)?' on the event and wait for console input a
         # headless CI console never provides.
         $fakeScript = Join-Path $TestDrive 'fake-claude.ps1'
+        $fakeTrace = Join-Path $TestDrive 'fake-trace.txt'
         @(
-            'trap { exit 130 }',
+            '$ft = $env:AIP_FAKE_TRACE',
+            'trap { "fake interrupted" | Add-Content -LiteralPath $ft; exit 130 }',
+            "'fake-start' | Set-Content -LiteralPath `$ft",
             "Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'",
-            'ping -n 25 127.0.0.1'
+            "'ready; starting ping' | Add-Content -LiteralPath `$ft",
+            'ping -n 25 127.0.0.1',
+            '$pc = $global:LASTEXITCODE',
+            "'ping returned ' + `$pc | Add-Content -LiteralPath `$ft"
         ) | Set-Content -LiteralPath $fakeScript -Encoding utf8NoBOM
         Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
             -Destination (Join-Path $script:FakeBin 'claude.exe') -Force
@@ -527,9 +533,15 @@ exit 130
 # Change the checkpointed content and signal ready before starting the
 # long-running child, so the interrupt arrives while it is running.
 Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by ctrl-c'
-# The fake (pwsh) writes the ready signal itself, just before ping starts.
+# The fake (Windows PowerShell) writes the ready signal itself, just
+# before ping starts.
 'calling claude' | Add-Content -LiteralPath `$trace
-claude -NoProfile -File '$quotedFakeScript'
+try {
+    claude -NoProfile -File '$quotedFakeScript'
+    'claude completed normally' | Add-Content -LiteralPath `$trace
+} catch {
+    'claude threw ' + `$_.Exception.GetType().FullName | Add-Content -LiteralPath `$trace
+}
 `$code = `$global:LASTEXITCODE
 'claude returned ' + `$code | Add-Content -LiteralPath `$trace
 exit `$code
@@ -541,15 +553,17 @@ exit `$code
         $driver = Join-Path $PSScriptRoot 'AipConsoleInterruptDriver.ps1'
         Test-Path -LiteralPath (Join-Path $script:FakeBin 'claude.exe') | Should -BeTrue
         $env:AIP_INTERRUPT_READY = $ready
+        $env:AIP_FAKE_TRACE = $fakeTrace
         try {
             $pwsh = (Get-Command pwsh -CommandType Application).Path
             $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready -WaitMilliseconds 45000
             $global:LASTEXITCODE | Should -Be 0
             $tracePath = Join-Path $script:AipProfileRoot 'interrupt-trace.txt'
             $traceText = if (Test-Path -LiteralPath $tracePath) { (Get-Content -LiteralPath $tracePath -Raw).Trim() } else { '<no trace file>' }
-            $status | Should -Be '130' -Because "child trace: $traceText"
+            $fakeTraceText = if (Test-Path -LiteralPath $fakeTrace) { (Get-Content -LiteralPath $fakeTrace -Raw).Trim() } else { '<no fake trace>' }
+            $status | Should -Be '130' -Because "child trace: $traceText | fake trace: $fakeTraceText"
         }
-        finally { $env:AIP_INTERRUPT_READY = $null }
+        finally { $env:AIP_INTERRUPT_READY = $null; $env:AIP_FAKE_TRACE = $null }
 
         (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'changed by ctrl-c'
     }
