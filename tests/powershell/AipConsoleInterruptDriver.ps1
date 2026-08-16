@@ -30,7 +30,8 @@ param(
     [Parameter(Mandatory)][string]$Pwsh,
     [Parameter(Mandatory)][string]$ScriptPath,
     [Parameter(Mandatory)][string]$ReadyPath,
-    [uint32]$WaitMilliseconds = 30000
+    [uint32]$WaitMilliseconds = 30000,
+    [string]$CommandLineOverride = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -127,19 +128,28 @@ public static class AipConsoleInterruptDriver {
     }
 
     public static int Run(string pwsh, string script, string readyPath, uint waitMilliseconds) {
+        var command = "\"" + pwsh + "\" -NoProfile -File \"" + script + "\"";
+        return RunCommand(command, readyPath, waitMilliseconds);
+    }
+
+    // The full child command line, so diagnostics can experiment with other
+    // pwsh launch modes (-Command, profile-based interactive, ...).
+    public static int RunCommand(string commandLine, string readyPath, uint waitMilliseconds) {
         const uint CreateNewConsole = 0x00000010;
         const uint CreateNewProcessGroup = 0x00000200;
         const uint AttachParentProcess = 0xFFFFFFFF;
         const uint WaitTimeout = 0x00000102;
         var startup = new STARTUPINFO { cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO)) };
         PROCESS_INFORMATION process;
-        var command = new StringBuilder("\"" + pwsh + "\" -NoProfile -File \"" + script + "\"");
+        var command = new StringBuilder(commandLine);
         // CREATE_NEW_PROCESS_GROUP makes the child's process group id equal
         // to its process id, so the Ctrl-C can be sent to that exact group.
         // Targeting group 0 ("foreground") is unreliable: on a headless CI
         // console the attached sender ends up being the foreground group and
         // the event kills the sender instead of the child.
-        if (!CreateProcess(pwsh, command, IntPtr.Zero, IntPtr.Zero, false,
+        // applicationName null: CreateProcess takes the executable from the
+        // command line's first (quoted) token.
+        if (!CreateProcess(null, command, IntPtr.Zero, IntPtr.Zero, false,
                 CreateNewConsole | CreateNewProcessGroup, IntPtr.Zero, null,
                 ref startup, out process)) {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "could not start interrupt test process");
@@ -194,7 +204,12 @@ public static class AipConsoleInterruptDriver {
 '@
 
 try {
-    Write-Output ([AipConsoleInterruptDriver]::Run($Pwsh, $ScriptPath, $ReadyPath, $WaitMilliseconds))
+    if ($CommandLineOverride) {
+        Write-Output ([AipConsoleInterruptDriver]::RunCommand($CommandLineOverride, $ReadyPath, $WaitMilliseconds))
+    }
+    else {
+        Write-Output ([AipConsoleInterruptDriver]::Run($Pwsh, $ScriptPath, $ReadyPath, $WaitMilliseconds))
+    }
     exit 0
 }
 catch {
