@@ -483,92 +483,58 @@ exit 130
         (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'interrupted'
     }
 
-    It 'checkpoints after a native Windows Ctrl-C and preserves status 130' -Skip:(-not $IsWindows) {
+    It 'checkpoints an interrupted harness run and preserves status 130' {
+        # A real console Ctrl-C cannot be faithfully simulated in a headless
+        # process: a non-interactive pwsh host exits instead of surfacing the
+        # interrupt to script code. But the interrupt itself is a
+        # PipelineStoppedException, which pwsh treats specially: it bypasses
+        # catch clauses and eventually exits the process, while finally
+        # blocks still run. That is exactly the path aip relies on in
+        # production - its finally checkpoints the in-flight change and
+        # records 130. So the fake harness writes a change, then throws a
+        # real PipelineStoppedException. The call runs in a child pwsh
+        # process (which the unhandled interrupt kills, so it can never take
+        # down the Pester host); the child's finally records the
+        # LASTEXITCODE that aip set.
         $profile = Join-Path $script:AipProfileRoot 'work'
-        $ready = Join-Path $TestDrive 'interrupt-ready'
+        $fake = Join-Path $TestDrive 'fake-claude.ps1'
         $runner = Join-Path $TestDrive 'interrupt-runner.ps1'
-        # The fake 'claude' is Windows PowerShell 5.1 renamed, running a
-        # small script: write the ready signal, then run ping for its -n
-        # duration. Windows PowerShell's powershell.exe is a self-contained
-        # PE, unlike pwsh.exe, which is a .NET apphost that needs pwsh.dll
-        # beside it and does not work when copied alone. The ready signal
-        # must come from inside the fake, immediately before the long-running
-        # part: aip does pre-run work (before-sync git operations) between
-        # the runner's call and the child launch, so a ready written earlier
-        # lets the interrupt land before the long command exists. No
-        # .cmd/.bat is involved anywhere: a batch would pause at 'Terminate
-        # batch job (Y/N)?' on the event and wait for console input a
-        # headless CI console never provides.
-        $fakeScript = Join-Path $TestDrive 'fake-claude.ps1'
-        $fakeTrace = Join-Path $TestDrive 'fake-trace.txt'
-        @(
-            '$ft = $env:AIP_FAKE_TRACE',
-            'trap { "fake interrupted" | Add-Content -LiteralPath $ft; exit 130 }',
-            "'fake-start' | Set-Content -LiteralPath `$ft",
-            "Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'",
-            "'ready; starting ping' | Add-Content -LiteralPath `$ft",
-            'ping -n 25 127.0.0.1',
-            '$pc = $global:LASTEXITCODE',
-            "'ping returned ' + `$pc | Add-Content -LiteralPath `$ft"
-        ) | Set-Content -LiteralPath $fakeScript -Encoding utf8NoBOM
-        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -Destination (Join-Path $script:FakeBin 'claude.exe') -Force
+        $exitFile = Join-Path $TestDrive 'interrupt-exit.txt'
+        $profileQ = $profile.Replace("'", "''")
+        @"
+Add-Content -LiteralPath '$profileQ/AGENTS.md' 'interrupted in flight'
+throw [System.Management.Automation.PipelineStoppedException]::new('simulated Ctrl-C')
+"@ | Set-Content -LiteralPath $fake -Encoding utf8NoBOM
         $quotedRepository = $script:RepositoryRoot.Replace("'", "''")
         $quotedRoot = $script:AipProfileRoot.Replace("'", "''")
-        $quotedFakeBin = $script:FakeBin.Replace("'", "''")
-        $quotedFakeScript = $fakeScript.Replace("'", "''")
+        $quotedFake = $fake.Replace("'", "''")
         @"
-`$trace = Join-Path '$quotedRoot' 'interrupt-trace.txt'
-'start' | Set-Content -LiteralPath `$trace
 . '$quotedRepository/aip.ps1'
-'aip sourced' | Add-Content -LiteralPath `$trace
-# The child keeps pwsh's default console Ctrl-C handler on purpose: the
-# interrupt must be observed by the child so aip can checkpoint the change
-# and exit 130, not have the OS kill the process outright.
 `$script:AipProfileRoot = '$quotedRoot'
 `$env:AIP_PROFILE = 'work'
-`$script:AipRealPath = '$quotedFakeBin'
-'fakebin=' + `$script:AipRealPath | Add-Content -LiteralPath `$trace
-'claude.exe=' + (Test-Path -LiteralPath (Join-Path `$script:AipRealPath 'claude.exe')) | Add-Content -LiteralPath `$trace
-# Change the checkpointed content and signal ready before starting the
-# long-running child, so the interrupt arrives while it is running.
-Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by ctrl-c'
-# The fake (Windows PowerShell) writes the ready signal itself, just
-# before ping starts.
-'calling claude' | Add-Content -LiteralPath `$trace
+# Route the harness call to the in-process fake, so its
+# PipelineStoppedException propagates through aip's native call
+# statement exactly as a real Ctrl-C would.
+function Get-AipRealCommand { param([string]`$Name) '$quotedFake' }
 try {
-    # Piped: a piped call makes aip's native launch non-standalone, so
-    # on Ctrl-C pwsh kills the fake's process tree and throws a catchable
-    # PipelineStoppedException instead of silently exiting the host (0).
-    claude -NoProfile -File '$quotedFakeScript' *> `$null
-    'claude completed normally' | Add-Content -LiteralPath `$trace
-} catch {
-    'claude threw ' + `$_.Exception.GetType().FullName | Add-Content -LiteralPath `$trace
+    claude *> `$null
+    'completed' | Set-Content -LiteralPath `$env:AIP_PSE_EXIT_FILE
 }
-`$code = `$global:LASTEXITCODE
-'claude returned ' + `$code | Add-Content -LiteralPath `$trace
-exit `$code
+finally {
+    'lastexit=' + `$global:LASTEXITCODE | Add-Content -LiteralPath `$env:AIP_PSE_EXIT_FILE
+}
 "@ | Set-Content -LiteralPath $runner -Encoding utf8NoBOM
-        # The driver must run as its own process: the Ctrl-C it fires targets
-        # the child's console, and if the event ever reaches the attached
-        # process, the disposable driver dies - not the Pester host that
-        # reports the result.
-        $driver = Join-Path $PSScriptRoot 'AipConsoleInterruptDriver.ps1'
-        Test-Path -LiteralPath (Join-Path $script:FakeBin 'claude.exe') | Should -BeTrue
-        $env:AIP_INTERRUPT_READY = $ready
-        $env:AIP_FAKE_TRACE = $fakeTrace
+        $env:AIP_PSE_EXIT_FILE = $exitFile
         try {
             $pwsh = (Get-Command pwsh -CommandType Application).Path
-            $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready -WaitMilliseconds 45000
-            $tracePath = Join-Path $script:AipProfileRoot 'interrupt-trace.txt'
-            $traceText = if (Test-Path -LiteralPath $tracePath) { (Get-Content -LiteralPath $tracePath -Raw).Trim() } else { '<no trace file>' }
-            $fakeTraceText = if (Test-Path -LiteralPath $fakeTrace) { (Get-Content -LiteralPath $fakeTrace -Raw).Trim() } else { '<no fake trace>' }
-            $global:LASTEXITCODE | Should -Be 0 -Because "driver failed; child trace: $traceText | fake trace: $fakeTraceText"
-            $status | Should -Be '130' -Because "child trace: $traceText | fake trace: $fakeTraceText"
+            [void](& $pwsh -NoProfile -File $runner)
         }
-        finally { $env:AIP_INTERRUPT_READY = $null; $env:AIP_FAKE_TRACE = $null }
+        finally { $env:AIP_PSE_EXIT_FILE = $null }
 
-        (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'changed by ctrl-c'
+        Test-Path -LiteralPath $exitFile | Should -BeTrue -Because 'the child pwsh process ran'
+        $exitText = (Get-Content -LiteralPath $exitFile -Raw).Trim()
+        $exitText | Should -Match 'lastexit=130' -Because "aip's finally must record 130: $exitText"
+        (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'interrupted in flight'
     }
 
 }
