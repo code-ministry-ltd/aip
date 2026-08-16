@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -27,13 +28,5 @@ jobs:
         run: npm ci
       - name: Run Bats suite
         run: npm run test:posix
-      - name: Publish to npm
-        run: |
-          if [ -n "${NODE_AUTH_OTP:-}" ]; then
-            npm publish --otp "$NODE_AUTH_OTP"
-          else
-            npm publish
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_OTP: ${{ secrets.NPM_OTP }}
+      - name: Publish to npm (trusted publishing)
+        run: npm publish
