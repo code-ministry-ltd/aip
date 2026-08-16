@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  posix:
+    name: POSIX (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install test dependencies
+        run: npm ci
+      - name: Run Bats suite
+        run: |
+          mkdir -p test-results
+          npm run test:posix -- --report-formatter junit --output test-results
+      - name: Upload Bats report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bats-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: warn
+
+  powershell:
+    name: PowerShell (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Pester
+        shell: pwsh
+        run: |
+          $version = (Get-Content tests/Pester.version -Raw).Trim()
+          Install-Module Pester -RequiredVersion $version -Scope CurrentUser -Force -AllowClobber
+      - name: Run Pester suite
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/run-powershell.ps1
+      - name: Upload Pester report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pester-windows
+          path: test-results/
+          if-no-files-found: warn
