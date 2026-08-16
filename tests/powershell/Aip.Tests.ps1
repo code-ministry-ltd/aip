@@ -487,17 +487,27 @@ exit 130
         $profile = Join-Path $script:AipProfileRoot 'work'
         $ready = Join-Path $TestDrive 'interrupt-ready'
         $runner = Join-Path $TestDrive 'interrupt-runner.ps1'
-        # The fake 'claude' is ping.exe renamed: a real PE executable, so no
-        # cmd.exe batch sits in the child's process tree. A batch would pause
-        # at 'Terminate batch job (Y/N)?' on the Ctrl-C event and wait for
-        # console input a headless CI console never provides; ping runs for
-        # its -n duration and dies natively on the event, which is exactly
-        # the long-running, interruptible child the test needs.
-        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\ping.exe') `
+        # The fake 'claude' is pwsh.exe renamed, running a small script:
+        # write the ready signal, then run ping for its -n duration. The
+        # ready signal must come from inside the fake, immediately before
+        # the long-running part: aip does pre-run work (before-sync git
+        # operations) between the runner's call and the child launch, so a
+        # ready written earlier lets the interrupt land before the long
+        # command exists. No .cmd/.bat is involved anywhere: a batch would
+        # pause at 'Terminate batch job (Y/N)?' on the event and wait for
+        # console input a headless CI console never provides.
+        $fakeScript = Join-Path $TestDrive 'fake-claude.ps1'
+        @(
+            'trap { exit 130 }',
+            "Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'",
+            'ping -n 25 127.0.0.1'
+        ) | Set-Content -LiteralPath $fakeScript -Encoding utf8NoBOM
+        Copy-Item -LiteralPath (Get-Command pwsh -CommandType Application).Path `
             -Destination (Join-Path $script:FakeBin 'claude.exe') -Force
         $quotedRepository = $script:RepositoryRoot.Replace("'", "''")
         $quotedRoot = $script:AipProfileRoot.Replace("'", "''")
         $quotedFakeBin = $script:FakeBin.Replace("'", "''")
+        $quotedFakeScript = $fakeScript.Replace("'", "''")
         @"
 `$trace = Join-Path '$quotedRoot' 'interrupt-trace.txt'
 'start' | Set-Content -LiteralPath `$trace
@@ -514,9 +524,9 @@ exit 130
 # Change the checkpointed content and signal ready before starting the
 # long-running child, so the interrupt arrives while it is running.
 Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by ctrl-c'
-Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'
-'ready written; calling claude' | Add-Content -LiteralPath `$trace
-claude -n 25 127.0.0.1
+# The fake (pwsh) writes the ready signal itself, just before ping starts.
+'calling claude' | Add-Content -LiteralPath `$trace
+claude -NoProfile -File '$quotedFakeScript'
 `$code = `$global:LASTEXITCODE
 'claude returned ' + `$code | Add-Content -LiteralPath `$trace
 exit `$code
