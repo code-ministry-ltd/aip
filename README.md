@@ -8,27 +8,27 @@ Each profile is an ordinary directory under `~/agent-profiles`. It has one commo
 
 ## Requirements
 
+- Node.js 18 or newer (aip is distributed through npm; every supported harness already depends on Node).
 - Git, with `user.name` and `user.email` configured.
 - macOS, Linux or WSL with Bash/Zsh; or native Windows with PowerShell 7.3+, Git for Windows and Developer Mode enabled for symbolic links. Before cloning a profile on Windows, run `git config --global core.symlinks true` and `git config --global core.longpaths true` so Git checks out the shared-resource links and long portable paths correctly.
 - Any of `claude`, `codex`, `pi` or `opencode` that you want to use.
 
 ## Install
 
-Review the installer, then run it from a clone of this repository.
-
-On Bash or Zsh:
+aip is published on npm as `@code-ministry/aip`:
 
 ```sh
-bash install.sh
+npx -y @code-ministry/aip install
 ```
 
-On PowerShell 7.3 or newer:
+Bash, Zsh and PowerShell 7.3+ all use the same command; the platform installer runs automatically. The installer prints both affected paths, copies one integration file into your user data directory and adds one marked, idempotent source line to your shell profile. It requires no elevation and does not install Git or a harness.
 
-```powershell
-./install.ps1
+Prefer to review before installing? Fetch the installer first:
+
+```sh
+npx -y @code-ministry/aip version   # confirms the package resolves
+# or read the source: https://github.com/code-ministry-ltd/aip/blob/main/install.sh
 ```
-
-The installer prints both affected paths, copies one integration file into your user data directory and adds one marked, idempotent source line to your shell profile. It requires no elevation and does not install Git or a harness.
 
 Restart your shell, then create and select a profile:
 
@@ -52,6 +52,44 @@ aip
 ```
 
 The status command shows the selected profile and source, outfit, path, Git state and harness availability.
+
+### Updating
+
+```sh
+npx -y @code-ministry/aip update
+```
+
+or, from an installed shell:
+
+```sh
+aip update
+```
+
+Both re-run the idempotent installer against the latest published version and report the version change (for example `Updated aip from 0.1.0 to 0.2.0`). The installed copy keeps working offline until you update it.
+
+### Without installing
+
+Every aip command also works one-shot through npx, always using the latest published version:
+
+```sh
+npx -y @code-ministry/aip list
+npx -y @code-ministry/aip doctor
+npx -y @code-ministry/aip create work --outfit suit
+```
+
+Only the installed shell functions provide the transparent `claude`, `codex`, `pi` and `opencode` wrappers.
+
+### From source
+
+When working from a checkout of this repository, run the installer directly instead:
+
+```sh
+bash install.sh
+```
+
+```powershell
+./install.ps1
+```
 
 ## Profile contents
 
@@ -136,6 +174,8 @@ aip which [NAME]                 print only the profile path
 aip doctor [NAME]                read-only diagnostics
 aip run [NAME] HARNESS [ARGS...] launch explicitly
 aip delete NAME [--force]        guarded profile deletion
+aip update                       update the installed copy via npx
+aip version                      print the aip version
 ```
 
 `aip delete` never infers a target. It refuses the active session profile and requires confirmation unless `--force` is explicit. Local clone includes only the source's checkpointed tree—not ignored runtime files, untracked files, remotes or history.
@@ -160,8 +200,8 @@ GitHub Actions runs the complete Bats suite on Linux/macOS and Pester on native 
 
 ## Uninstall
 
-Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed integration file:
+Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed directory:
 
-- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/aip.sh`
-- Windows: `$env:LOCALAPPDATA\aip\aip.ps1`
-- PowerShell on macOS/Linux: `~/.local/share/aip/aip.ps1`
+- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`)
+- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
+- PowerShell on macOS/Linux: `~/.local/share/aip/`
