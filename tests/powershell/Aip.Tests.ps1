@@ -537,7 +537,10 @@ Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by 
 # before ping starts.
 'calling claude' | Add-Content -LiteralPath `$trace
 try {
-    claude -NoProfile -File '$quotedFakeScript'
+    # Piped: a piped call makes aip's native launch non-standalone, so
+    # on Ctrl-C pwsh kills the fake's process tree and throws a catchable
+    # PipelineStoppedException instead of silently exiting the host (0).
+    claude -NoProfile -File '$quotedFakeScript' *> $null
     'claude completed normally' | Add-Content -LiteralPath `$trace
 } catch {
     'claude threw ' + `$_.Exception.GetType().FullName | Add-Content -LiteralPath `$trace
@@ -568,46 +571,6 @@ exit `$code
         (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'changed by ctrl-c'
     }
 
-    # TEMPORARY DIAGNOSTIC (remove once the launch mode is chosen):
-    # a console Ctrl-C killed -File children without running their trap/
-    # finally and with exit code 0. Find out which pwsh launch mode, if
-    # any, stops the pipeline instead of exiting the host. Each child
-    # writes ready, sleeps 30s under trap/finally, and exits 42 if never
-    # interrupted; the driver interrupts it and reports the exit code.
-    It 'diagnostic: interrupt behavior per pwsh launch mode' -Skip:(-not $IsWindows) {
-        $diagScript = Join-Path $TestDrive 'diag.ps1'
-        $diagTrace = Join-Path $TestDrive 'diag-trace.txt'
-        $ready = Join-Path $TestDrive 'diag-ready'
-        @(
-            '$t = $env:DIAG_TRACE',
-            '$label = $env:DIAG_LABEL',
-            "Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'",
-            'trap { Add-Content -LiteralPath $t "$label trap fired"; exit 130 }',
-            'try { Start-Sleep -Seconds 30; Add-Content -LiteralPath $t "$label sleep completed" } finally { Add-Content -LiteralPath $t "$label finally ran" }',
-            'exit 42'
-        ) | Set-Content -LiteralPath $diagScript -Encoding utf8NoBOM
-        $driver = Join-Path $PSScriptRoot 'AipConsoleInterruptDriver.ps1'
-        $pwsh = (Get-Command pwsh -CommandType Application).Path
-        $env:AIP_INTERRUPT_READY = $ready
-        $env:DIAG_TRACE = $diagTrace
-        try {
-            $findings = @()
-            foreach ($mode in @('file', 'command')) {
-                Remove-Item -LiteralPath $ready -ErrorAction SilentlyContinue
-                $env:DIAG_LABEL = $mode
-                $override = ''
-                if ($mode -eq 'command') {
-                    $scriptArg = "'" + $diagScript + "'"
-                    $override = '"' + $pwsh + '" -NoProfile -Command "' + "& " + $scriptArg + '"'
-                }
-                $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $diagScript -ReadyPath $ready -WaitMilliseconds 45000 -CommandLineOverride $override
-                $trace = if (Test-Path -LiteralPath $diagTrace) { (Get-Content -LiteralPath $diagTrace -Raw).Trim() } else { '<no trace>' }
-                $findings += "mode=$mode driverExit=$LASTEXITCODE status=[$($status -join ',')] trace=[$trace]"
-            }
-            $true | Should -BeFalse -Because ("DIAG " + ($findings -join ' || '))
-        }
-        finally { $env:AIP_INTERRUPT_READY = $null; $env:DIAG_TRACE = $null; $env:DIAG_LABEL = $null }
-    }
 }
 
 Describe 'local lifecycle' {
