@@ -1175,7 +1175,20 @@ exit 1
         $global:LASTEXITCODE | Should -Be 0
         $script:AipLastWarning | Should -Match 'remote sync unavailable'
         Test-Path -LiteralPath $promptFlag | Should -BeFalse
-        (Get-Content -LiteralPath $sshArgs -Raw) | Should -Match 'BatchMode=yes'
+        if ($IsWindows) {
+            # git-for-windows routes GIT_SSH_COMMAND through sh, which cannot
+            # execute a .cmd, so the fake never runs here. Assert the
+            # transport aip hands to git instead; the full args e2e (git
+            # executing the fake) runs on the POSIX jobs.
+            $env:GIT_SSH_COMMAND = '"' + $fakeSsh + '"'
+            try {
+                (Get-AipSshTransport $profile).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
+            }
+            finally { $env:GIT_SSH_COMMAND = $null }
+        }
+        else {
+            (Get-Content -LiteralPath $sshArgs -Raw) | Should -Match 'BatchMode=yes'
+        }
     }
 
     It 'places the noninteractive SSH setting before a configured BatchMode=no' {
@@ -1237,7 +1250,19 @@ exit 1
         finally { $env:GIT_SSH = $null }
 
         $global:LASTEXITCODE | Should -Be 0
-        (Get-Content -LiteralPath $sshArgs -Raw) | Should -Match 'BatchMode=yes'
+        if ($IsWindows) {
+            # git-for-windows cannot launch a .cmd via CreateProcess for
+            # GIT_SSH either, so assert the transport construction instead:
+            # the spaced path must survive quoting with BatchMode=yes added.
+            $env:GIT_SSH = $fakeSsh
+            try {
+                (Get-AipSshTransport $profile).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
+            }
+            finally { $env:GIT_SSH = $null }
+        }
+        else {
+            (Get-Content -LiteralPath $sshArgs -Raw) | Should -Match 'BatchMode=yes'
+        }
     }
 
     It 'never overwrites ignored local profile state during remote integration' {
