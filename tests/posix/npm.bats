@@ -1,6 +1,13 @@
 #!/usr/bin/env bats
 
+load test_helper
+
 SHIM="$BATS_TEST_DIRNAME/../../bin/aip.js"
+
+setup() {
+  setup_aip_test
+  make_fake_harness npx
+}
 
 @test "the npm shim runs aip one-shot without installing" {
   export HOME="$BATS_TEST_TMPDIR/home"
@@ -48,6 +55,25 @@ SHIM="$BATS_TEST_DIRNAME/../../bin/aip.js"
   run node "$SHIM" update
   [ "$status" -eq 0 ]
   [ "$(grep -c '^# >>> aip >>>$' "$_AIP_SHELL_PROFILE")" -eq 1 ]
+}
+
+@test "aip update delegates to the npm package update command" {
+  run aip update
+  [ "$status" -eq 0 ]
+  grep -qx 'harness=npx' "$FAKE_CAPTURE"
+  grep -qx 'arg=--yes' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip' "$FAKE_CAPTURE"
+  grep -qx 'arg=update' "$FAKE_CAPTURE"
+}
+
+@test "aip update fails cleanly without Node.js and rejects extra arguments" {
+  run aip update extra
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'usage: aip update'* ]]
+
+  run bash -c 'export PATH=; . "$0"; aip update' "$AIP_SOURCE"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'update requires Node.js (npx) on PATH'* ]]
 }
 
 @test "the npm version matches the version embedded in both scripts" {

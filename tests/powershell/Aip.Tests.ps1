@@ -97,6 +97,28 @@ It 'reports the embedded version and rejects extra arguments' {
     $global:LASTEXITCODE | Should -Not -Be 0
 }
 
+It 'update delegates to the npm package update command' {
+    New-FakeHarness 'npx'
+    $savedPath = $env:PATH
+    $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
+    try {
+        aip update
+        $global:LASTEXITCODE | Should -Be 0
+        $lines = Get-Content -LiteralPath $script:FakeCapture
+        $lines | Should -Contain 'harness=npx'
+        $lines | Should -Contain 'arg=--yes'
+        $lines | Should -Contain 'arg=@code-ministry/aip'
+        $lines | Should -Contain 'arg=update'
+    }
+    finally { $env:PATH = $savedPath }
+}
+
+It 'update rejects extra arguments without invoking npx' {
+    aip update extra *> $null
+    $global:LASTEXITCODE | Should -Not -Be 0
+    Test-Path -LiteralPath $script:FakeCapture | Should -BeFalse
+}
+
 Describe 'profile creation and selection' {
     It 'validates profile names strictly and portably' {
         Test-AipProfileName 'client-42_name' | Should -BeTrue
@@ -1557,7 +1579,44 @@ Describe 'installer' {
         }
     }
 
-    It 'returns a nonzero process status when installation fails' {
+    It 'stamps VERSION and reports install, update, and no-op' {
+    $installRoot = Join-Path $TestDrive 'installed aip'
+    $profilePath = Join-Path $TestDrive 'profile.ps1'
+    'keep' | Set-Content -LiteralPath $profilePath
+    $env:_AIP_INSTALL_ROOT = $installRoot
+    $env:_AIP_SHELL_PROFILE = $profilePath
+    try {
+        $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
+        $LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.1.0'
+        $output | Should -Match 'Installed aip 0\.1\.0\.'
+
+        $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'aip 0\.1\.0 is already installed'
+
+        $pkgCopy = Join-Path $TestDrive 'pkg'
+        New-Item -ItemType Directory -Path $pkgCopy | Out-Null
+        $aipCopy = Join-Path $pkgCopy 'aip.ps1'
+        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Destination $aipCopy
+        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'install.ps1') -Destination (Join-Path $pkgCopy 'install.ps1')
+        $pattern = [regex]::Escape("`$script:AipVersion = '0.1.0'")
+        $replacement = "`$script:AipVersion = '0.2.0'"
+        $content = (Get-Content -LiteralPath $aipCopy -Raw) -replace $pattern, $replacement
+        Set-Content -LiteralPath $aipCopy -Value $content -Encoding utf8NoBOM
+
+        $output = (& (Join-Path $pkgCopy 'install.ps1') 2>&1) | Out-String
+        $LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.2.0'
+        $output | Should -Match 'Updated aip from 0\.1\.0 to 0\.2\.0\.'
+    }
+    finally {
+        $env:_AIP_INSTALL_ROOT = $null
+        $env:_AIP_SHELL_PROFILE = $null
+    }
+}
+
+It 'returns a nonzero process status when installation fails' {
         $blockedRoot = Join-Path $TestDrive 'blocked root'
         'not a directory' | Set-Content $blockedRoot
         $profilePath = Join-Path $TestDrive 'profile.ps1'

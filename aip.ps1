@@ -1548,6 +1548,14 @@ function Invoke-AipUse {
     Write-Output "Using profile '$name' for this PowerShell session"
 }
 
+function Invoke-AipUpdate {
+    param([object[]]$Arguments)
+    if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
+    if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
+    & npx --yes '@code-ministry/aip' update
+    $script:AipCommandStatus = $LASTEXITCODE
+}
+
 function Invoke-AipVersion {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip version'; $script:AipCommandStatus = 2; return }
@@ -1783,6 +1791,7 @@ function aip {
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSync $rest }
             'use' { Invoke-AipUse $rest }
+            'update' { Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }
             'version' { Invoke-AipVersion $rest }
             'which' { Invoke-AipWhich $rest }
             default { Write-AipError "unknown command '$command'"; $script:AipCommandStatus = 2 }

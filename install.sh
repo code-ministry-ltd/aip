@@ -28,6 +28,12 @@ else
 fi
 
 installed_file=$install_root/aip.sh
+package_version=$(sed -n "s/^_AIP_VERSION='\(.*\)'$/\1/p" "$source_file" | head -n 1)
+[ -n "$package_version" ] || { printf 'aip: cannot read the package version from %s\n' "$source_file" >&2; exit 1; }
+previous_version=''
+if [ -f "$install_root/VERSION" ]; then
+  previous_version=$(head -n 1 "$install_root/VERSION" 2>/dev/null || true)
+fi
 printf 'aip will install: %s\n' "$installed_file"
 printf 'aip will update:  %s\n' "$shell_profile"
 
@@ -50,4 +56,11 @@ else
   } >>"$shell_profile"
 fi
 
-printf 'Installed aip. Restart your shell or run: %s\n' "$source_line"
+printf '%s\n' "$package_version" >"$install_root/VERSION"
+if [ -n "$previous_version" ] && [ "$previous_version" != "$package_version" ]; then
+  printf 'Updated aip from %s to %s. Restart your shell or run: %s\n' "$previous_version" "$package_version" "$source_line"
+elif [ -n "$previous_version" ]; then
+  printf 'aip %s is already installed. Restart your shell or run: %s\n' "$package_version" "$source_line"
+else
+  printf 'Installed aip %s. Restart your shell or run: %s\n' "$package_version" "$source_line"
+fi

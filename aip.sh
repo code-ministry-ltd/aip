@@ -7,6 +7,18 @@ _aip_error() {
   printf 'aip: %s\n' "$*" >&2
 }
 
+_aip_update() {
+  [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
+  (
+    _aip_clear_git_routing
+    if ! command -v npx >/dev/null 2>&1; then
+      _aip_error 'update requires Node.js (npx) on PATH'
+      return 1
+    fi
+    command npx --yes @code-ministry/aip update
+  )
+}
+
 _aip_version() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip version'; return 2; }
   printf 'aip %s\n' "$_AIP_VERSION"
@@ -1001,8 +1013,8 @@ _aip_is_command() {
   [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = run ] ||
-    [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = version ] ||
-    [ "${1-}" = which ]
+    [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
+    [ "${1-}" = version ] || [ "${1-}" = which ]
 }
 
 _aip_find_real_command() {
@@ -1684,6 +1696,7 @@ aip() {
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;
+    update) _aip_update "$@" ;;
     version) _aip_version "$@" ;;
     which) _aip_which "$@" ;;
   esac

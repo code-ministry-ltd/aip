@@ -18,6 +18,16 @@ else {
 $shellProfile = if ($env:_AIP_SHELL_PROFILE) { $env:_AIP_SHELL_PROFILE } else { $PROFILE.CurrentUserAllHosts }
 $installedFile = Join-Path $installRoot 'aip.ps1'
 
+$packageVersion = if ((Get-Content -LiteralPath $sourceFile -Raw) -match "(?m)^\`$script:AipVersion = '([^']*)'") { $Matches[1] } else { $null }
+if (-not $packageVersion) {
+    Write-Error "aip: cannot read the package version from $sourceFile"
+    $global:LASTEXITCODE = 1
+    return
+}
+$previousVersion = $null
+$versionFile = Join-Path $installRoot 'VERSION'
+if (Test-Path -LiteralPath $versionFile) { $previousVersion = (Get-Content -LiteralPath $versionFile -TotalCount 1).Trim() }
+
 Write-Output "aip will install: $installedFile"
 Write-Output "aip will update:  $shellProfile"
 
@@ -41,7 +51,16 @@ try {
         $block = @('# >>> aip >>>', $sourceLine, '# <<< aip <<<') -join [Environment]::NewLine
         Add-Content -LiteralPath $shellProfile -Value "$prefix$block" -Encoding utf8NoBOM -ErrorAction Stop
     }
-    Write-Output "Installed aip. Restart PowerShell or run: $sourceLine"
+        Set-Content -LiteralPath $versionFile -Value $packageVersion -Encoding utf8NoBOM
+        if ($previousVersion -and $previousVersion -ne $packageVersion) {
+            Write-Output "Updated aip from $previousVersion to $packageVersion. Restart PowerShell or run: $sourceLine"
+        }
+        elseif ($previousVersion) {
+            Write-Output "aip $packageVersion is already installed. Restart PowerShell or run: $sourceLine"
+        }
+        else {
+            Write-Output "Installed aip $packageVersion. Restart PowerShell or run: $sourceLine"
+        }
 }
 catch {
     $global:LASTEXITCODE = 1
