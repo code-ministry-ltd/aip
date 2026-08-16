@@ -499,31 +499,42 @@ exit 130
         $quotedRoot = $script:AipProfileRoot.Replace("'", "''")
         $quotedFakeBin = $script:FakeBin.Replace("'", "''")
         @"
+`$trace = Join-Path '$quotedRoot' 'interrupt-trace.txt'
+'start' | Set-Content -LiteralPath `$trace
 . '$quotedRepository/aip.ps1'
+'aip sourced' | Add-Content -LiteralPath `$trace
 # The child keeps pwsh's default console Ctrl-C handler on purpose: the
 # interrupt must be observed by the child so aip can checkpoint the change
 # and exit 130, not have the OS kill the process outright.
 `$script:AipProfileRoot = '$quotedRoot'
 `$env:AIP_PROFILE = 'work'
 `$script:AipRealPath = '$quotedFakeBin'
+'fakebin=' + `$script:AipRealPath | Add-Content -LiteralPath `$trace
+'claude.exe=' + (Test-Path -LiteralPath (Join-Path `$script:AipRealPath 'claude.exe')) | Add-Content -LiteralPath `$trace
 # Change the checkpointed content and signal ready before starting the
 # long-running child, so the interrupt arrives while it is running.
 Add-Content -LiteralPath (Join-Path '$quotedRoot' 'work\AGENTS.md') 'changed by ctrl-c'
 Set-Content -LiteralPath `$env:AIP_INTERRUPT_READY 'ready'
+'ready written; calling claude' | Add-Content -LiteralPath `$trace
 claude -n 25 127.0.0.1
-exit `$global:LASTEXITCODE
+`$code = `$global:LASTEXITCODE
+'claude returned ' + `$code | Add-Content -LiteralPath `$trace
+exit `$code
 "@ | Set-Content -LiteralPath $runner -Encoding utf8NoBOM
         # The driver must run as its own process: the Ctrl-C it fires targets
         # the child's console, and if the event ever reaches the attached
         # process, the disposable driver dies - not the Pester host that
         # reports the result.
         $driver = Join-Path $PSScriptRoot 'AipConsoleInterruptDriver.ps1'
+        Test-Path -LiteralPath (Join-Path $script:FakeBin 'claude.exe') | Should -BeTrue
         $env:AIP_INTERRUPT_READY = $ready
         try {
             $pwsh = (Get-Command pwsh -CommandType Application).Path
             $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready -WaitMilliseconds 45000
             $global:LASTEXITCODE | Should -Be 0
-            $status | Should -Be '130'
+            $tracePath = Join-Path $script:AipProfileRoot 'interrupt-trace.txt'
+            $traceText = if (Test-Path -LiteralPath $tracePath) { (Get-Content -LiteralPath $tracePath -Raw).Trim() } else { '<no trace file>' }
+            $status | Should -Be '130' -Because "child trace: $traceText"
         }
         finally { $env:AIP_INTERRUPT_READY = $null }
 
