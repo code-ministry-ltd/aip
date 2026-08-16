@@ -1,13 +1,27 @@
 {
-  "name": "aip",
+  "name": "@code-ministry/aip",
   "version": "0.1.0",
-  "private": true,
   "description": "AI profiles shared across agentic harnesses",
+  "bin": {
+    "aip": "bin/aip.js"
+  },
+  "files": [
+    "aip.sh",
+    "aip.ps1",
+    "install.sh",
+    "install.ps1",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test:posix": "bats tests/posix"
   },
   "devDependencies": {
     "bats": "1.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
-

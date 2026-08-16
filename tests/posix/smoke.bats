@@ -4,6 +4,17 @@
   [ "${BATS_TEST_FILENAME##*/}" = "smoke.bats" ]
 }
 
+@test "version reports the embedded version and rejects extra arguments" {
+  export AIP_SOURCE="$BATS_TEST_DIRNAME/../../aip.sh"
+
+  run bash -c 'source "$0"; aip version' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'aip 0.1.0' ]
+
+  run bash -c 'source "$0"; aip version extra' "$AIP_SOURCE"
+  [ "$status" -ne 0 ]
+}
+
 @test "stock Zsh lists an empty profile root without glob errors" {
   command -v zsh >/dev/null || skip 'Zsh is not installed'
   export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/empty profiles"
