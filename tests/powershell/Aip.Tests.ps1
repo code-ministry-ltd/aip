@@ -560,10 +560,10 @@ exit `$code
         try {
             $pwsh = (Get-Command pwsh -CommandType Application).Path
             $status = & $pwsh -NoProfile -File $driver -Pwsh $pwsh -ScriptPath $runner -ReadyPath $ready -WaitMilliseconds 45000
-            $global:LASTEXITCODE | Should -Be 0
             $tracePath = Join-Path $script:AipProfileRoot 'interrupt-trace.txt'
             $traceText = if (Test-Path -LiteralPath $tracePath) { (Get-Content -LiteralPath $tracePath -Raw).Trim() } else { '<no trace file>' }
             $fakeTraceText = if (Test-Path -LiteralPath $fakeTrace) { (Get-Content -LiteralPath $fakeTrace -Raw).Trim() } else { '<no fake trace>' }
+            $global:LASTEXITCODE | Should -Be 0 -Because "driver failed; child trace: $traceText | fake trace: $fakeTraceText"
             $status | Should -Be '130' -Because "child trace: $traceText | fake trace: $fakeTraceText"
         }
         finally { $env:AIP_INTERRUPT_READY = $null; $env:AIP_FAKE_TRACE = $null }

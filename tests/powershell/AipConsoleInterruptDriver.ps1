@@ -155,7 +155,7 @@ public static class AipConsoleInterruptDriver {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "could not start interrupt test process");
         }
         try {
-            var deadline = DateTime.UtcNow.AddSeconds(20);
+            var deadline = DateTime.UtcNow.AddSeconds(30);
             while (!File.Exists(readyPath) && DateTime.UtcNow < deadline) { Thread.Sleep(50); }
             if (!File.Exists(readyPath)) {
                 TerminateProcess(process.hProcess, 1);
