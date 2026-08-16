@@ -540,7 +540,7 @@ try {
     # Piped: a piped call makes aip's native launch non-standalone, so
     # on Ctrl-C pwsh kills the fake's process tree and throws a catchable
     # PipelineStoppedException instead of silently exiting the host (0).
-    claude -NoProfile -File '$quotedFakeScript' *> $null
+    claude -NoProfile -File '$quotedFakeScript' *> `$null
     'claude completed normally' | Add-Content -LiteralPath `$trace
 } catch {
     'claude threw ' + `$_.Exception.GetType().FullName | Add-Content -LiteralPath `$trace
