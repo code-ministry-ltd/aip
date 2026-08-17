@@ -1,6 +1,6 @@
 # Tasks — Whole-directory sync model + `help`
 
-Status: **IN PROGRESS** (approved 2025-07; re-sliced for green-between-slices — see note)
+Status: **IN PROGRESS** — T1 done (60307ab, 3b05b22), T2 done (35b3e02), T3 done; now on T4
 Spec: `tasks/spec.md` · Plan: `tasks/plan.md`
 
 > **Re-slice note (why the boundaries differ from v1 of this file).** The per-profile →
@@ -36,6 +36,8 @@ Bats suite is converted to the new layout in the same commit.
 Verify: `npm run test:posix`
 Depends: — · Files: `aip.sh`, `tests/posix/*.bats` (all) · Size L (the one irreducible slice)
 
+**DONE** (Bats 127/127 green; committed 3b05b22).
+
 ## T2 — PowerShell port + Pester suite
 
 Port every T1 behavior to `aip.ps1` and convert `tests/powershell/Aip.Tests.ps1` to the new
@@ -47,6 +49,8 @@ layout, mirroring the Bats changes one-for-one.
 Verify: Pester run (`tests/run-powershell.ps1`) + CI
 Depends: T1 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size L
 
+**DONE** (Pester 98/98 + Bats 127/127 green; committed 35b3e02).
+
 ## T3 — `aip remote add|show|remove` (both shells)
 
 The multi-machine story. `remote add`: existing repo → set origin + sync; missing/empty
@@ -54,12 +58,14 @@ root → clone the URL (non-interactive SSH env, forced `core.symlinks/longpaths
 validation. `show` prints origin URL or "no remote is configured". `remove` unsets origin
 and branch upstream.
 
-- [ ] Machine A: `remote add <bare-url>` sets origin, pushes; Machine B (fresh root): `remote add <same-url>` clones; `aip list` shows every profile (spec success criterion 2)
-- [ ] `show`/`remove` as specified; `add` with existing origin errors
-- [ ] Bats (`tests/posix/remote.bats`, new) + Pester green
+- [x] Machine A: `remote add <bare-url>` sets origin, pushes; Machine B (fresh root): `remote add <same-url>` clones; `aip list` shows every profile (spec success criterion 2)
+- [x] `show`/`remove` as specified; `add` with existing origin errors
+- [x] Bats (`tests/posix/remote.bats`, new) + Pester green
 
 Verify: `npm run test:posix` + Pester
 Depends: T2 · Files: `aip.sh`, `aip.ps1`, `tests/posix/remote.bats`, `tests/powershell/Aip.Tests.ps1` · Size M
+
+**DONE** (verified in this commit state: Bats remote 9/9 + full Pester 107/107 green).
 
 ## T4 — `help` command (both shells)
 

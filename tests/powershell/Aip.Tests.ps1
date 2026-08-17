@@ -1603,6 +1603,127 @@ exit 1
     }
 }
 
+Describe 'remote' {
+    BeforeEach {
+        $script:TestRemote = Join-Path $TestDrive 'remote.git'
+        & git init -q --bare $script:TestRemote
+    }
+
+    It 'reports no remote before a repository exists' {
+        aip remote show | Should -Be 'no remote is configured'
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'sets origin on an existing repository and publishes an empty remote' {
+        New-TestProfile work suit
+        aip remote add $script:TestRemote | Out-String | Should -Match 'Profiles published to origin/main.'
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot remote get-url origin) | Should -Be $script:TestRemote
+        & git -C $script:TestRemote rev-parse --verify refs/heads/main *> $null
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'attaches to an already published remote and syncs' {
+        New-TestProfile work
+        aip remote add $script:TestRemote *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        aip remote remove *> $null
+
+        aip remote add $script:TestRemote | Out-String | Should -Match 'Profiles synced with origin/main.'
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot config --get branch.main.remote) | Should -Be 'origin'
+    }
+
+    It 'refuses a second origin and points at remote remove' {
+        New-TestProfile work
+        aip remote add $script:TestRemote *> $null
+        $global:LASTEXITCODE | Should -Be 0
+
+        aip remote add (Join-Path $TestDrive 'other.git') *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'origin is already configured'
+        $script:AipLastError | Should -Match 'aip remote remove'
+    }
+
+    It 'clones the repository on a fresh machine and lists every profile' {
+        New-TestProfile work suit
+        New-TestProfile personal hoodie
+        aip remote add $script:TestRemote *> $null
+        $global:LASTEXITCODE | Should -Be 0
+
+        $freshRoot = Join-Path $TestDrive 'fresh machine/profile root'
+        $script:AipProfileRoot = $freshRoot
+
+        aip remote add $script:TestRemote | Out-String | Should -Match "Cloned profiles from $([regex]::Escape($script:TestRemote))."
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path (Join-Path $freshRoot '.git') | Should -BeTrue
+        $listOutput = aip list | Out-String
+        $listOutput | Should -Match 'work — suit'
+        $listOutput | Should -Match 'personal — hoodie'
+        aip which work | Should -Be (Join-Path $freshRoot 'work')
+        (Get-Item (Join-Path $freshRoot 'work/codex/AGENTS.md')).LinkType | Should -Be 'SymbolicLink'
+        (& git -C $freshRoot config --bool core.symlinks) | Should -Be 'true'
+    }
+
+    It 'refuses a non-empty directory that is not a repository' {
+        $stuffed = Join-Path $TestDrive 'stuffed'
+        New-Item -ItemType Directory -Path $stuffed | Out-Null
+        'user data' | Set-Content (Join-Path $stuffed 'mine.txt')
+        $script:AipProfileRoot = $stuffed
+
+        aip remote add $script:TestRemote *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'already contains content'
+        $script:AipLastError | Should -Match 'aip create NAME'
+        (Get-Content (Join-Path $stuffed 'mine.txt') -Raw).Trim() | Should -Be 'user data'
+    }
+
+    It 'unsets origin and the branch upstream on remove' {
+        New-TestProfile work
+        aip remote add $script:TestRemote *> $null
+
+        aip remote remove | Out-String | Should -Match 'Remote removed; profiles are now local only.'
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot remote) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot config --get branch.main.remote 2>$null) | Should -BeNullOrEmpty
+
+        aip remote show | Should -Be 'no remote is configured'
+        aip sync | Out-String | Should -Match 'Profiles are local only \(no upstream\)'
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'remove without a configured remote is a no-op message' {
+        New-TestProfile work
+        aip remote remove | Should -Be 'no remote is configured'
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'usage and unknown subcommands exit 2' {
+        aip remote *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip remote add URL \| aip remote show \| aip remote remove'
+
+        aip remote add *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip remote add URL'
+
+        aip remote add one two *> $null
+        $global:LASTEXITCODE | Should -Be 2
+
+        aip remote show extra *> $null
+        $global:LASTEXITCODE | Should -Be 2
+
+        aip remote remove extra *> $null
+        $global:LASTEXITCODE | Should -Be 2
+
+        aip remote push *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "unknown remote command 'push'"
+    }
+}
+
 Describe 'installer' {
     It 'installs per-user without duplicating or replacing unrelated profile content' {
         $installRoot = Join-Path $TestDrive 'installed aip'

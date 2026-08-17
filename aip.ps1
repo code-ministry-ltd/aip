@@ -1930,6 +1930,200 @@ function Invoke-AipRun {
     $script:AipCommandStatus = $global:LASTEXITCODE
 }
 
+function Invoke-AipRemoteShow {
+    $root = $script:AipProfileRoot
+    $url = $null
+    $rootGit = Join-Path $root '.git'
+    if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))) {
+        $url = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -ne 0) { $url = @() }
+    }
+    if ($url.Count -eq 1 -and "$url[0]".Trim().Length -gt 0) { Write-Output $url[0] }
+    else { Write-Output 'no remote is configured' }
+}
+
+function Invoke-AipRemoteRemove {
+    $root = $script:AipProfileRoot
+    $url = $null
+    $rootGit = Join-Path $root '.git'
+    if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))) {
+        $url = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -ne 0) { $url = @() }
+    }
+    if ($url.Count -eq 0 -or "$url[0]".Trim().Length -eq 0) { Write-Output 'no remote is configured'; return }
+    $null = Invoke-AipGit -C $root remote remove origin
+    if ($LASTEXITCODE -ne 0) {
+        Write-AipError 'could not remove the origin remote; inspect the profiles repository'
+        return 1
+    }
+    $branch = Invoke-AipGit -C $root branch --show-current 2>$null
+    if ($LASTEXITCODE -eq 0 -and $branch) { Invoke-AipGit -C $root branch --unset-upstream 2>$null | Out-Null }
+    Write-Output 'Remote removed; profiles are now local only.'
+}
+
+function Invoke-AipRemoteAdd {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Url)
+    if ("$Url".Trim().Length -eq 0) { Write-AipError 'usage: aip remote add URL'; $script:AipCommandStatus = 2; return }
+    if ($Url -match '\s') { Write-AipError "invalid remote URL: $Url"; $script:AipCommandStatus = 2; return }
+    $root = $script:AipProfileRoot
+    $rootGit = Join-Path $root '.git'
+    $repoExists = (Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))
+    if ($repoExists) {
+        $existing = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $existing.Count -eq 1 -and "$existing[0]".Trim().Length -gt 0) {
+            Write-AipError "origin is already configured ($($existing[0])); run 'aip remote remove' first"
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root remote add origin $Url
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError "could not configure origin: $Url"
+            $script:AipCommandStatus = 1
+            return
+        }
+    }
+    else {
+        if ((Test-Path -LiteralPath $root) -and -not (Test-Path -LiteralPath $root -PathType Container)) {
+            Write-AipError "profiles path exists and is not a directory: $root"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (Test-Path -LiteralPath $rootGit) {
+            Write-AipError "profiles repository metadata is missing or linked: $rootGit"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (Test-Path -LiteralPath $root) {
+            $contents = Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue
+            if ($null -ne $contents) {
+                Write-AipError "profiles directory already contains content: $root; use 'aip create NAME' instead of 'aip remote add'"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        try { New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop | Out-Null }
+        catch { Write-AipError "could not create the profiles directory: $root"; $script:AipCommandStatus = 1; return }
+        $transport = Get-AipSshTransport $root
+        if ($null -eq $transport) {
+            Write-AipError 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $env:GIT_TERMINAL_PROMPT = '0'
+        $env:GCM_INTERACTIVE = 'never'
+        $env:GIT_SSH_COMMAND = $transport.Command
+        $env:GIT_SSH_VARIANT = $transport.Variant
+        try {
+            $null = Invoke-AipGit clone --quiet -- $Url $root
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not clone $Url into $root; the remote must be a profiles repository created by aip"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+        $null = Invoke-AipGit -C $root config core.symlinks true
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not configure symbolic-link checkout'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root config core.longpaths true
+        $null = Invoke-AipGit -C $root rev-parse --verify HEAD 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $null = Invoke-AipGit -C $root rev-parse --verify refs/remotes/origin/main 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $null = Invoke-AipGit -C $root checkout -q -B main refs/remotes/origin/main 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-AipError 'could not check out the cloned profiles branch'
+                    $script:AipCommandStatus = 1
+                    return
+                }
+            }
+        }
+        Write-Output "Cloned profiles from $Url."
+    }
+    $branch = Invoke-AipGit -C $root branch --show-current 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $branch) { $branch = '' }
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        Write-AipError 'cannot attach a remote while detached from a branch'
+        $script:AipCommandStatus = 1
+        return
+    }
+    $transport = Get-AipSshTransport $root
+    if ($null -eq $transport) {
+        Write-AipError 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+        $script:AipCommandStatus = 1
+        return
+    }
+    $env:GIT_TERMINAL_PROMPT = '0'
+    $env:GCM_INTERACTIVE = 'never'
+    $env:GIT_SSH_COMMAND = $transport.Command
+    $env:GIT_SSH_VARIANT = $transport.Variant
+    try {
+        $null = Invoke-AipGit -C $root fetch --quiet origin 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not fetch origin; check that the remote is reachable and that credentials are not required interactively'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root rev-parse --verify "refs/remotes/origin/$branch" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $null = Invoke-AipGit -C $root branch --set-upstream-to "origin/$branch" $branch 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not attach branch $branch to origin"
+                $script:AipCommandStatus = 1
+                return
+            }
+            Invoke-AipSync 'manual'
+            return
+        }
+        if (-not (Test-AipTrackedPathsSafe $root)) { return }
+        $null = Invoke-AipGit -C $root push --quiet -u origin "HEAD:refs/heads/$branch" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not publish the profiles repository to origin; the remote may need to be empty'
+            $script:AipCommandStatus = 1
+            return
+        }
+        Write-Output "Profiles published to origin/$branch."
+    }
+    finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+}
+
+function Invoke-AipRemote {
+    param([object[]]$Arguments)
+    $sub = if ($Arguments.Count -gt 0) { [string]$Arguments[0] } else { '' }
+    if ($sub -eq '') {
+        Write-AipError 'usage: aip remote add URL | aip remote show | aip remote remove'
+        $script:AipCommandStatus = 2
+        return
+    }
+    switch -CaseSensitive ($sub) {
+        'add' {
+            if ($Arguments.Count -ne 2) { Write-AipError 'usage: aip remote add URL'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteAdd ([string]$Arguments[1])
+        }
+        'show' {
+            if ($Arguments.Count -ne 1) { Write-AipError 'usage: aip remote show'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteShow
+        }
+        'remove' {
+            if ($Arguments.Count -ne 1) { Write-AipError 'usage: aip remote remove'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteRemove
+        }
+        default {
+            Write-AipError "unknown remote command '$sub'; usage: aip remote add URL | aip remote show | aip remote remove"
+            $script:AipCommandStatus = 2
+        }
+    }
+}
+
 function aip {
     $script:AipCommandStatus = 0
     $script:AipLastError = $null
@@ -1948,6 +2142,7 @@ function aip {
             'list' { Invoke-AipWithoutGitRouting { Invoke-AipList $rest } }
             'local' { Invoke-AipLocal $rest }
             'outfit' { Invoke-AipOutfit $rest }
+            'remote' { Invoke-AipWithoutGitRouting { Invoke-AipRemote $rest } }
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSyncCommand $rest }
             'use' { Invoke-AipUse $rest }

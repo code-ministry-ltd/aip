@@ -1116,7 +1116,8 @@ _aip_is_harness() {
 _aip_is_command() {
   [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
-    [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = run ] ||
+    [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = remote ] ||
+    [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
 }
@@ -1910,6 +1911,141 @@ _aip_run() {
   _aip_run_harness "$explicit_supplied" "$explicit" "$harness" "$@"
 }
 
+_aip_remote_show() {
+  local root=$_AIP_PROFILE_ROOT url
+  if [ -d "$root/.git" ] && [ ! -L "$root/.git" ] && url=$(_aip_git -C "$root" remote get-url origin 2>/dev/null); then
+    printf '%s\n' "$url"
+    return 0
+  fi
+  printf 'no remote is configured\n'
+  return 0
+}
+
+_aip_remote_remove() {
+  local root=$_AIP_PROFILE_ROOT branch
+  if { [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; } && _aip_git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    _aip_git -C "$root" remote remove origin 2>/dev/null || {
+      _aip_error 'could not remove the origin remote; inspect the profiles repository'
+      return 1
+    }
+    branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
+    if [ -n "$branch" ]; then
+      _aip_git -C "$root" branch --unset-upstream 2>/dev/null || :
+    fi
+    printf 'Remote removed; profiles are now local only.\n'
+    return 0
+  fi
+  printf 'no remote is configured\n'
+  return 0
+}
+
+_aip_remote_add() {
+  local url=$1 root=$_AIP_PROFILE_ROOT existing_origin
+  [ -n "$url" ] || { _aip_error 'usage: aip remote add URL'; return 2; }
+  case $url in
+    *' '*|*$'\n'*) _aip_error "invalid remote URL: $url"; return 2 ;;
+  esac
+  if [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; then
+    existing_origin=$(_aip_git -C "$root" remote get-url origin 2>/dev/null) || existing_origin=
+    if [ -n "$existing_origin" ]; then
+      _aip_error "origin is already configured ($existing_origin); run 'aip remote remove' first"
+      return 1
+    fi
+    _aip_git -C "$root" remote add origin "$url" 2>/dev/null || {
+      _aip_error "could not configure origin: $url"
+      return 1
+    }
+  else
+    if [ -e "$root" ] && [ ! -d "$root" ]; then
+      _aip_error "profiles path exists and is not a directory: $root"
+      return 1
+    fi
+    if [ -d "$root/.git" ]; then
+      _aip_error "profiles repository metadata is missing or linked: $root/.git"
+      return 1
+    fi
+    if [ -d "$root" ] && [ -n "$(command ls -A -- "$root" 2>/dev/null)" ]; then
+      _aip_error "profiles directory already contains content: $root; use 'aip create NAME' instead of 'aip remote add'"
+      return 1
+    fi
+    command mkdir -p -- "$root" || { _aip_error "could not create the profiles directory: $root"; return 1; }
+    if ! _aip_prepare_ssh_transport "$root"; then
+      _aip_error 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+      return 1
+    fi
+    if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone --quiet -- "$url" "$root" 2>/dev/null; then
+      _aip_error "could not clone $url into $root; the remote must be a profiles repository created by aip"
+      return 1
+    fi
+    _aip_git -C "$root" config core.symlinks true || { _aip_error 'could not configure symbolic-link checkout'; return 1; }
+    _aip_git -C "$root" config core.longpaths true 2>/dev/null || :
+    if ! _aip_git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1 &&
+       _aip_git -C "$root" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then
+      _aip_git -C "$root" checkout -q -B main refs/remotes/origin/main 2>/dev/null || {
+        _aip_error 'could not check out the cloned profiles branch'
+        return 1
+      }
+    fi
+    printf 'Cloned profiles from %s.\n' "$url"
+  fi
+  local branch
+  branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
+  if [ -z "$branch" ]; then
+    _aip_error 'cannot attach a remote while detached from a branch'
+    return 1
+  fi
+  if ! _aip_prepare_ssh_transport "$root"; then
+    _aip_error 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+    return 1
+  fi
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet origin 2>/dev/null; then
+    _aip_error 'could not fetch origin; check that the remote is reachable and that credentials are not required interactively'
+    return 1
+  fi
+  if _aip_git -C "$root" rev-parse --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    _aip_git -C "$root" branch --set-upstream-to="origin/$branch" "$branch" 2>/dev/null || {
+      _aip_error "could not attach branch $branch to origin"
+      return 1
+    }
+    _aip_sync manual
+    return
+  fi
+  _aip_check_tracked_forbidden "$root" || return
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" push --quiet -u origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+    _aip_error 'could not publish the profiles repository to origin; the remote may need to be empty'
+    return 1
+  fi
+  printf 'Profiles published to origin/%s.\n' "$branch"
+}
+
+_aip_remote() {
+  local sub=${1-}
+  _aip_clear_git_routing
+  if [ -z "$sub" ]; then
+    _aip_error 'usage: aip remote add URL | aip remote show | aip remote remove'
+    return 2
+  fi
+  shift
+  case $sub in
+    add)
+      [ "$#" -eq 1 ] || { _aip_error 'usage: aip remote add URL'; return 2; }
+      _aip_remote_add "$1"
+      ;;
+    show)
+      [ "$#" -eq 0 ] || { _aip_error 'usage: aip remote show'; return 2; }
+      _aip_remote_show
+      ;;
+    remove)
+      [ "$#" -eq 0 ] || { _aip_error 'usage: aip remote remove'; return 2; }
+      _aip_remote_remove
+      ;;
+    *)
+      _aip_error "unknown remote command '$sub'; usage: aip remote add URL | aip remote show | aip remote remove"
+      return 2
+      ;;
+  esac
+}
+
 aip() {
   if [ "$#" -eq 0 ]; then
     _aip_status
@@ -1927,6 +2063,7 @@ aip() {
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
     outfit) _aip_outfit "$@" ;;
+    remote) _aip_remote "$@" ;;
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;
