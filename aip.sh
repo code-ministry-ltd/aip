@@ -1114,7 +1114,8 @@ _aip_is_harness() {
 }
 
 _aip_is_command() {
-  [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
+  [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
+    [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = remote ] ||
     [ "${1-}" = run ] ||
@@ -1911,6 +1912,57 @@ _aip_run() {
   _aip_run_harness "$explicit_supplied" "$explicit" "$harness" "$@"
 }
 
+_aip_help() {
+  [ "$#" -eq 0 ] || { _aip_error 'usage: aip help'; return 2; }
+  cat <<'EOF'
+aip — shared AI profiles for Claude Code, Codex, Pi, and OpenCode
+
+A profile is one directory: shared AGENTS.md instructions, shared skills/, and
+per-harness launch settings. Every profile lives in a single Git repository
+(the profiles repository, ~/agent-profiles by default), so one remote keeps
+all of your profiles in sync across all of your machines.
+
+Commands:
+  aip create NAME [--outfit OUTFIT]  Create a new profile
+  aip list                           List profiles, outfits, and selection
+  aip which [NAME]                   Show the profile that would be selected
+  aip default [NAME]                 Show or set the default profile
+  aip use NAME                       Select NAME for this shell only
+  aip local [NAME | --remove]        Set or clear the per-directory marker
+  aip outfit NAME OUTFIT             Set a profile's outfit (label)
+  aip clone SOURCE TARGET            Copy a profile into a new profile
+  aip delete NAME [--force]          Delete a profile
+  aip sync                           Checkpoint and sync every profile
+  aip remote add URL                 Connect the profiles repository to a remote
+  aip remote show                    Show the configured remote (if any)
+  aip remote remove                  Disconnect the remote
+  aip doctor [NAME]                  Diagnose the repository and profiles
+  aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
+  aip update                         Update the aip npm package
+  aip version                        Show the aip version
+  aip help                           Show this help
+
+Harness wrappers:
+  claude, codex, pi, opencode [ARGS...] launch the named tool with the
+  selected profile's settings, checkpointing the profiles repository before
+  and after the run. If the remote is unreachable they warn and launch the
+  committed local profile instead; a Git conflict blocks the launch until
+  it is resolved.
+
+Quick start:
+  aip create work --outfit suit   create your first profile
+  aip remote add <git-url>        connect a shared remote (empty remote ok)
+  aip default work                choose your everyday profile
+  cd my-project && claude         work with your profile
+
+On a second machine:
+  aip remote add <same-git-url>   clones every profile you already have
+
+See the README for full documentation, including Windows setup and the
+security guarantees aip enforces on syncable content.
+EOF
+}
+
 _aip_remote_show() {
   local root=$_AIP_PROFILE_ROOT url
   if [ -d "$root/.git" ] && [ ! -L "$root/.git" ] && url=$(_aip_git -C "$root" remote get-url origin 2>/dev/null); then
@@ -2063,6 +2115,9 @@ aip() {
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
     outfit) _aip_outfit "$@" ;;
+    help) _aip_help "$@" ;;
+    --help) _aip_help ;;
+    -h) _aip_help ;;
     remote) _aip_remote "$@" ;;
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;

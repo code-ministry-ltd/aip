@@ -1,6 +1,6 @@
 # Tasks — Whole-directory sync model + `help`
 
-Status: **IN PROGRESS** — T1 done (60307ab, 3b05b22), T2 done (35b3e02), T3 done; now on T4
+Status: **IN PROGRESS** — T1 done (60307ab, 3b05b22), T2 done (35b3e02), T3 done (a3ae913), T4 done; now on T5
 Spec: `tasks/spec.md` · Plan: `tasks/plan.md`
 
 > **Re-slice note (why the boundaries differ from v1 of this file).** The per-profile →
@@ -72,11 +72,13 @@ Depends: T2 · Files: `aip.sh`, `aip.ps1`, `tests/posix/remote.bats`, `tests/pow
 `aip help`, `aip --help`, `aip -h`: tool description, complete command table (incl. `remote`),
 quick start, README pointer. Unknown commands still exit 2; bare `aip` still shows status.
 
-- [ ] All three spellings exit 0 with the full command table; both shells equivalent
-- [ ] Help output matches the dispatcher's command surface exactly
+- [x] All three spellings exit 0 with the full command table; both shells equivalent
+- [x] Help output matches the dispatcher's command surface exactly
 
 Verify: `npm run test:posix` + Pester
 Depends: T3 · Files: `aip.sh`, `aip.ps1`, `tests/posix/smoke.bats`, `tests/powershell/Aip.Tests.ps1` · Size S
+
+**DONE** (Bash/PowerShell help output verified byte-identical; help tests green in both suites).
 
 ## T5 — README + docs pass (readme-review skill)
 

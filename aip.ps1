@@ -2124,6 +2124,58 @@ function Invoke-AipRemote {
     }
 }
 
+function Invoke-AipHelp {
+    param([object[]]$Arguments)
+    if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip help'; $script:AipCommandStatus = 2; return }
+    @'
+aip — shared AI profiles for Claude Code, Codex, Pi, and OpenCode
+
+A profile is one directory: shared AGENTS.md instructions, shared skills/, and
+per-harness launch settings. Every profile lives in a single Git repository
+(the profiles repository, ~/agent-profiles by default), so one remote keeps
+all of your profiles in sync across all of your machines.
+
+Commands:
+  aip create NAME [--outfit OUTFIT]  Create a new profile
+  aip list                           List profiles, outfits, and selection
+  aip which [NAME]                   Show the profile that would be selected
+  aip default [NAME]                 Show or set the default profile
+  aip use NAME                       Select NAME for this shell only
+  aip local [NAME | --remove]        Set or clear the per-directory marker
+  aip outfit NAME OUTFIT             Set a profile's outfit (label)
+  aip clone SOURCE TARGET            Copy a profile into a new profile
+  aip delete NAME [--force]          Delete a profile
+  aip sync                           Checkpoint and sync every profile
+  aip remote add URL                 Connect the profiles repository to a remote
+  aip remote show                    Show the configured remote (if any)
+  aip remote remove                  Disconnect the remote
+  aip doctor [NAME]                  Diagnose the repository and profiles
+  aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
+  aip update                         Update the aip npm package
+  aip version                        Show the aip version
+  aip help                           Show this help
+
+Harness wrappers:
+  claude, codex, pi, opencode [ARGS...] launch the named tool with the
+  selected profile's settings, checkpointing the profiles repository before
+  and after the run. If the remote is unreachable they warn and launch the
+  committed local profile instead; a Git conflict blocks the launch until
+  it is resolved.
+
+Quick start:
+  aip create work --outfit suit   create your first profile
+  aip remote add <git-url>        connect a shared remote (empty remote ok)
+  aip default work                choose your everyday profile
+  cd my-project && claude         work with your profile
+
+On a second machine:
+  aip remote add <same-git-url>   clones every profile you already have
+
+See the README for full documentation, including Windows setup and the
+security guarantees aip enforces on syncable content.
+'@ -split "`n" | ForEach-Object { Write-Output $_ }
+}
+
 function aip {
     $script:AipCommandStatus = 0
     $script:AipLastError = $null
@@ -2142,6 +2194,9 @@ function aip {
             'list' { Invoke-AipWithoutGitRouting { Invoke-AipList $rest } }
             'local' { Invoke-AipLocal $rest }
             'outfit' { Invoke-AipOutfit $rest }
+            'help' { Invoke-AipHelp $rest }
+            '--help' { Invoke-AipHelp @() }
+            '-h' { Invoke-AipHelp @() }
             'remote' { Invoke-AipWithoutGitRouting { Invoke-AipRemote $rest } }
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSyncCommand $rest }
