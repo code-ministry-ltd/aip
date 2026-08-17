@@ -55,10 +55,12 @@ exit "${FAKE_EXIT_STATUS:-0}"
     function Initialize-TestUpstream {
         $script:TestRemote = Join-Path $TestDrive 'profile.git'
         & git init -q --bare $script:TestRemote
-        & git -C (Join-Path $script:AipProfileRoot 'work') remote add origin $script:TestRemote
-        & git -C (Join-Path $script:AipProfileRoot 'work') push -q -u origin main
+        & git -C $script:AipProfileRoot remote add origin $script:TestRemote
+        & git -C $script:AipProfileRoot push -q -u origin main
         & git -C $script:TestRemote symbolic-ref HEAD refs/heads/main
     }
+
+    function Get-RootRepo { $script:AipProfileRoot }
 }
 
 Describe 'aip' {
@@ -145,10 +147,11 @@ Describe 'profile creation and selection' {
         $global:LASTEXITCODE | Should -Not -Be 0
     }
 
-    It 'creates the approved relative-link layout atomically on main' {
+    It 'creates the approved relative-link layout atomically in the profiles repository' {
         aip create work --outfit suit
         $global:LASTEXITCODE | Should -Be 0
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         (Get-Content (Join-Path $profile '.aip/outfit') -Raw).Trim() | Should -Be 'suit'
         (Get-Item (Join-Path $profile 'codex/AGENTS.md')).LinkType | Should -Be 'SymbolicLink'
         # On Windows, .Target reports relative links with backslashes; normalize to the stored form.
@@ -157,11 +160,39 @@ Describe 'profile creation and selection' {
         (Get-Content -LiteralPath (Join-Path $profile 'claude/CLAUDE.md') -TotalCount 1) | Should -Be '@../AGENTS.md'
         [IO.File]::ReadAllBytes((Join-Path $profile 'claude/CLAUDE.md')) | Should -Not -Contain 13
         [IO.File]::ReadAllBytes((Join-Path $profile '.gitignore')) | Should -Not -Contain 13
-        ((& git -C $profile ls-files -s codex/AGENTS.md) -split ' ')[0] | Should -Be '120000'
-        (& git -C $profile config --bool core.symlinks) | Should -Be 'true'
-        (& git -C $profile ls-files -- skills/.gitkeep) | Should -Be 'skills/.gitkeep'
-        (& git -C $profile branch --show-current) | Should -Be 'main'
-        (& git -C $profile status --porcelain) | Should -BeNullOrEmpty
+        ((& git -C $root ls-files -s work/codex/AGENTS.md) -split ' ')[0] | Should -Be '120000'
+        (& git -C $root config --bool core.symlinks) | Should -Be 'true'
+        (& git -C $root ls-files -- work/skills/.gitkeep) | Should -Be 'work/skills/.gitkeep'
+        (& git -C $root branch --show-current) | Should -Be 'main'
+        (& git -C $root status --porcelain) | Should -BeNullOrEmpty
+        Test-Path (Join-Path $profile '.git') | Should -BeFalse
+        $rootGitIgnore = Get-Content -LiteralPath (Join-Path $root '.gitignore') -Raw
+        $rootGitIgnore | Should -Match '\.default'
+        $rootGitIgnore | Should -Match '\.aip-\*/'
+        [int](& git -C $root rev-list --count HEAD) | Should -Be 1
+    }
+
+    It 'create refuses a destination collision before creating the profiles repository' {
+        $collision = Join-Path $script:AipProfileRoot 'new'
+        'not mine' | Set-Content -LiteralPath $collision
+
+        aip create new *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        (Get-Content -LiteralPath $collision -Raw).Trim() | Should -Be 'not mine'
+        Test-Path (Join-Path $script:AipProfileRoot '.git') | Should -BeFalse
+    }
+
+    It 'a linked profile root is resolved and listed' {
+        New-TestProfile work
+        $externalRoot = Join-Path $TestDrive 'external profile root'
+        Move-Item -LiteralPath $script:AipProfileRoot -Destination $externalRoot
+        New-Item -ItemType SymbolicLink -Path $script:AipProfileRoot -Target $externalRoot | Out-Null
+
+        $output = aip list | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'work —'
     }
 
     It 'resolves session, nearest project marker, and default in order' {
@@ -272,28 +303,28 @@ Describe 'profile creation and selection' {
         Initialize-TestUpstream
         (aip | Out-String) | Should -Match 'synced with origin/main'
 
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        'local' | Add-Content (Join-Path $profile 'AGENTS.md')
-        & git -C $profile add AGENTS.md
-        & git -C $profile commit -q -m local
+        $root = $script:AipProfileRoot
+        'local' | Add-Content (Join-Path $root 'work/AGENTS.md')
+        & git -C $root add work/AGENTS.md
+        & git -C $root commit -q -m local
         (aip | Out-String) | Should -Match 'pending push \(1 ahead of origin/main\)'
 
-        & git -C $profile reset -q --hard origin/main
+        & git -C $root reset -q --hard origin/main
         $other = Join-Path $TestDrive 'status other'
         & git clone -q $script:TestRemote $other
         'remote' | Set-Content (Join-Path $other 'REMOTE.md')
         & git -C $other add REMOTE.md
         & git -C $other commit -q -m remote
         & git -C $other push -q
-        & git -C $profile fetch -q origin
+        & git -C $root fetch -q origin
         (aip | Out-String) | Should -Match 'pending pull \(1 behind origin/main\)'
 
-        'local again' | Add-Content (Join-Path $profile 'AGENTS.md')
-        & git -C $profile add AGENTS.md
-        & git -C $profile commit -q -m diverge
+        'local again' | Add-Content (Join-Path $root 'work/AGENTS.md')
+        & git -C $root add work/AGENTS.md
+        & git -C $root commit -q -m diverge
         (aip | Out-String) | Should -Match 'diverged \(1 ahead, 1 behind origin/main\)'
 
-        New-Item -ItemType Directory -Path (Join-Path $profile '.git/rebase-merge') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $root '.git/rebase-merge') | Out-Null
         (aip | Out-String) | Should -Match 'conflict or unfinished Git operation'
     }
 }
@@ -427,7 +458,7 @@ Describe 'harness wrappers' {
         $externalScript = Join-Path $TestDrive 'claude-success.ps1'
         'param([Parameter(ValueFromRemainingArguments)][object[]]$Arguments); $null = Get-Date' | Set-Content -LiteralPath $externalScript
         Mock Get-AipRealCommand { $externalScript }
-        Mock Invoke-AipSyncProfile { $script:AipCommandStatus = 0 }
+        Mock Invoke-AipSync { $script:AipCommandStatus = 0 }
         $global:LASTEXITCODE = 77
 
         claude prompt *> $null
@@ -470,8 +501,8 @@ exit 37
     It 'restores environment and child status when post-sync throws under Stop preference' {
         $env:CLAUDE_CONFIG_DIR = 'original value'
         $env:FAKE_EXIT_STATUS = '37'
-        Mock Invoke-AipSyncProfile {
-            param($ProfilePath, $Mode)
+        Mock Invoke-AipSync {
+            param([string]$Mode = 'manual')
             if ($Mode -eq 'after') { throw 'simulated cleanup failure' }
             $script:AipCommandStatus = 0
         }
@@ -509,7 +540,7 @@ exit 130
         claude *> $null
 
         $global:LASTEXITCODE | Should -Be 130
-        (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'interrupted'
+        (& git -C $script:AipProfileRoot show 'HEAD:work/AGENTS.md')[-1] | Should -Be 'interrupted'
     }
 
     It 'checkpoints an interrupted harness run and preserves status 130' {
@@ -555,7 +586,7 @@ finally {
 "@ | Set-Content -LiteralPath $runner -Encoding utf8NoBOM
         $env:AIP_PSE_EXIT_FILE = $exitFile
         try {
-            $pwsh = (Get-Command pwsh -CommandType Application).Path
+            $pwsh = (Get-Process -Id $PID).Path
             [void](& $pwsh -NoProfile -File $runner)
         }
         finally { $env:AIP_PSE_EXIT_FILE = $null }
@@ -563,7 +594,7 @@ finally {
         Test-Path -LiteralPath $exitFile | Should -BeTrue -Because 'the child pwsh process ran'
         $exitText = (Get-Content -LiteralPath $exitFile -Raw).Trim()
         $exitText | Should -Match 'lastexit=130' -Because "aip's finally must record 130: $exitText"
-        (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'interrupted in flight'
+        (& git -C $script:AipProfileRoot show 'HEAD:work/AGENTS.md')[-1] | Should -Be 'interrupted in flight'
     }
 
 }
@@ -571,44 +602,46 @@ finally {
 Describe 'local lifecycle' {
     BeforeEach { New-TestProfile work suit }
 
-    It 'clones only checkpointed content into a fresh repository without runtime state or remotes' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+    It 'clones only checkpointed content into the profiles repository without runtime state' {
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         'checkpoint me' | Set-Content (Join-Path $profile 'AGENTS.md')
         'runtime' | Set-Content (Join-Path $profile 'claude/session.json')
         aip clone work copy *> $null
         $global:LASTEXITCODE | Should -Be 0
-        $copy = Join-Path $script:AipProfileRoot 'copy'
+        $copy = Join-Path $root 'copy'
         (Get-Content (Join-Path $copy 'AGENTS.md') -Raw).Trim() | Should -Be 'checkpoint me'
         Test-Path (Join-Path $copy 'claude/session.json') | Should -BeFalse
-        (& git -C $copy remote) | Should -BeNullOrEmpty
+        Test-Path (Join-Path $copy '.git') | Should -BeFalse
         Test-Path (Join-Path $copy 'skills/.gitkeep') | Should -BeTrue
         (Get-Item (Join-Path $copy 'codex/skills')).LinkType | Should -Be 'SymbolicLink'
-        (& git -C $copy config --bool core.symlinks) | Should -Be 'true'
-        (& git -C $copy rev-list --count HEAD) | Should -Be 1
+        (& git -C $root config --bool core.symlinks) | Should -Be 'true'
+        # create commit + checkpoint commit for the dirty AGENTS.md + clone commit
+        (& git -C $root rev-list --count HEAD) | Should -Be 3
     }
 
     It 'preserves executable file modes when cloning a profile' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $executable = Join-Path $profile 'skills/tool/run.sh'
+        $root = $script:AipProfileRoot
+        $executable = Join-Path $root 'work/skills/tool/run.sh'
         New-Item -ItemType Directory -Path (Split-Path -Parent $executable) -Force | Out-Null
         '#!/bin/sh' | Set-Content -LiteralPath $executable
         if (-not $IsWindows) { & chmod +x $executable }
-        & git -C $profile add skills/tool/run.sh
-        & git -C $profile update-index --chmod=+x -- skills/tool/run.sh
-        & git -C $profile commit -q -m 'add executable skill resource'
+        & git -C $root add work/skills/tool/run.sh
+        & git -C $root update-index --chmod=+x -- work/skills/tool/run.sh
+        & git -C $root commit -q -m 'add executable skill resource'
 
         aip clone work copy *> $null
 
         $global:LASTEXITCODE | Should -Be 0
-        ((& git -C (Join-Path $script:AipProfileRoot 'copy') ls-files --stage -- skills/tool/run.sh) -split ' ')[0] | Should -Be '100755'
+        ((& git -C $root ls-files --stage -- copy/skills/tool/run.sh) -split ' ')[0] | Should -Be '100755'
     }
 
     It 'preserves an empty skills directory through an ordinary Git clone' {
         $clone = Join-Path $TestDrive 'ordinary clone'
-        & git -c core.symlinks=true clone -q (Join-Path $script:AipProfileRoot 'work') $clone
+        & git -c core.symlinks=true clone -q $script:AipProfileRoot $clone
 
-        Test-Path (Join-Path $clone 'skills/.gitkeep') | Should -BeTrue
-        (Get-Item (Join-Path $clone 'codex/skills')).LinkType | Should -Be 'SymbolicLink'
+        Test-Path (Join-Path $clone 'work/skills/.gitkeep') | Should -BeTrue
+        (Get-Item (Join-Path $clone 'work/codex/skills')).LinkType | Should -Be 'SymbolicLink'
     }
 
     It 'does not remove a colliding temporary directory that it did not create' {
@@ -706,8 +739,8 @@ exit `$global:LASTEXITCODE
         $profile = Join-Path $script:AipProfileRoot 'work'
         $remote = Join-Path $TestDrive 'delete.git'
         & git init -q --bare $remote
-        & git -C $profile remote add origin $remote
-        & git -C $profile push -q -u origin main
+        & git -C $script:AipProfileRoot remote add origin $remote
+        & git -C $script:AipProfileRoot push -q -u origin main
         'dirty' | Add-Content (Join-Path $profile 'AGENTS.md')
 
         $output = aip delete work --force | Out-String
@@ -721,13 +754,13 @@ exit `$global:LASTEXITCODE
         $profile = Join-Path $script:AipProfileRoot 'work'
         $remote = Join-Path $TestDrive 'delete branches.git'
         & git init -q --bare $remote
-        & git -C $profile remote add origin $remote
-        & git -C $profile push -q -u origin main
-        & git -C $profile switch -q -c private-work
+        & git -C $script:AipProfileRoot remote add origin $remote
+        & git -C $script:AipProfileRoot push -q -u origin main
+        & git -C $script:AipProfileRoot switch -q -c private-work
         'private' | Set-Content (Join-Path $profile 'PRIVATE.md')
-        & git -C $profile add PRIVATE.md
-        & git -C $profile commit -q -m private
-        & git -C $profile switch -q main
+        & git -C $script:AipProfileRoot add work/PRIVATE.md
+        & git -C $script:AipProfileRoot commit -q -m private
+        & git -C $script:AipProfileRoot switch -q main
 
         $output = aip delete work --force | Out-String
 
@@ -740,10 +773,10 @@ exit `$global:LASTEXITCODE
         $profile = Join-Path $script:AipProfileRoot 'work'
         $remote = Join-Path $TestDrive 'delete corrupt.git'
         & git init -q --bare $remote
-        & git -C $profile remote add origin $remote
-        & git -C $profile push -q -u origin main
+        & git -C $script:AipProfileRoot remote add origin $remote
+        & git -C $script:AipProfileRoot push -q -u origin main
         'dirty' | Add-Content (Join-Path $profile 'AGENTS.md')
-        'corrupt index' | Set-Content -LiteralPath (Join-Path $profile '.git/index')
+        'corrupt index' | Set-Content -LiteralPath (Join-Path $script:AipProfileRoot '.git/index')
 
         $output = aip delete work --force | Out-String
 
@@ -762,29 +795,28 @@ exit `$global:LASTEXITCODE
     }
 
     It 'doctor diagnoses a configured upstream that cannot be resolved' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $branch = & git -C $profile branch --show-current
-        & git -C $profile config "branch.$branch.remote" origin
-        & git -C $profile config "branch.$branch.merge" refs/heads/main
+        $branch = & git -C $script:AipProfileRoot branch --show-current
+        & git -C $script:AipProfileRoot config "branch.$branch.remote" origin
+        & git -C $script:AipProfileRoot config "branch.$branch.merge" refs/heads/main
 
         $output = aip doctor work 2>&1 | Out-String
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $output | Should -Match 'configured Git upstream cannot be resolved'
         $output | Should -Match 'branch --unset-upstream'
-        $output | Should -Not -Match 'OK: profile layout and links'
+        $output | Should -Not -Match 'OK: profiles repository'
     }
 
-    It 'doctor diagnoses missing Git metadata and list skips linked profiles' {
+    It 'doctor diagnoses missing repository metadata and list skips linked profiles' {
         $profile = Join-Path $script:AipProfileRoot 'work'
         $externalGit = Join-Path $TestDrive 'external git'
-        Move-Item -LiteralPath (Join-Path $profile '.git') -Destination $externalGit
+        Move-Item -LiteralPath (Join-Path $script:AipProfileRoot '.git') -Destination $externalGit
 
         $doctorOutput = aip doctor work | Out-String
 
         $global:LASTEXITCODE | Should -Not -Be 0
-        $doctorOutput | Should -Match '\.git must be an ordinary directory'
-        Move-Item -LiteralPath $externalGit -Destination (Join-Path $profile '.git')
+        $doctorOutput | Should -Match 'profiles repository metadata is missing or linked'
+        Move-Item -LiteralPath $externalGit -Destination (Join-Path $script:AipProfileRoot '.git')
 
         $externalProfile = Join-Path $TestDrive 'external profile'
         Move-Item -LiteralPath $profile -Destination $externalProfile
@@ -794,15 +826,14 @@ exit `$global:LASTEXITCODE
         Move-Item -LiteralPath $externalProfile -Destination $profile
     }
 
-    It 'lists profiles when the profile root is a symbolic link' {
-        $externalRoot = Join-Path $TestDrive 'external profile root'
-        Move-Item -LiteralPath $script:AipProfileRoot -Destination $externalRoot
-        New-Item -ItemType SymbolicLink -Path $script:AipProfileRoot -Target $externalRoot | Out-Null
+    It 'a linked profile directory blocks sync' {
+        New-TestProfile personal
+        $alias = Join-Path $script:AipProfileRoot 'personal-link'
+        New-Item -ItemType SymbolicLink -Path $alias -Target (Join-Path $script:AipProfileRoot 'personal') | Out-Null
 
-        $output = aip list | Out-String
-
-        $global:LASTEXITCODE | Should -Be 0
-        $output | Should -Match 'work —'
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'must not be a symbolic link'
     }
 
     It 'outfit refuses a linked metadata directory without changing its target' {
@@ -853,10 +884,10 @@ exit `$global:LASTEXITCODE
     }
 
     It 'doctor reports forbidden tracked content and a stale lock without deleting the lock' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        'credential' | Set-Content (Join-Path $profile 'codex/auth.json')
-        & git -C $profile add -f codex/auth.json
-        $lock = Join-Path $profile '.git/aip-sync.lock'
+        $root = $script:AipProfileRoot
+        'credential' | Set-Content (Join-Path $root 'work/codex/auth.json')
+        & git -C $root add -f work/codex/auth.json
+        $lock = Join-Path $root '.git/aip-sync.lock'
         New-Item -ItemType Directory -Path $lock | Out-Null
         '99999999' | Set-Content (Join-Path $lock 'pid')
         [Environment]::MachineName | Set-Content (Join-Path $lock 'host')
@@ -869,8 +900,7 @@ exit `$global:LASTEXITCODE
     }
 
     It 'doctor reports an unfinished Git operation with recovery commands' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        New-Item -ItemType Directory -Path (Join-Path $profile '.git/rebase-merge') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:AipProfileRoot '.git/rebase-merge') | Out-Null
 
         $output = aip doctor work | Out-String
 
@@ -905,30 +935,47 @@ Describe 'Git checkpoint and sync' {
         $env:AIP_PROFILE = 'work'
     }
 
+    It 'sync rejects an argument as a usage error' {
+        aip sync work *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'unexpected argument .work.; aip sync syncs every profile in the profiles repository'
+        aip sync work extra *> $null
+        $global:LASTEXITCODE | Should -Be 2
+    }
+
+    It 'sync fails closed when the profiles repository is missing' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot '.git') -Recurse -Force
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'not a Git repository'
+    }
+
     It 'auto-tracks shared skills but leaves unknown native files untracked' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         New-Item -ItemType Directory -Path (Join-Path $profile 'skills/reviewer') -Force | Out-Null
         '# Reviewer' | Set-Content (Join-Path $profile 'skills/reviewer/SKILL.md')
         '{}' | Set-Content (Join-Path $profile 'claude/settings.json')
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Be 0
-        (& git -C $profile show 'HEAD:skills/reviewer/SKILL.md') | Should -Be '# Reviewer'
-        (& git -C $profile ls-files -- claude/settings.json) | Should -BeNullOrEmpty
+        (& git -C $root show 'HEAD:work/skills/reviewer/SKILL.md') | Should -Be '# Reviewer'
+        (& git -C $root ls-files -- work/claude/settings.json) | Should -BeNullOrEmpty
     }
 
     It 'does not create a commit for a no-op sync' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $before = [int](& git -C $profile rev-list --count HEAD)
-        aip sync work *> $null
+        $before = [int](& git -C $script:AipProfileRoot rev-list --count HEAD)
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Be 0
-        [int](& git -C $profile rev-list --count HEAD) | Should -Be $before
+        [int](& git -C $script:AipProfileRoot rev-list --count HEAD) | Should -Be $before
     }
 
     It 'hard-fails when a known credential path is tracked' {
         $profile = Join-Path $script:AipProfileRoot 'work'
         'credential material' | Set-Content (Join-Path $profile 'codex/auth.json')
-        & git -C $profile add -f codex/auth.json
-        aip sync work *> $null
+        & git -C $script:AipProfileRoot add -f work/codex/auth.json
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential or runtime path is tracked'
     }
@@ -938,10 +985,10 @@ Describe 'Git checkpoint and sync' {
         Add-Content -LiteralPath (Join-Path $profile '.gitignore') -Value '!skills/reviewer/.env'
         New-Item -ItemType Directory -Path (Join-Path $profile 'skills/reviewer') -Force | Out-Null
         'credential' | Set-Content (Join-Path $profile 'skills/reviewer/.env')
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
-        (& git -C $profile ls-files -- skills/reviewer/.env) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot ls-files -- work/skills/reviewer/.env) | Should -BeNullOrEmpty
     }
 
     It 'blocks an extensionless private key even when explicitly unignored' {
@@ -950,11 +997,11 @@ Describe 'Git checkpoint and sync' {
         New-Item -ItemType Directory -Path (Join-Path $profile 'skills/reviewer') -Force | Out-Null
         'private key' | Set-Content (Join-Path $profile 'skills/reviewer/id_ed25519')
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
-        (& git -C $profile ls-files -- skills/reviewer/id_ed25519) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot ls-files -- work/skills/reviewer/id_ed25519) | Should -BeNullOrEmpty
     }
 
     It 'blocks uppercase credential extensions under skills' {
@@ -963,11 +1010,11 @@ Describe 'Git checkpoint and sync' {
         New-Item -ItemType Directory -Path (Join-Path $profile 'skills/reviewer') -Force | Out-Null
         'private key' | Set-Content (Join-Path $profile 'skills/reviewer/SECRET.PEM')
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
-        (& git -C $profile ls-files -- skills/reviewer/SECRET.PEM) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot ls-files -- work/skills/reviewer/SECRET.PEM) | Should -BeNullOrEmpty
     }
 
     It 'blocks Windows-incompatible and case-colliding shared-skill paths' {
@@ -979,30 +1026,30 @@ Describe 'Git checkpoint and sync' {
     }
 
     It 'bypasses a caller-defined git function' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
         function global:git { throw 'shadow git function was called' }
-        try { aip sync work *> $null }
+        try { aip sync *> $null }
         finally { Remove-Item Function:git -Force -ErrorAction SilentlyContinue }
 
         $global:LASTEXITCODE | Should -Be 0
-        (& git -C $profile status --porcelain) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
     }
 
     It 'rejects node_modules and exact runtime roots when they are force-tracked' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         $modulePath = Join-Path $profile 'skills/reviewer/node_modules/pkg/index.js'
         New-Item -ItemType Directory -Path (Split-Path -Parent $modulePath) -Force | Out-Null
         'generated' | Set-Content $modulePath
-        & git -C $profile add -f skills/reviewer/node_modules/pkg/index.js
-        aip sync work *> $null
+        & git -C $root add -f work/skills/reviewer/node_modules/pkg/index.js
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential or runtime path is tracked'
 
-        & git -C $profile reset -q
+        & git -C $root reset -q
         Remove-Item -LiteralPath (Join-Path $profile 'skills/reviewer') -Recurse -Force
         'runtime root' | Set-Content (Join-Path $profile 'claude/projects')
-        & git -C $profile add -f claude/projects
-        aip sync work *> $null
+        & git -C $root add -f work/claude/projects
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential or runtime path is tracked'
     }
@@ -1011,11 +1058,11 @@ Describe 'Git checkpoint and sync' {
         $profile = Join-Path $script:AipProfileRoot 'work'
         Remove-Item -LiteralPath (Join-Path $profile 'skills/.gitkeep') -Force
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $profile 'skills/.gitkeep') -PathType Leaf | Should -BeTrue
-        (& git -C $profile cat-file -t 'HEAD:skills') | Should -Be 'tree'
+        (& git -C $script:AipProfileRoot cat-file -t 'HEAD:work/skills') | Should -Be 'tree'
     }
 
     It 'rejects a nested Git repository instead of recording a gitlink' {
@@ -1025,55 +1072,59 @@ Describe 'Git checkpoint and sync' {
         & git -C $nested init -q
         '# Nested' | Set-Content (Join-Path $nested 'SKILL.md')
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
-        $script:AipLastError | Should -Match 'Git submodules are not supported'
-        (& git -C $profile ls-files --stage -- skills/nested) | Should -BeNullOrEmpty
+        $script:AipLastError | Should -Match 'nested Git repositories under skills'
+        (& git -C $script:AipProfileRoot ls-files --stage -- work/skills/nested) | Should -BeNullOrEmpty
     }
 
     It 'rejects Git submodules outside the shared skills tree' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $commit = & git -C $profile rev-parse HEAD
-        & git -C $profile update-index --add --cacheinfo "160000,$commit,claude/plugins/tool"
+        $root = $script:AipProfileRoot
+        $commit = & git -C $root rev-parse HEAD
+        & git -C $root update-index --add --cacheinfo "160000,$commit,work/claude/plugins/tool"
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'Git submodules are not supported'
     }
 
     It 'rejects profile, Git metadata, and required-file links before mutation' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         $externalProfile = Join-Path $TestDrive 'external profile'
         Move-Item -LiteralPath $profile -Destination $externalProfile
-        $before = & git -C $externalProfile rev-parse HEAD
+        $before = & git -C $root rev-parse HEAD
         New-Item -ItemType SymbolicLink -Path $profile -Target $externalProfile | Out-Null
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
-        (& git -C $externalProfile rev-parse HEAD) | Should -Be $before
+        $script:AipLastError | Should -Match 'must not be a symbolic link'
+        (& git -C $root rev-parse HEAD) | Should -Be $before
         Remove-Item -LiteralPath $profile -Force
         Move-Item -LiteralPath $externalProfile -Destination $profile
 
         $externalGit = Join-Path $TestDrive 'external git'
-        Move-Item -LiteralPath (Join-Path $profile '.git') -Destination $externalGit
-        New-Item -ItemType SymbolicLink -Path (Join-Path $profile '.git') -Target $externalGit | Out-Null
-        aip sync work *> $null
+        Move-Item -LiteralPath (Join-Path $root '.git') -Destination $externalGit
+        New-Item -ItemType SymbolicLink -Path (Join-Path $root '.git') -Target $externalGit | Out-Null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
-        Remove-Item -LiteralPath (Join-Path $profile '.git') -Force
-        Move-Item -LiteralPath $externalGit -Destination (Join-Path $profile '.git')
+        $script:AipLastError | Should -Match 'not a Git repository'
+        Remove-Item -LiteralPath (Join-Path $root '.git') -Force
+        Move-Item -LiteralPath $externalGit -Destination (Join-Path $root '.git')
 
         $externalInstructions = Join-Path $TestDrive 'external instructions'
         'outside' | Set-Content $externalInstructions
         Remove-Item -LiteralPath (Join-Path $profile 'codex/instructions.md')
         New-Item -ItemType SymbolicLink -Path (Join-Path $profile 'codex/instructions.md') -Target $externalInstructions | Out-Null
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         (Get-Content $externalInstructions -Raw).Trim() | Should -Be 'outside'
     }
 
-    It 'ignores exported Git routing and mutates only the selected profile' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+    It 'ignores exported Git routing and mutates only the profiles repository' {
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         $external = Join-Path $TestDrive 'external repository'
         & git init -q $external
         'external' | Set-Content (Join-Path $external 'file')
@@ -1083,37 +1134,36 @@ Describe 'Git checkpoint and sync' {
         'profile change' | Add-Content (Join-Path $profile 'AGENTS.md')
         $env:GIT_DIR = Join-Path $external '.git'
         $env:GIT_WORK_TREE = $external
-        try { aip sync work *> $null }
+        try { aip sync *> $null }
         finally { $env:GIT_DIR = $null; $env:GIT_WORK_TREE = $null }
 
         $global:LASTEXITCODE | Should -Be 0
         (& git -C $external rev-parse HEAD) | Should -Be $externalHead
-        (& git -C $profile show 'HEAD:AGENTS.md')[-1] | Should -Be 'profile change'
+        (& git -C $root show 'HEAD:work/AGENTS.md')[-1] | Should -Be 'profile change'
     }
 
-    It 'rejects a profile whose local Git config routes to another worktree' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
+    It 'rejects a profiles repository whose local Git config routes to another worktree' {
+        $root = $script:AipProfileRoot
         $external = Join-Path $TestDrive 'external worktree'
-        & git clone -q $profile $external
-        $gitDirectory = Join-Path $profile '.git'
+        & git clone -q $root $external
+        $gitDirectory = Join-Path $root '.git'
         & git "--git-dir=$gitDirectory" config core.worktree $external
-        'external change' | Add-Content (Join-Path $external 'AGENTS.md')
+        'external change' | Add-Content (Join-Path $external 'work/AGENTS.md')
         $before = & git "--git-dir=$gitDirectory" rev-parse HEAD
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
-        $script:AipLastError | Should -Match 'Git repository routing escapes the profile'
+        $script:AipLastError | Should -Match 'Git repository routing escapes the profiles repository'
         (& git "--git-dir=$gitDirectory" rev-parse HEAD) | Should -Be $before
     }
 
     It 'rejects linked Git metadata beneath the repository during sync and doctor' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
         $external = Join-Path $TestDrive 'external objects'
-        Move-Item -LiteralPath (Join-Path $profile '.git/objects') -Destination $external
-        New-Item -ItemType SymbolicLink -Path (Join-Path $profile '.git/objects') -Target $external | Out-Null
+        Move-Item -LiteralPath (Join-Path $script:AipProfileRoot '.git/objects') -Destination $external
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot '.git/objects') -Target $external | Out-Null
 
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'Git metadata contains'
         $doctorOutput = aip doctor work | Out-String
@@ -1127,7 +1177,7 @@ Describe 'Git checkpoint and sync' {
         'outside' | Set-Content -LiteralPath $external
         New-Item -ItemType SymbolicLink -Path (Join-Path $profile 'claude/settings.json') -Target $external | Out-Null
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unsupported symbolic link'
@@ -1142,31 +1192,32 @@ Describe 'Git checkpoint and sync' {
         & git -C $other add REMOTE.md
         & git -C $other commit -q -m remote
         & git -C $other push -q
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         New-Item -ItemType Directory -Path (Join-Path $profile 'skills/local') -Force | Out-Null
         'local' | Set-Content (Join-Path $profile 'skills/local/SKILL.md')
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Be 0
-        Test-Path (Join-Path $profile 'REMOTE.md') | Should -BeTrue
+        Test-Path (Join-Path $root 'REMOTE.md') | Should -BeTrue
         & git -C $other pull -q
-        Test-Path (Join-Path $other 'skills/local/SKILL.md') | Should -BeTrue
+        Test-Path (Join-Path $other 'work/skills/local/SKILL.md') | Should -BeTrue
     }
 
     It 'pushes to the fetched upstream even when pushRemote points elsewhere' {
         Initialize-TestUpstream
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
         $other = Join-Path $TestDrive 'other.git'
         & git init -q --bare $other
-        & git -C $profile remote add other $other
-        & git -C $profile push -q other main
+        & git -C $root remote add other $other
+        & git -C $root push -q other main
         $otherBefore = & git "--git-dir=$other" rev-parse refs/heads/main
-        & git -C $profile config branch.main.pushRemote other
-        'upstream only' | Add-Content (Join-Path $profile 'AGENTS.md')
+        & git -C $root config branch.main.pushRemote other
+        'upstream only' | Add-Content (Join-Path $root 'work/AGENTS.md')
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Be 0
-        (& git "--git-dir=$script:TestRemote" rev-parse refs/heads/main) | Should -Be (& git -C $profile rev-parse HEAD)
+        (& git "--git-dir=$script:TestRemote" rev-parse refs/heads/main) | Should -Be (& git -C $root rev-parse HEAD)
         (& git "--git-dir=$other" rev-parse refs/heads/main) | Should -Be $otherBefore
     }
 
@@ -1194,11 +1245,11 @@ exit 1
             & chmod +x $fakeSsh
             $env:GIT_SSH_COMMAND = "'$fakeSsh'"
         }
-        & git -C $profile remote add origin 'ssh://example.invalid/profile.git'
-        & git -C $profile update-ref refs/remotes/origin/main HEAD
-        & git -C $profile branch --set-upstream-to origin/main *> $null
+        & git -C $script:AipProfileRoot remote add origin 'ssh://example.invalid/profile.git'
+        & git -C $script:AipProfileRoot update-ref refs/remotes/origin/main HEAD
+        & git -C $script:AipProfileRoot branch --set-upstream-to origin/main *> $null
 
-        try { aip sync work *> $null }
+        try { aip sync *> $null }
         finally { $env:GIT_SSH_COMMAND = $null }
 
         $global:LASTEXITCODE | Should -Be 0
@@ -1211,7 +1262,7 @@ exit 1
             # executing the fake) runs on the POSIX jobs.
             $env:GIT_SSH_COMMAND = '"' + $fakeSsh + '"'
             try {
-                (Get-AipSshTransport $profile).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
+                (Get-AipSshTransport $script:AipProfileRoot).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
             }
             finally { $env:GIT_SSH_COMMAND = $null }
         }
@@ -1221,9 +1272,8 @@ exit 1
     }
 
     It 'places the noninteractive SSH setting before a configured BatchMode=no' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
         $env:GIT_SSH_COMMAND = 'ssh -o BatchMode=no'
-        try { $transport = Get-AipSshTransport $profile }
+        try { $transport = Get-AipSshTransport $script:AipProfileRoot }
         finally { $env:GIT_SSH_COMMAND = $null }
 
         $transport.Command | Should -Be 'ssh -o BatchMode=yes -o BatchMode=no'
@@ -1240,13 +1290,13 @@ exit 1
             "#!/bin/sh`n: >'$invoked'`nexit 1`n" | Set-Content -LiteralPath $fakeSsh -Encoding utf8NoBOM
             & chmod +x $fakeSsh
         }
-        & git -C $profile remote add origin 'ssh://example.invalid/profile.git'
-        & git -C $profile update-ref refs/remotes/origin/main HEAD
-        & git -C $profile branch --set-upstream-to origin/main *> $null
-        & git -C $profile config core.sshCommand $fakeSsh
-        & git -C $profile config ssh.variant simple
+        & git -C $script:AipProfileRoot remote add origin 'ssh://example.invalid/profile.git'
+        & git -C $script:AipProfileRoot update-ref refs/remotes/origin/main HEAD
+        & git -C $script:AipProfileRoot branch --set-upstream-to origin/main *> $null
+        & git -C $script:AipProfileRoot config core.sshCommand $fakeSsh
+        & git -C $script:AipProfileRoot config ssh.variant simple
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Be 0
         $script:AipLastWarning | Should -Match 'cannot be made non-interactive'
@@ -1268,14 +1318,14 @@ exit 1
 "@ | Set-Content -LiteralPath $fakeSsh -Encoding utf8NoBOM
             & chmod +x $fakeSsh
         }
-        & git -C $profile remote add origin 'ssh://example.invalid/profile.git'
-        & git -C $profile update-ref refs/remotes/origin/main HEAD
-        & git -C $profile branch --set-upstream-to origin/main *> $null
+        & git -C $script:AipProfileRoot remote add origin 'ssh://example.invalid/profile.git'
+        & git -C $script:AipProfileRoot update-ref refs/remotes/origin/main HEAD
+        & git -C $script:AipProfileRoot branch --set-upstream-to origin/main *> $null
         $env:GIT_SSH = $fakeSsh
         $env:GIT_SSH_COMMAND = $null
         $env:GIT_SSH_VARIANT = $null
 
-        try { aip sync work *> $null }
+        try { aip sync *> $null }
         finally { $env:GIT_SSH = $null }
 
         $global:LASTEXITCODE | Should -Be 0
@@ -1285,7 +1335,7 @@ exit 1
             # the spaced path must survive quoting with BatchMode=yes added.
             $env:GIT_SSH = $fakeSsh
             try {
-                (Get-AipSshTransport $profile).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
+                (Get-AipSshTransport $script:AipProfileRoot).Command | Should -Be ("`"$fakeSsh`" -o BatchMode=yes")
             }
             finally { $env:GIT_SSH = $null }
         }
@@ -1296,46 +1346,46 @@ exit 1
 
     It 'never overwrites ignored local profile state during remote integration' {
         Initialize-TestUpstream
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
         $nativePath = Join-Path $profile 'claude/native-state.json'
-        Add-Content -LiteralPath (Join-Path $profile '.git/info/exclude') -Value 'claude/native-state.json'
+        Add-Content -LiteralPath (Join-Path $root '.git/info/exclude') -Value 'work/claude/native-state.json'
         [IO.File]::WriteAllText($nativePath, "local ignored bytes`n", [Text.UTF8Encoding]::new($false))
         $other = Join-Path $TestDrive 'other'
         & git clone -q $script:TestRemote $other
-        [IO.File]::WriteAllText((Join-Path $other 'claude/native-state.json'), "remote tracked bytes`n", [Text.UTF8Encoding]::new($false))
-        & git -C $other add claude/native-state.json
+        [IO.File]::WriteAllText((Join-Path $other 'work/claude/native-state.json'), "remote tracked bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/claude/native-state.json
         & git -C $other commit -q -m 'track colliding native state'
         & git -C $other push -q
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'would overwrite or replace untracked or ignored local profile state'
         [IO.File]::ReadAllText($nativePath) | Should -Be "local ignored bytes`n"
-        (& git -C $profile ls-files -- claude/native-state.json) | Should -BeNullOrEmpty
+        (& git -C $root ls-files -- work/claude/native-state.json) | Should -BeNullOrEmpty
     }
 
     It 'blocks local Git metadata failures instead of reporting remote offline' {
         Initialize-TestUpstream
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        Remove-Item -LiteralPath (Join-Path $profile '.git/FETCH_HEAD') -Force -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Path (Join-Path $profile '.git/FETCH_HEAD') | Out-Null
+        $root = $script:AipProfileRoot
+        Remove-Item -LiteralPath (Join-Path $root '.git/FETCH_HEAD') -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Path (Join-Path $root '.git/FETCH_HEAD') | Out-Null
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'must be an ordinary file'
     }
 
     It 'rejects hard-linked mutable Git metadata without changing its other name' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
         $external = Join-Path $TestDrive 'external-fetch-head'
         'external' | Set-Content -LiteralPath $external
-        $fetchHead = Join-Path $profile '.git/FETCH_HEAD'
+        $fetchHead = Join-Path $script:AipProfileRoot '.git/FETCH_HEAD'
         Remove-Item -LiteralPath $fetchHead -Force -ErrorAction SilentlyContinue
         New-Item -ItemType HardLink -Path $fetchHead -Target $external | Out-Null
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'hard-linked mutable file'
@@ -1343,11 +1393,11 @@ exit 1
     }
 
     It 'reports unfinished Git state before validating conflicted content' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        New-Item -ItemType Directory -Path (Join-Path $profile '.git/rebase-merge') | Out-Null
-        'broken import' | Set-Content -LiteralPath (Join-Path $profile 'claude/CLAUDE.md')
+        $root = $script:AipProfileRoot
+        New-Item -ItemType Directory -Path (Join-Path $root '.git/rebase-merge') | Out-Null
+        'broken import' | Set-Content -LiteralPath (Join-Path $root 'work/claude/CLAUDE.md')
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'Git conflict or unfinished operation'
@@ -1358,31 +1408,32 @@ exit 1
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'other'
         & git clone -q $script:TestRemote $other
-        'remote credential' | Set-Content (Join-Path $other 'codex/auth.json')
-        & git -C $other add -f codex/auth.json
+        'remote credential' | Set-Content (Join-Path $other 'work/codex/auth.json')
+        & git -C $other add -f work/codex/auth.json
         & git -C $other commit -q -m unsafe-remote
         & git -C $other push -q
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $before = & git -C $profile rev-parse HEAD
-        aip sync work *> $null
+        $root = $script:AipProfileRoot
+        $profile = Join-Path $root 'work'
+        $before = & git -C $root rev-parse HEAD
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'remote profile contains a forbidden credential or runtime path'
         Test-Path (Join-Path $profile 'codex/auth.json') | Should -BeFalse
-        (& git -C $profile rev-parse HEAD) | Should -Be $before
+        (& git -C $root rev-parse HEAD) | Should -Be $before
     }
 
     It 'rejects a corrupt remote link before it changes the working profile' {
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'other'
         & git -c core.symlinks=true clone -q $script:TestRemote $other
-        $link = Join-Path $other 'codex/skills'
+        $link = Join-Path $other 'work/codex/skills'
         Remove-Item -LiteralPath $link -Force
         New-Item -ItemType SymbolicLink -Path $link -Target '../other' | Out-Null
-        & git -C $other add codex/skills
+        & git -C $other add work/codex/skills
         & git -C $other commit -q -m corrupt-link
         & git -C $other push -q
         $profile = Join-Path $script:AipProfileRoot 'work'
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'remote profile has an invalid required link'
         [string](Get-Item (Join-Path $profile 'codex/skills')).Target -replace '\\', '/' | Should -Be '../skills'
@@ -1393,12 +1444,12 @@ exit 1
         $profile = Join-Path $script:AipProfileRoot 'work'
         $other = Join-Path $TestDrive 'optional link'
         & git -c core.symlinks=true clone -q $script:TestRemote $other
-        New-Item -ItemType SymbolicLink -Path (Join-Path $other 'claude/settings.json') -Target '../outside-settings' | Out-Null
-        & git -C $other add claude/settings.json
+        New-Item -ItemType SymbolicLink -Path (Join-Path $other 'work/claude/settings.json') -Target '../outside-settings' | Out-Null
+        & git -C $other add work/claude/settings.json
         & git -C $other commit -q -m optional-link
         & git -C $other push -q
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unsupported symbolic link'
@@ -1407,50 +1458,50 @@ exit 1
 
     It 'rejects a remote profile that stops importing common Claude instructions' {
         Initialize-TestUpstream
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $before = & git -C $profile rev-parse HEAD
+        $root = $script:AipProfileRoot
+        $before = & git -C $root rev-parse HEAD
         $other = Join-Path $TestDrive 'bad Claude import'
         & git clone -q $script:TestRemote $other
-        @('../AGENTS.md', '', '# Claude Code instructions') | Set-Content -LiteralPath (Join-Path $other 'claude/CLAUDE.md')
-        & git -C $other add claude/CLAUDE.md
+        @('../AGENTS.md', '', '# Claude Code instructions') | Set-Content -LiteralPath (Join-Path $other 'work/claude/CLAUDE.md')
+        & git -C $other add work/claude/CLAUDE.md
         & git -C $other commit -q -m 'break Claude import'
         & git -C $other push -q
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'claude/CLAUDE.md must begin with @../AGENTS.md'
-        (& git -C $profile rev-parse HEAD) | Should -Be $before
+        (& git -C $root rev-parse HEAD) | Should -Be $before
     }
 
     It 'rejects invalid remote outfit framing before rebase' {
         Initialize-TestUpstream
-        $profile = Join-Path $script:AipProfileRoot 'work'
+        $root = $script:AipProfileRoot
         $other = Join-Path $TestDrive 'bad outfit'
         & git clone -q $script:TestRemote $other
-        [IO.File]::WriteAllText((Join-Path $other '.aip/outfit'), "suit`n`n", [Text.UTF8Encoding]::new($false))
-        & git -C $other add .aip/outfit
+        [IO.File]::WriteAllText((Join-Path $other 'work/.aip/outfit'), "suit`n`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/.aip/outfit
         & git -C $other commit -q -m invalid-outfit
         & git -C $other push -q
-        $before = & git -C $profile rev-parse HEAD
+        $before = & git -C $root rev-parse HEAD
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'invalid outfit'
-        (& git -C $profile rev-parse HEAD) | Should -Be $before
+        (& git -C $root rev-parse HEAD) | Should -Be $before
     }
 
     It 'rejects NUL bytes in remote required text before rebase' {
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'bad text'
         & git clone -q $script:TestRemote $other
-        [IO.File]::WriteAllBytes((Join-Path $other 'codex/instructions.md'), [byte[]](98, 101, 102, 111, 114, 101, 0, 97, 102, 116, 101, 114))
-        & git -C $other add codex/instructions.md
+        [IO.File]::WriteAllBytes((Join-Path $other 'work/codex/instructions.md'), [byte[]](98, 101, 102, 111, 114, 101, 0, 97, 102, 116, 101, 114))
+        & git -C $other add work/codex/instructions.md
         & git -C $other commit -q -m nul-text
         & git -C $other push -q
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'not valid NUL-free UTF-8'
@@ -1462,14 +1513,14 @@ exit 1
         $other = Join-Path $TestDrive 'bad portable path'
         & git clone -q $script:TestRemote $other
         $blob = ('not portable' | & git -C $other hash-object -w --stdin)
-        & git -C $other -c core.protectNTFS=false update-index --add --cacheinfo "100644,$blob,skills/CON.txt"
+        & git -C $other -c core.protectNTFS=false update-index --add --cacheinfo "100644,$blob,work/skills/CON.txt"
         $tree = & git -C $other write-tree
         $parent = & git -C $other rev-parse HEAD
         $commit = ('add nonportable path' | & git -C $other commit-tree $tree -p $parent)
         & git -C $other update-ref refs/heads/main $commit
         & git -C $other push -q
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'not portable to Windows'
@@ -1480,47 +1531,47 @@ exit 1
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'other'
         & git -c core.symlinks=true clone -q $script:TestRemote $other
-        Remove-Item -LiteralPath (Join-Path $other 'AGENTS.md')
-        New-Item -ItemType SymbolicLink -Path (Join-Path $other 'AGENTS.md') -Target outside | Out-Null
-        & git -C $other add AGENTS.md
+        Remove-Item -LiteralPath (Join-Path $other 'work/AGENTS.md')
+        New-Item -ItemType SymbolicLink -Path (Join-Path $other 'work/AGENTS.md') -Target outside | Out-Null
+        & git -C $other add work/AGENTS.md
         & git -C $other commit -q -m linked-required-file
         & git -C $other push -q
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $before = & git -C $profile rev-parse HEAD
+        $root = $script:AipProfileRoot
+        $before = & git -C $root rev-parse HEAD
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unsupported symbolic link'
-        (& git -C $profile rev-parse HEAD) | Should -Be $before
+        (& git -C $root rev-parse HEAD) | Should -Be $before
     }
 
     It 'launches offline and retains a local checkpoint' {
         Initialize-TestUpstream
         Move-Item $script:TestRemote "$script:TestRemote.offline"
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        'offline change' | Add-Content (Join-Path $profile 'AGENTS.md')
+        $root = $script:AipProfileRoot
+        'offline change' | Add-Content (Join-Path $root 'work/AGENTS.md')
         claude prompt *> $null
         $global:LASTEXITCODE | Should -Be 0
         $script:AipLastWarning | Should -Match 'remote sync unavailable'
         Test-Path $script:FakeCapture | Should -BeTrue
-        [int](& git -C $profile rev-list --count '@{upstream}..HEAD') | Should -Be 1
+        [int](& git -C $root rev-list --count '@{upstream}..HEAD') | Should -Be 1
     }
 
     It 'leaves a conflict recoverable and blocks the next launch' {
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'other'
         & git clone -q $script:TestRemote $other
-        'remote version' | Set-Content (Join-Path $other 'AGENTS.md')
-        & git -C $other add AGENTS.md
+        'remote version' | Set-Content (Join-Path $other 'work/AGENTS.md')
+        & git -C $other add work/AGENTS.md
         & git -C $other commit -q -m remote-conflict
         & git -C $other push -q
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        'local version' | Set-Content (Join-Path $profile 'AGENTS.md')
-        aip sync work *> $null
+        $root = $script:AipProfileRoot
+        'local version' | Set-Content (Join-Path $root 'work/AGENTS.md')
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'Git conflict'
-        (Test-Path (Join-Path $profile '.git/rebase-merge')) -or (Test-Path (Join-Path $profile '.git/rebase-apply')) | Should -BeTrue
+        (Test-Path (Join-Path $root '.git/rebase-merge')) -or (Test-Path (Join-Path $root '.git/rebase-apply')) | Should -BeTrue
         Remove-Item $script:FakeCapture -ErrorAction SilentlyContinue
         claude prompt 2>$null
         $global:LASTEXITCODE | Should -Not -Be 0
@@ -1528,25 +1579,23 @@ exit 1
     }
 
     It 'does not steal a live sync lock' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $lock = Join-Path $profile '.git/aip-sync.lock'
+        $lock = Join-Path $script:AipProfileRoot '.git/aip-sync.lock'
         New-Item -ItemType Directory -Path $lock | Out-Null
         $PID | Set-Content (Join-Path $lock 'pid')
         [Environment]::MachineName | Set-Content (Join-Path $lock 'host')
         'held-by-test' | Set-Content (Join-Path $lock 'token')
         $script:AipLockAttempts = 1
-        aip sync work *> $null
+        aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'sync is already running'
         (Get-Content (Join-Path $lock 'token') -Raw).Trim() | Should -Be 'held-by-test'
     }
 
     It 'removes an incomplete lock when owner metadata cannot be written' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $lock = Join-Path $profile '.git/aip-sync.lock'
+        $lock = Join-Path $script:AipProfileRoot '.git/aip-sync.lock'
         Mock Set-Content { throw 'simulated metadata failure' } -ParameterFilter { $LiteralPath -like '*aip-sync.lock*' }
 
-        aip sync work *> $null
+        aip sync *> $null
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'incomplete lock was removed'

@@ -255,7 +255,7 @@ _aip_write_root_gitignore() {
   printf '%s\n' \
     '# aip-managed root exclusions' \
     '.default' \
-    '.aip-stage.*/' \
+    '.aip-*/' \
     >"$_AIP_PROFILE_ROOT/.gitignore"
 }
 
