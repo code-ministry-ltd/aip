@@ -786,3 +786,61 @@ make_upstream() {
 
   [ "$status" -ne 0 ]
 }
+
+@test "before sync skips the remote round trip when the profile is already up to date" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local head_sha
+  head_sha=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"up to date with origin/main"* ]]
+  [[ "$output" != *"Profiles synced"* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$head_sha" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" log --oneline origin/main..HEAD)" ]
+}
+
+@test "before sync still syncs fully when local changes exist" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show origin/main:work/AGENTS.md | tail -1)" = 'local edit' ]
+}
+
+@test "before sync still syncs fully when the remote moved ahead" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local other="$BATS_TEST_TMPDIR/other" head_sha
+  head_sha=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote edit\n' >>"$other/work/AGENTS.md"
+  git -C "$other" commit -qam 'remote edit'
+  git -C "$other" push -q
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" != "$head_sha" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'remote edit' ]
+}
+
+@test "before sync degrades gracefully when the remote is unreachable" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  git -C "$_AIP_PROFILE_ROOT" remote set-url origin "$TEST_REMOTE/does-not-exist.git"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remote sync unavailable"* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}

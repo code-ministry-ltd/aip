@@ -1789,7 +1789,7 @@ _aip_require_rebase_preserves_untracked() {
 }
 
 _aip_sync() (
-  local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path
+  local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
   _AIP_SYNC_LOCK=
   _AIP_SYNC_TOKEN=
@@ -1807,6 +1807,7 @@ _aip_sync() (
     _aip_error "Git conflict or unfinished operation in $root; run 'git -C \"$root\" status', then resolve and continue or abort it"
     return 1
   fi
+  pre_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || pre_sha=
   _aip_stage_checkpoint "$root" "$mode" || return
 
   if ! _aip_git -C "$root" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
@@ -1825,6 +1826,20 @@ _aip_sync() (
   if ! _aip_prepare_ssh_transport "$root"; then
     _aip_error 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profiles'
     return 0
+  fi
+  if [ "$mode" = before ] || [ "$mode" = after ]; then
+    # Staleness check for harness-triggered syncs: HEAD has not moved since
+    # the pre-checkpoint SHA, it matches the last stored remote-tracking ref,
+    # and ls-remote proves the remote has not moved, so no round trip is
+    # needed. Every failure (no stored ref, ls-remote error) falls through
+    # to the full sync below.
+    cur_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || cur_sha=
+    stored_sha=$(_aip_git -C "$root" rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>/dev/null) || stored_sha=
+    remote_sha=$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" ls-remote "$remote" "$merge_ref" 2>/dev/null | command awk 'NR == 1 { print $1; exit }')
+    if [ -n "$remote_sha" ] && [ "$remote_sha" = "$stored_sha" ] && [ "$cur_sha" = "$stored_sha" ] && [ "$cur_sha" = "$pre_sha" ]; then
+      printf 'Profiles up to date with %s.\n' "$upstream"
+      return 0
+    fi
   fi
   if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet "$remote" >|"$_AIP_GIT_OUTPUT" 2>&1; then
     _aip_require_git_mutation_state "$root" || return
