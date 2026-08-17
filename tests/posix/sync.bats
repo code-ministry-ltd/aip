@@ -126,6 +126,15 @@ make_upstream() {
   [ "$status" -ne 0 ]
 }
 
+@test "portable path validation stays fast for large path lists" {
+  local paths="$BATS_TEST_TMPDIR/portable-paths" i
+  for i in $(seq 1 2000); do printf 'work/skills/skill-%04d/SKILL.md\0' "$i"; done >"$paths"
+  local start=$SECONDS
+  run _aip_validate_portable_paths_file "$paths"
+  [ "$status" -eq 0 ]
+  [ $((SECONDS - start)) -lt 5 ]
+}
+
 @test "sync bypasses a caller-defined git function" {
   local shadow_flag="$BATS_TEST_TMPDIR/shadow-git-called"
   git() { printf 'called\n' >"$shadow_flag"; return 99; }

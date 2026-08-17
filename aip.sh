@@ -87,13 +87,15 @@ _aip_prepare_ssh_transport() {
   fi
   if [ -z "$variant" ] || [ "$variant" = auto ]; then
     executable=${executable##*/}
-    case $(LC_ALL=C printf '%s' "$executable" | command tr '[:upper:]' '[:lower:]') in
+    _aip_ascii_lower "$executable"
+    case $_AIP_ASCII_LOWER in
       plink|plink.exe|putty|putty.exe) variant=plink ;;
       tortoiseplink|tortoiseplink.exe) variant=tortoiseplink ;;
       *) variant=ssh ;;
     esac
   fi
-  case $(LC_ALL=C printf '%s' "$variant" | command tr '[:upper:]' '[:lower:]') in
+  _aip_ascii_lower "$variant"
+  case $_AIP_ASCII_LOWER in
     plink|putty|tortoiseplink) effective="$command_prefix -batch$command_remainder" ;;
     ssh) effective="$command_prefix -o BatchMode=yes$command_remainder" ;;
     *) return 1 ;;
@@ -1159,9 +1161,42 @@ _aip_find_real_command() {
   return 1
 }
 
+_aip_ascii_lower() {
+  # Fork-free exact equivalent of LC_ALL=C tr uppercase-lowering:
+  # only ASCII A-Z folds; every other byte passes through untouched.
+  _AIP_ASCII_LOWER=${1-}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//A/a}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//B/b}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//C/c}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//D/d}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//E/e}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//F/f}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//G/g}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//H/h}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//I/i}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//J/j}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//K/k}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//L/l}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//M/m}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//N/n}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//O/o}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//P/p}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Q/q}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//R/r}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//S/s}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//T/t}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//U/u}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//V/v}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//W/w}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//X/x}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Y/y}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Z/z}
+}
+
 _aip_is_forbidden_path() {
   local lower
-  lower=$(LC_ALL=C printf '%s' "$1" | command tr '[:upper:]' '[:lower:]') || return 0
+  _aip_ascii_lower "$1"
+  lower=$_AIP_ASCII_LOWER
   case $lower in
     .env.example|*/.env.example) return 1 ;;
     .env|.env.*|*/.env|*/.env.*|*.pem|*.key|*.p12|*.pfx|.netrc|*/.netrc|.npmrc|*/.npmrc|.pypirc|*/.pypirc|id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519) return 0 ;;
@@ -1201,14 +1236,16 @@ _aip_validate_portable_paths_file() {
         return 1
       fi
       base=${component%%.*}
-      case $(LC_ALL=C printf '%s' "$component" | command tr '[:upper:]' '[:lower:]') in
+      _aip_ascii_lower "$component"
+      case $_AIP_ASCII_LOWER in
         .git)
           _AIP_PORTABLE_PATH_ERROR=$relative
           command rm -f "$lines" "$keys" "$sorted"
           return 1
           ;;
       esac
-      case $(LC_ALL=C printf '%s' "$base" | command tr '[:upper:]' '[:lower:]') in
+      _aip_ascii_lower "$base"
+      case $_AIP_ASCII_LOWER in
         con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)
           _AIP_PORTABLE_PATH_ERROR=$relative
           command rm -f "$lines" "$keys" "$sorted"
@@ -1319,8 +1356,12 @@ _aip_profile_prefixes_from_names() {
 }
 
 _aip_under_profile() {
-  local first=${1%%/*}
-  [ "$first" != "$1" ] && command grep -qxF -- "$first" "$2"
+  local first=${1%%/*} name
+  [ "$first" != "$1" ] || return 1
+  while IFS= read -r name; do
+    [ "$name" = "$first" ] && return 0
+  done <"$2"
+  return 1
 }
 
 _aip_validate_git_tree() {
