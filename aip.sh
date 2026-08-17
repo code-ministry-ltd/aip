@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.1.0'
+_AIP_VERSION='0.2.0'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
@@ -145,7 +145,7 @@ _aip_mount_target_is_profile_or_descendant() {
 _aip_require_no_nested_mounts() {
   local root=$1 root_physical mounts target
   root_physical=$(builtin cd "$root" 2>/dev/null && builtin pwd -P) || {
-    _aip_error "profile path is unreadable: $root"
+    _aip_error "profiles directory is unreadable: $root"
     return 1
   }
   mounts=$(command mktemp "${TMPDIR:-/tmp}/aip-mounts.XXXXXX") || return
@@ -157,7 +157,7 @@ _aip_require_no_nested_mounts() {
       target=$(printf '%s\n' "$target" | command sed 's/\\040/ /g; s/\\134/\\/g')
       if _aip_mount_target_is_profile_or_descendant "$root_physical" "$target"; then
         command rm -f "$mounts"
-        _aip_error "profile is or contains a mount point and cannot be staged or deleted safely: $target"
+        _aip_error "profiles directory is or contains a mount point and cannot be staged or deleted safely: $target"
         return 1
       fi
     done <"$mounts"
@@ -168,53 +168,53 @@ _aip_require_no_nested_mounts() {
       target=$(printf '%s\n' "$target" | command sed -n 's/^.* on \(.*\) ([^()]*)$/\1/p')
       if _aip_mount_target_is_profile_or_descendant "$root_physical" "$target"; then
         command rm -f "$mounts"
-        _aip_error "profile is or contains a mount point and cannot be staged or deleted safely: $target"
+        _aip_error "profiles directory is or contains a mount point and cannot be staged or deleted safely: $target"
         return 1
       fi
     done <"$mounts"
   else
     command rm -f "$mounts"
-    _aip_error 'could not inspect mount points before a recursive profile operation'
+    _aip_error 'could not inspect mount points before a recursive profiles directory operation'
     return 1
   fi
   command rm -f "$mounts"
 }
 
 _aip_git_is_contained() {
-  local profile=$1 top git_dir common_dir expected_top expected_git actual_top actual_git actual_common linked_metadata hardlinked_metadata alternate
+  local repository=$1 top git_dir common_dir expected_top expected_git actual_top actual_git actual_common linked_metadata hardlinked_metadata alternate
   _AIP_GIT_CONTAINMENT_ERROR=
-  top=$(_aip_git -C "$profile" rev-parse --show-toplevel 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $profile"; return 1; }
-  git_dir=$(_aip_git -C "$profile" rev-parse --absolute-git-dir 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $profile"; return 1; }
-  common_dir=$(_aip_git -C "$profile" rev-parse --git-common-dir 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $profile"; return 1; }
-  expected_top=$(builtin cd "$profile" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="profile path is unreadable: $profile"; return 1; }
-  expected_git=$(builtin cd "$profile/.git" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="Git metadata is unreadable: $profile/.git"; return 1; }
+  top=$(_aip_git -C "$repository" rev-parse --show-toplevel 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $repository"; return 1; }
+  git_dir=$(_aip_git -C "$repository" rev-parse --absolute-git-dir 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $repository"; return 1; }
+  common_dir=$(_aip_git -C "$repository" rev-parse --git-common-dir 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git repository is unreadable: $repository"; return 1; }
+  expected_top=$(builtin cd "$repository" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="profiles directory is unreadable: $repository"; return 1; }
+  expected_git=$(builtin cd "$repository/.git" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="Git metadata is unreadable: $repository/.git"; return 1; }
   actual_top=$(builtin cd "$top" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="configured Git worktree is unreadable: $top"; return 1; }
   actual_git=$(builtin cd "$git_dir" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="configured Git metadata is unreadable: $git_dir"; return 1; }
-  case $common_dir in /*) ;; *) common_dir=$profile/$common_dir ;; esac
+  case $common_dir in /*) ;; *) common_dir=$repository/$common_dir ;; esac
   actual_common=$(builtin cd "$common_dir" 2>/dev/null && builtin pwd -P) || { _AIP_GIT_CONTAINMENT_ERROR="configured common Git metadata is unreadable: $common_dir"; return 1; }
   if [ "$actual_top" != "$expected_top" ] || [ "$actual_git" != "$expected_git" ] || [ "$actual_common" != "$expected_git" ]; then
-    _AIP_GIT_CONTAINMENT_ERROR='Git repository routing escapes the profile; remove core.worktree or external Git routing'
+    _AIP_GIT_CONTAINMENT_ERROR='Git repository routing escapes the profiles repository; remove core.worktree or external Git routing'
     return 1
   fi
-  linked_metadata=$(command find "$profile/.git" -type l -print -quit 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git metadata is unreadable: $profile/.git"; return 1; }
+  linked_metadata=$(command find "$repository/.git" -type l -print -quit 2>/dev/null) || { _AIP_GIT_CONTAINMENT_ERROR="Git metadata is unreadable: $repository/.git"; return 1; }
   if [ -n "$linked_metadata" ]; then
     _AIP_GIT_CONTAINMENT_ERROR="Git metadata contains a symbolic link; remove or repair: $linked_metadata"
     return 1
   fi
-  hardlinked_metadata=$(_aip_find_hardlinked_git_metadata "$profile")
+  hardlinked_metadata=$(_aip_find_hardlinked_git_metadata "$repository")
   case $? in
     0)
       _AIP_GIT_CONTAINMENT_ERROR="Git metadata contains a hard-linked mutable file; replace it with an independent copy: $hardlinked_metadata"
       return 1
       ;;
     2)
-      _AIP_GIT_CONTAINMENT_ERROR="Git metadata hard links could not be inspected: $profile/.git"
+      _AIP_GIT_CONTAINMENT_ERROR="Git metadata hard links could not be inspected: $repository/.git"
       return 1
       ;;
   esac
-  for alternate in "$profile/.git/objects/info/alternates" "$profile/.git/objects/info/http-alternates"; do
+  for alternate in "$repository/.git/objects/info/alternates" "$repository/.git/objects/info/http-alternates"; do
     if [ -e "$alternate" ] || [ -L "$alternate" ]; then
-      _AIP_GIT_CONTAINMENT_ERROR="Git object alternates escape the independent profile repository; remove: $alternate"
+      _AIP_GIT_CONTAINMENT_ERROR="Git object alternates escape the profiles repository; remove: $alternate"
       return 1
     fi
   done
@@ -225,6 +225,59 @@ _aip_require_git_containment() {
     _aip_error "$_AIP_GIT_CONTAINMENT_ERROR"
     return 1
   }
+}
+
+_aip_require_root_repo() {
+  { [ -d "$_AIP_PROFILE_ROOT" ] && [ -d "$_AIP_PROFILE_ROOT/.git" ] && [ ! -L "$_AIP_PROFILE_ROOT/.git" ]; } || {
+    _aip_error "profiles directory is not a Git repository: $_AIP_PROFILE_ROOT; run 'aip create NAME' or 'aip doctor'"
+    return 2
+  }
+}
+
+_aip_list_profile_names() {
+  local profile_path name entries
+  [ -d "$_AIP_PROFILE_ROOT" ] || return 0
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return 1
+  command find -H "$_AIP_PROFILE_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 >|"$entries" || { command rm -f "$entries"; return 1; }
+  # Cleanup unlinks the name; the loop keeps its already-open descriptor.
+  # shellcheck disable=SC2094
+  while IFS= read -r -d '' profile_path; do
+    [ ! -L "$profile_path" ] || continue
+    name=${profile_path##*/}
+    _aip_validate_name "$name" || continue
+    { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; } || continue
+    printf '%s\n' "$name"
+  done <"$entries"
+  command rm -f "$entries"
+}
+
+_aip_write_root_gitignore() {
+  printf '%s\n' \
+    '# aip-managed root exclusions' \
+    '.default' \
+    '.aip-*/' \
+    >"$_AIP_PROFILE_ROOT/.gitignore"
+}
+
+_aip_ensure_root_repo() {
+  local root=$_AIP_PROFILE_ROOT
+  command mkdir -p "$root" || return 1
+  if [ -L "$root/.git" ]; then
+    _aip_error 'profiles repository metadata must not be a symbolic link: %s' "$root/.git"
+    return 1
+  fi
+  if [ ! -d "$root/.git" ]; then
+    if ! _aip_git -C "$root" init -q -b main ||
+       ! _aip_git -C "$root" config core.symlinks true ||
+       ! _aip_git -C "$root" config core.longpaths true; then
+      return 1
+    fi
+  fi
+  _aip_git -C "$root" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || {
+    _aip_error "configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'"
+    return 1
+  }
+  { [ -e "$root/.gitignore" ] || [ -L "$root/.gitignore" ]; } || _aip_write_root_gitignore || return 1
 }
 
 _aip_validate_name() {
@@ -376,10 +429,7 @@ _aip_require_profile() {
     _aip_error "profile '$name' path must not be a symbolic link"
     return 2
   }
-  { [ -d "$profile_path/.git" ] && [ ! -L "$profile_path/.git" ]; } || {
-    _aip_error "profile '$name' is not a Git repository; run 'aip doctor $name'"
-    return 2
-  }
+  _aip_require_root_repo || return
 }
 
 _aip_resolve_profile() {
@@ -463,19 +513,19 @@ _aip_publish_profile_directory() (
   trap 'command rmdir "$lock" 2>/dev/null || :' EXIT
   { [ ! -e "$destination" ] && [ ! -L "$destination" ]; } || { _aip_error "destination already exists: $destination"; return 1; }
   token="$$-$(command date +%s)-${RANDOM-0}"
-  token_path=$source/.git/aip-publish-token
+  token_path=$source/.aip-publish-token
   printf '%s\n' "$token" >|"$token_path" || return
   command mv "$source" "$destination" || return
-  if [ "$(command cat "$destination/.git/aip-publish-token" 2>/dev/null)" != "$token" ]; then
+  if [ "$(command cat "$destination/.aip-publish-token" 2>/dev/null)" != "$token" ]; then
     nested=$destination/${source##*/}
-    if [ "$(command cat "$nested/.git/aip-publish-token" 2>/dev/null)" = "$token" ]; then
+    if [ "$(command cat "$nested/.aip-publish-token" 2>/dev/null)" = "$token" ]; then
       command mv "$nested" "$source" || _aip_error "publication raced with another filesystem writer; recover the staged profile from: $nested"
     fi
     _aip_error "destination appeared during profile publication and was not overwritten: $destination"
     return 1
   fi
-  command rm -f "$destination/.git/aip-publish-token" || return
-  { [ -d "$destination/.git" ] && [ ! -L "$destination" ] && [ ! -L "$destination/.git" ]; } || {
+  command rm -f "$destination/.aip-publish-token" || return
+  { [ -d "$destination" ] && [ ! -L "$destination" ]; } || {
     _aip_error "published profile failed its postcondition: $destination"
     return 1
   }
@@ -515,23 +565,31 @@ _aip_create() (
     _aip_error "destination already exists: $destination"
     return 1
   }
+  _aip_ensure_root_repo || {
+    _aip_error "could not create profile '$name'"
+    return 1
+  }
+  _aip_require_git_containment "$_AIP_PROFILE_ROOT" || return
   stage=$(command mktemp -d "$_AIP_PROFILE_ROOT/.aip-stage.XXXXXX") || return
   temporary=$stage/$name
   if ! command mkdir "$temporary" ||
      ! _aip_write_profile_files "$temporary" "$outfit" ||
-     ! _aip_git -C "$temporary" init -q -b main ||
-     ! _aip_git -C "$temporary" config core.symlinks true ||
-     ! _aip_git -C "$temporary" config core.longpaths true ||
-     ! _aip_require_git_containment "$temporary" ||
-     ! _aip_git -C "$temporary" var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
-     ! _aip_git -C "$temporary" add .aip/outfit .gitignore AGENTS.md skills claude/CLAUDE.md claude/skills codex/AGENTS.md codex/instructions.md codex/skills pi/AGENTS.md pi/APPEND_SYSTEM.md pi/skills opencode/AGENTS.md opencode/skills ||
-     ! _aip_git -C "$temporary" commit -q -m 'aip: create profile' ||
      ! _aip_publish_profile_directory "$temporary" "$destination"; then
     command rm -rf "$stage"
     _aip_error "could not create profile '$name'"
     return 1
   fi
   command rmdir "$stage" || return
+  _aip_git -C "$_AIP_PROFILE_ROOT" add .gitignore "$name" || {
+    _aip_error "could not commit profile '$name'; check Git identity and hooks"
+    return 1
+  }
+  if ! _aip_git -C "$_AIP_PROFILE_ROOT" diff --cached --quiet --; then
+    _aip_git -C "$_AIP_PROFILE_ROOT" commit -q -m 'aip: create profile' || {
+      _aip_error "could not commit profile '$name'; check Git identity and hooks"
+      return 1
+    }
+  fi
   printf "Created profile '%s' at %s\n" "$name" "$destination"
 )
 
@@ -642,7 +700,7 @@ _aip_clone() (
     _aip_error 'usage: aip clone SOURCE TARGET'
     return 2
   }
-  local source_name=$1 target_name=$2 source_path target_path stage temporary
+  local source_name=$1 target_name=$2 source_path target_path stage temporary tarball
   _aip_require_profile "$source_name" || return
   [ ! -L "$(_aip_profile_path "$source_name")" ] || {
     _aip_error 'source profile path must not be a symbolic link'
@@ -652,33 +710,60 @@ _aip_clone() (
     _aip_error "invalid profile name '$target_name'"
     return 2
   }
+  # Capture the source profile's committed executable paths before the sync
+  # checkpoint can re-stage files from disk (where the executable bit may
+  # differ, and never exists on platforms without file modes such as Windows).
+  local clone_record clone_execs=''
+  while IFS= read -r -d '' clone_record; do
+    case ${clone_record%%$'\t'*} in
+      100755*) clone_execs+="${clone_record#*$'\t'}"$'\n' ;;
+    esac
+  done < <(_aip_git -C "$_AIP_PROFILE_ROOT" ls-files -s -z -- "$source_name/")
   source_path=$(_aip_profile_path "$source_name")
-  _aip_require_git_containment "$source_path" || return
+  _aip_require_git_containment "$_AIP_PROFILE_ROOT" || return
   target_path=$(_aip_profile_path "$target_name")
   { [ ! -e "$target_path" ] && [ ! -L "$target_path" ]; } || {
     _aip_error "destination already exists: $target_path"
     return 1
   }
-  _aip_sync_profile "$source_path" clone || return
+  _aip_sync clone || return
   stage=$(command mktemp -d "$_AIP_PROFILE_ROOT/.aip-stage.XXXXXX") || return
   temporary=$stage/$target_name
-  if ! _aip_git -c core.symlinks=true clone --no-hardlinks -q "$source_path" "$temporary" ||
+  tarball=$(command mktemp "${TMPDIR:-/tmp}/aip-archive.XXXXXX") || { command rm -rf "$stage"; return; }
+  if ! command mkdir "$temporary" ||
+     ! _aip_git -C "$_AIP_PROFILE_ROOT" archive -o "$tarball" HEAD "$source_name" ||
+     ! command tar -xf "$tarball" --strip-components=1 -C "$temporary" ||
      ! _aip_validate_sync_layout "$temporary" ||
-     ! command rm -rf "$temporary/.git" ||
-     ! _aip_git -C "$temporary" init -q -b main ||
-     ! _aip_git -C "$temporary" config core.symlinks true ||
-     ! _aip_git -C "$temporary" config core.longpaths true ||
-     ! _aip_require_git_containment "$temporary" ||
-     ! _aip_git -C "$temporary" var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
-     ! _aip_git -C "$temporary" add -A ||
-     ! _aip_git -C "$temporary" commit -q -m "aip: clone $source_name" ||
      ! command chmod 700 "$temporary" ||
      ! _aip_publish_profile_directory "$temporary" "$target_path"; then
     command rm -rf "$stage"
+    command rm -f "$tarball"
     _aip_error "could not clone profile '$source_name'"
     return 1
   fi
+  command rm -f "$tarball"
   command rmdir "$stage" || return
+  _aip_git -C "$_AIP_PROFILE_ROOT" add "$target_name" || {
+    _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
+    return 1
+  }
+  # Executable bits do not survive tar extraction on platforms without file modes
+  # (e.g. Windows); restore them from the source profile's committed modes.
+  local clone_path chmod_failed=0
+  while IFS= read -r clone_path; do
+    [ -n "$clone_path" ] || continue
+    _aip_git -C "$_AIP_PROFILE_ROOT" update-index --add --chmod=+x -- "$target_name/${clone_path#"$source_name"/}" || chmod_failed=1
+  done <<< "$clone_execs"
+  if [ "$chmod_failed" -ne 0 ]; then
+    _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
+    return 1
+  fi
+  if ! _aip_git -C "$_AIP_PROFILE_ROOT" diff --cached --quiet --; then
+    _aip_git -C "$_AIP_PROFILE_ROOT" commit -q -m "aip: clone $source_name" || {
+      _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
+      return 1
+    }
+  fi
   printf "Cloned profile '%s' to '%s' at %s\n" "$source_name" "$target_name" "$target_path"
 )
 
@@ -704,7 +789,7 @@ _aip_delete() (
   }
   _aip_require_profile "$name" || return
   profile_path=$(_aip_profile_path "$name")
-  _aip_require_git_containment "$profile_path" || return
+  _aip_require_git_containment "$_AIP_PROFILE_ROOT" || return
   _aip_require_no_nested_mounts "$profile_path" || return
   [ ! -L "$profile_path" ] || {
     _aip_error 'profile path must not be a symbolic link'
@@ -719,20 +804,20 @@ _aip_delete() (
     return 1
   }
 
-  if changes=$(_aip_git -C "$profile_path" status --porcelain 2>/dev/null); then
+  if changes=$(_aip_git -C "$_AIP_PROFILE_ROOT" status --porcelain -- "$name" 2>/dev/null); then
     [ -z "$changes" ] || risks='uncommitted changes'
   else
     risks='working-tree state could not be inspected'
   fi
-  _aip_has_unfinished_git_operation "$profile_path" && risks="${risks:+$risks, }unfinished Git operation"
-  if _aip_git -C "$profile_path" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
-    if unpushed=$(_aip_git -C "$profile_path" rev-list --branches --not --remotes 2>/dev/null); then
+  _aip_has_unfinished_git_operation "$_AIP_PROFILE_ROOT" && risks="${risks:+$risks, }unfinished Git operation"
+  if _aip_git -C "$_AIP_PROFILE_ROOT" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    if unpushed=$(_aip_git -C "$_AIP_PROFILE_ROOT" rev-list --branches --not --remotes 2>/dev/null); then
       [ -z "$unpushed" ] || risks="${risks:+$risks, }unpushed commits on local branches"
     else
       risks="${risks:+$risks, }commit reachability could not be inspected"
     fi
-    _aip_git -C "$profile_path" rev-parse --verify refs/stash >/dev/null 2>&1 && risks="${risks:+$risks, }stashed changes"
-    if tags=$(_aip_git -C "$profile_path" for-each-ref --format='%(refname)' refs/tags 2>/dev/null); then
+    _aip_git -C "$_AIP_PROFILE_ROOT" rev-parse --verify refs/stash >/dev/null 2>&1 && risks="${risks:+$risks, }stashed changes"
+    if tags=$(_aip_git -C "$_AIP_PROFILE_ROOT" for-each-ref --format='%(refname)' refs/tags 2>/dev/null); then
       [ -z "$tags" ] || risks="${risks:+$risks, }local tags"
     else
       risks="${risks:+$risks, }tags could not be inspected"
@@ -763,6 +848,15 @@ _aip_delete() (
     return 1
   }
   if [ "$default_name" = "$name" ]; then command rm -f "$_AIP_PROFILE_ROOT/.default" || return; fi
+  if _aip_git -C "$_AIP_PROFILE_ROOT" add -u -- "$name" 2>/dev/null; then
+    if ! _aip_git -C "$_AIP_PROFILE_ROOT" diff --cached --quiet -- 2>/dev/null; then
+      _aip_git -C "$_AIP_PROFILE_ROOT" commit -q -m "aip: delete profile $name" 2>/dev/null || {
+        _aip_error "deletion is complete, but its commit failed; check the profiles repository and commit the removal manually"
+      }
+    fi
+  else
+    _aip_error "deletion is complete, but the profiles repository could not stage the removal; inspect it and commit manually"
+  fi
   printf 'Deleted %s; ' "$profile_path"
   if [ "$fully_recoverable" -eq 1 ]; then
     printf 'its committed content is recoverable from the configured Git upstream.\n'
@@ -801,6 +895,37 @@ _aip_resolve_doctor_profile() {
   { [ -d "$profile_path" ] || [ -L "$profile_path" ]; } || { _aip_error "profile '$name' does not exist"; return 2; }
 }
 
+_aip_doctor_profile_layout() {
+  local profile_path=$1 name=$2 pair link expected directory
+  for directory in .aip skills claude codex pi opencode; do
+    if [ ! -d "$profile_path/$directory" ] || [ -L "$profile_path/$directory" ]; then
+      printf 'ERROR: required directory is missing or linked: %s/%s\n' "$name" "$directory"
+      return 1
+    fi
+  done
+  for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
+    link=${pair%%:*}
+    expected=${pair#*:}
+    if [ ! -L "$profile_path/$link" ] || [ "$(command readlink "$profile_path/$link" 2>/dev/null)" != "$expected" ]; then
+      printf 'ERROR: %s/%s should link to %s\n' "$name" "$link" "$expected"
+      printf "FIX: ln -sfn '%s' '%s/%s'\n" "$expected" "$profile_path" "$link"
+      return 1
+    fi
+  done
+  if ! _aip_check_live_profile_links "$profile_path"; then return 1; fi
+  for link in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+    if [ ! -f "$profile_path/$link" ] || [ -L "$profile_path/$link" ]; then
+      printf 'ERROR: required file is missing or linked: %s/%s\n' "$name" "$link"
+      return 1
+    fi
+  done
+  if ! _aip_validate_sync_layout "$profile_path"; then
+    printf 'ERROR: %s content or layout validation failed; repair the diagnostic above\n' "$name"
+    return 1
+  fi
+  printf 'OK: profile layout and links (%s)\n' "$name"
+}
+
 _aip_doctor() (
   _aip_clear_git_routing
   [ "$#" -le 1 ] || {
@@ -810,100 +935,99 @@ _aip_doctor() (
   if [ "$#" -eq 1 ]; then _aip_resolve_doctor_profile "$1" || return
   else _aip_resolve_doctor_profile || return
   fi
-  local profile_path link pair expected errors=0 git_available=1 repo_readable=1 harness directory
+  local root=$_AIP_PROFILE_ROOT profile_path profile_dir name checked='' errors=0 git_available=1 repo_readable=1 repo_ok=1 harness branch configured_remote configured_merge
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
   if [ -L "$profile_path" ]; then
     printf 'ERROR: profile path must not be a symbolic link\n'
     errors=1
-    repo_readable=0
-  elif [ ! -d "$profile_path/.git" ] || [ -L "$profile_path/.git" ]; then
-    printf 'ERROR: .git must be an ordinary directory\n'
+  fi
+
+  if [ ! -d "$root" ] || [ -L "$root/.git" ] || [ ! -d "$root/.git" ]; then
+    printf 'ERROR: profiles repository metadata is missing or linked: %s/.git\n' "$root"
+    printf 'FIX: restore an ordinary .git directory at the profiles root\n'
     errors=1
     repo_readable=0
+    repo_ok=0
   fi
   if ! _aip_git --version >/dev/null 2>&1; then
     printf 'ERROR: Git was not found\n'
     errors=1
     git_available=0
+    repo_ok=0
   elif [ "$repo_readable" -eq 1 ]; then
-    if ! _aip_git_is_contained "$profile_path"; then
+    if ! _aip_git_is_contained "$root"; then
       printf 'ERROR: %s\n' "$_AIP_GIT_CONTAINMENT_ERROR"
       errors=1
       repo_readable=0
+      repo_ok=0
     fi
   fi
   if [ "$git_available" -eq 1 ] && [ "$repo_readable" -eq 1 ]; then
-    _aip_git -C "$profile_path" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || { printf "ERROR: configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'\n"; errors=1; }
-    _aip_git -C "$profile_path" status --porcelain >/dev/null 2>&1 || { printf 'ERROR: profile Git repository is unreadable\n'; errors=1; }
-    if [ "$(_aip_git -C "$profile_path" config --bool core.symlinks 2>/dev/null)" = false ]; then
-      printf "ERROR: Git symbolic-link checkout is disabled\nFIX: git -C '%s' config core.symlinks true, then re-clone the profile or restore its links after saving local changes\n" "$profile_path"
+    _aip_git -C "$root" var GIT_AUTHOR_IDENT >/dev/null 2>&1 || {
+      printf "ERROR: configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'\n"
       errors=1
+      repo_ok=0
+    }
+    _aip_git -C "$root" status --porcelain >/dev/null 2>&1 || {
+      printf 'ERROR: profiles Git repository is unreadable\n'
+      errors=1
+      repo_ok=0
+    }
+    if [ "$(_aip_git -C "$root" config --bool core.symlinks 2>/dev/null)" = false ]; then
+      printf "ERROR: Git symbolic-link checkout is disabled\nFIX: git -C '%s' config core.symlinks true, then re-clone the profiles repository\n" "$root"
+      errors=1
+      repo_ok=0
     fi
-    branch=$(_aip_git -C "$profile_path" branch --show-current 2>/dev/null) || branch=
+    branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
     if [ -n "$branch" ]; then
-      local configured_remote='' configured_merge=''
-      configured_remote=$(_aip_git -C "$profile_path" config --get "branch.$branch.remote" 2>/dev/null) || configured_remote=
-      configured_merge=$(_aip_git -C "$profile_path" config --get "branch.$branch.merge" 2>/dev/null) || configured_merge=
+      configured_remote=$(_aip_git -C "$root" config --get "branch.$branch.remote" 2>/dev/null) || configured_remote=
+      configured_merge=$(_aip_git -C "$root" config --get "branch.$branch.merge" 2>/dev/null) || configured_merge=
       if [ -n "$configured_remote$configured_merge" ] &&
-         ! _aip_git -C "$profile_path" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+         ! _aip_git -C "$root" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
         printf 'ERROR: the configured Git upstream cannot be resolved\n'
-        printf "FIX: repair or fetch the configured remote branch, or run 'git -C \"%s\" branch --unset-upstream'\n" "$profile_path"
+        printf "FIX: repair or fetch the configured remote branch, or run 'git -C \"%s\" branch --unset-upstream'\n" "$root"
         errors=1
+        repo_ok=0
       fi
     fi
   fi
 
-  if [ ! -L "$profile_path" ]; then
-  for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
-    link=${pair%%:*}
-    expected=${pair#*:}
-    if [ ! -L "$profile_path/$link" ] || [ "$(command readlink "$profile_path/$link" 2>/dev/null)" != "$expected" ]; then
-      printf 'ERROR: %s should link to %s\n' "$link" "$expected"
-      printf "FIX: ln -sfn '%s' '%s/%s'\n" "$expected" "$profile_path" "$link"
-      errors=1
-    fi
+  for name in $(_aip_list_profile_names) "$_AIP_RESOLVED_NAME"; do
+    case " $checked " in *" $name "*) continue ;; esac
+    checked="$checked $name"
+    profile_dir=$(_aip_profile_path "$name")
+    { [ -d "$profile_dir" ] && [ ! -L "$profile_dir" ]; } || continue
+    _aip_doctor_profile_layout "$profile_dir" "$name" || errors=1
   done
-  if ! _aip_check_live_profile_links "$profile_path"; then errors=1; fi
-  for directory in .aip skills claude codex pi opencode; do
-    if [ ! -d "$profile_path/$directory" ] || [ -L "$profile_path/$directory" ]; then printf 'ERROR: required directory is missing or linked: %s\n' "$directory"; errors=1; fi
-  done
-  for link in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
-    if [ ! -f "$profile_path/$link" ] || [ -L "$profile_path/$link" ]; then printf 'ERROR: required file is missing or linked: %s\n' "$link"; errors=1; fi
-  done
-  if ! _aip_validate_sync_layout "$profile_path"; then
-    printf 'ERROR: profile content or layout validation failed; repair the diagnostic above\n'
-    errors=1
-  fi
-  fi
+
   if [ "$git_available" -eq 1 ] && [ "$repo_readable" -eq 1 ]; then
-    _AIP_TEMP_PATHS=
-    if ! _aip_check_tracked_forbidden "$profile_path"; then
+    if ! _aip_check_tracked_forbidden "$root"; then
       printf 'ERROR: tracked profile path validation failed; see the diagnostic above\n'
       errors=1
     fi
-    if _aip_has_unfinished_git_operation "$profile_path" ||
-       [ -n "$(_aip_git -C "$profile_path" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-      printf "ERROR: Git conflict or unfinished operation; run 'git -C \"%s\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'\n" "$profile_path"
+    if _aip_has_unfinished_git_operation "$root" ||
+       [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+      printf "ERROR: Git conflict or unfinished operation; run 'git -C \"%s\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'\n" "$root"
       errors=1
     fi
   fi
-  if [ -d "$profile_path/.git/aip-sync.lock" ]; then
+  if [ -d "$root/.git/aip-sync.lock" ]; then
     local lock_pid='' lock_host='' current_host=''
-    lock_pid=$(command cat "$profile_path/.git/aip-sync.lock/pid" 2>/dev/null) || lock_pid=
-    lock_host=$(command cat "$profile_path/.git/aip-sync.lock/host" 2>/dev/null) || lock_host=
+    lock_pid=$(command cat "$root/.git/aip-sync.lock/pid" 2>/dev/null) || lock_pid=
+    lock_host=$(command cat "$root/.git/aip-sync.lock/host" 2>/dev/null) || lock_host=
     current_host=$(command hostname 2>/dev/null) || current_host=
     case $lock_pid in
-      ''|*[!0-9]*) printf 'WARN: sync lock owner is unknown; inspect %s/.git/aip-sync.lock\n' "$profile_path" ;;
+      ''|*[!0-9]*) printf 'WARN: sync lock owner is unknown; inspect %s/.git/aip-sync.lock\n' "$root" ;;
       *)
         if [ "$lock_host" = "$current_host" ] && ! command kill -0 "$lock_pid" 2>/dev/null; then
-          printf 'WARN: stale sync lock found; the next sync will remove it, or inspect %s/.git/aip-sync.lock\n' "$profile_path"
+          printf 'WARN: stale sync lock found; the next sync will remove it, or inspect %s/.git/aip-sync.lock\n' "$root"
         else
-          printf 'WARN: sync lock is owned by a live or remote process; inspect %s/.git/aip-sync.lock\n' "$profile_path"
+          printf 'WARN: sync lock is owned by a live or remote process; inspect %s/.git/aip-sync.lock\n' "$root"
         fi
         ;;
     esac
   fi
-  if [ "$errors" -eq 0 ]; then printf 'OK: profile layout and links\n'; fi
+  [ "$repo_ok" -eq 1 ] && printf 'OK: profiles repository\n'
 
   for harness in claude codex pi opencode; do
     if _aip_find_real_command "$harness" >/dev/null 2>&1; then
@@ -931,10 +1055,10 @@ _aip_list() (
   entries=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return
   command find -H "$_AIP_PROFILE_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 >|"$entries" || { command rm -f "$entries"; return 1; }
   while IFS= read -r -d '' profile_path; do
-    { [ -d "$profile_path" ] && [ ! -L "$profile_path" ] && [ -d "$profile_path/.git" ] && [ ! -L "$profile_path/.git" ]; } || continue
-    _aip_git_is_contained "$profile_path" || continue
+    [ ! -L "$profile_path" ] || continue
     name=${profile_path##*/}
     _aip_validate_name "$name" || continue
+    { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; } || continue
     outfit=$(_aip_read_outfit "$profile_path/.aip/outfit") || outfit='invalid outfit'
     tags=
     [ "${AIP_PROFILE-}" = "$name" ] && tags="$tags [session]"
@@ -948,24 +1072,24 @@ _aip_list() (
 )
 
 _aip_git_summary() {
-  local profile_path=$1 state upstream counts ahead behind changes branch configured_remote configured_merge
-  _aip_git_is_contained "$profile_path" || {
+  local repository=$_AIP_PROFILE_ROOT state upstream counts ahead behind changes branch configured_remote configured_merge
+  _aip_git_is_contained "$repository" || {
     printf 'unreadable; run aip doctor\n'
     return
   }
-  changes=$(_aip_git -C "$profile_path" status --porcelain 2>/dev/null) || {
+  changes=$(_aip_git -C "$repository" status --porcelain 2>/dev/null) || {
     printf 'unreadable; run aip doctor\n'
     return
   }
   if [ -n "$changes" ]; then state=changes; else state=clean; fi
-  if _aip_has_unfinished_git_operation "$profile_path" ||
-     [ -n "$(_aip_git -C "$profile_path" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+  if _aip_has_unfinished_git_operation "$repository" ||
+     [ -n "$(_aip_git -C "$repository" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
     printf '%s, conflict or unfinished Git operation\n' "$state"
     return
   fi
-  if _aip_git -C "$profile_path" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
-    upstream=$(_aip_git -C "$profile_path" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
-    counts=$(_aip_git -C "$profile_path" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
+  if _aip_git -C "$repository" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    upstream=$(_aip_git -C "$repository" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
+    counts=$(_aip_git -C "$repository" rev-list --left-right --count 'HEAD...@{upstream}' 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
     ahead=${counts%%[[:space:]]*}
     behind=${counts##*[[:space:]]}
     case $ahead:$behind in *[!0-9:]*|:|*:) printf 'unreadable; run aip doctor\n'; return ;; esac
@@ -979,9 +1103,9 @@ _aip_git_summary() {
       printf '%s, diverged (%s ahead, %s behind %s)\n' "$state" "$ahead" "$behind" "$upstream"
     fi
   else
-    branch=$(_aip_git -C "$profile_path" branch --show-current 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
-    configured_remote=$(_aip_git -C "$profile_path" config --get "branch.$branch.remote" 2>/dev/null) || configured_remote=
-    configured_merge=$(_aip_git -C "$profile_path" config --get "branch.$branch.merge" 2>/dev/null) || configured_merge=
+    branch=$(_aip_git -C "$repository" branch --show-current 2>/dev/null) || { printf 'unreadable; run aip doctor\n'; return; }
+    configured_remote=$(_aip_git -C "$repository" config --get "branch.$branch.remote" 2>/dev/null) || configured_remote=
+    configured_merge=$(_aip_git -C "$repository" config --get "branch.$branch.merge" 2>/dev/null) || configured_merge=
     if [ -n "$configured_remote$configured_merge" ]; then printf 'unreadable; run aip doctor\n'
     else printf '%s, local only\n' "$state"
     fi
@@ -996,7 +1120,7 @@ _aip_status() (
   outfit=$(_aip_read_outfit "$profile_path/.aip/outfit") || outfit='invalid outfit'
   printf '🐵 %s — %s\n' "$_AIP_RESOLVED_NAME" "$outfit"
   printf 'Selected by: %s\nPath: %s\n' "$_AIP_RESOLVED_SOURCE" "$profile_path"
-  printf 'Git: %s\n' "$(_aip_git_summary "$profile_path")"
+  printf 'Git: %s\n' "$(_aip_git_summary)"
   printf 'Harnesses:'
   for harness in claude codex pi opencode; do
     if _aip_find_real_command "$harness" >/dev/null 2>&1; then availability=available; else availability=missing; fi
@@ -1010,9 +1134,11 @@ _aip_is_harness() {
 }
 
 _aip_is_command() {
-  [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
+  [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
+    [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
-    [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = run ] ||
+    [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = remote ] ||
+    [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
 }
@@ -1116,8 +1242,8 @@ _aip_validate_portable_paths_file() {
 
 _aip_validate_sync_layout() {
   local profile_path=$1 outfit_mode=${2-} pair link expected file directory first_line
-  { [ -d "$profile_path" ] && [ ! -L "$profile_path" ] && [ -d "$profile_path/.git" ] && [ ! -L "$profile_path/.git" ]; } || {
-    _aip_error 'profile path or Git metadata directory is missing or linked'
+  { [ -d "$profile_path" ] && [ ! -L "$profile_path" ]; } || {
+    _aip_error 'profile path is missing or linked'
     return 1
   }
   for directory in .aip skills claude codex pi opencode; do
@@ -1168,9 +1294,9 @@ _aip_validate_sync_layout() {
 
 _aip_ensure_skills_placeholder() {
   local profile_path=$1 placeholder=$1/skills/.gitkeep
-  { [ -d "$profile_path" ] && [ ! -L "$profile_path" ] && [ -d "$profile_path/.git" ] && [ ! -L "$profile_path/.git" ] &&
+  { [ -d "$profile_path" ] && [ ! -L "$profile_path" ] &&
     [ -d "$profile_path/skills" ] && [ ! -L "$profile_path/skills" ]; } || {
-    _aip_error 'profile, Git metadata, and skills paths must be ordinary directories'
+    _aip_error 'profile and skills paths must be ordinary directories'
     return 1
   }
   if [ -e "$placeholder" ] || [ -L "$placeholder" ]; then
@@ -1183,11 +1309,36 @@ _aip_ensure_skills_placeholder() {
   fi
 }
 
+_aip_profile_prefixes_from_names() {
+  local relative
+  while IFS= read -r -d '' relative; do
+    case $relative in
+      */.aip/outfit) printf '%s\n' "${relative%%/*}" ;;
+    esac
+  done <"$1"
+}
+
+_aip_under_profile() {
+  local first=${1%%/*}
+  [ "$first" != "$1" ] && command grep -qxF -- "$first" "$2"
+}
+
 _aip_validate_git_tree() {
-  local profile=$1 tree=$2 relative pair link expected entry mode target file first_line text_temp outfit forbidden=0
-  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-tree.XXXXXX") || return
-  _aip_git -C "$profile" ls-tree -r "$tree" >|"$_AIP_TEMP_PATHS" || return
+  local root=$1 tree=$2 relative rel pair link expected entry mode target file first_line text_temp outfit forbidden=0 profiles p
+  profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return
+  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-tree.XXXXXX") || { command rm -f "$profiles"; return; }
+  _aip_git -C "$root" ls-tree -r "$tree" >|"$_AIP_TEMP_PATHS" || {
+    command rm -f "$profiles"
+    return 1
+  }
+  : >|"$profiles"
+  while IFS= read -r entry; do
+    case ${entry%% *} in 100644) ;; *) continue ;; esac
+    relative=${entry#*$'\t'}
+    case $relative in */.aip/outfit) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
+  done <"$_AIP_TEMP_PATHS"
   if command grep -q '^160000 ' "$_AIP_TEMP_PATHS"; then
+    command rm -f "$profiles"
     command rm -f "$_AIP_TEMP_PATHS"
     _AIP_TEMP_PATHS=
     _aip_error 'remote profile contains an unsupported Git submodule'
@@ -1198,85 +1349,125 @@ _aip_validate_git_tree() {
   while IFS= read -r entry; do
     mode=${entry%% *}
     relative=${entry#*$'\t'}
-    if [ "$mode" = 120000 ] && ! _aip_is_required_profile_link "$relative"; then
-      command rm -f "$_AIP_TEMP_PATHS"
-      _AIP_TEMP_PATHS=
-      _aip_error "remote profile contains an unsupported symbolic link: $relative"
-      return 1
+    if [ "$mode" = 120000 ]; then
+      if ! _aip_under_profile "$relative" "$profiles" ||
+         ! _aip_is_required_profile_link "${relative#*/}"; then
+        command rm -f "$profiles"
+        command rm -f "$_AIP_TEMP_PATHS"
+        _AIP_TEMP_PATHS=
+        _aip_error "remote profile contains an unsupported symbolic link: $relative"
+        return 1
+      fi
     fi
   done <"$_AIP_TEMP_PATHS"
-  command rm -f "$_AIP_TEMP_PATHS"
-  _AIP_TEMP_PATHS=
 
-  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-tree.XXXXXX") || return
-  _aip_git -C "$profile" ls-tree -rz --name-only "$tree" >|"$_AIP_TEMP_PATHS" || return
+  _aip_git -C "$root" ls-tree -rz --name-only "$tree" >|"$_AIP_TEMP_PATHS" || {
+    command rm -f "$profiles"
+    return 1
+  }
   if ! _aip_validate_portable_paths_file "$_AIP_TEMP_PATHS"; then
+    command rm -f "$profiles"
     command rm -f "$_AIP_TEMP_PATHS"
     _AIP_TEMP_PATHS=
     _aip_error "remote profile contains a path that is not portable to Windows: $_AIP_PORTABLE_PATH_ERROR"
     return 1
   fi
   while IFS= read -r -d '' relative; do
-    if _aip_is_forbidden_path "$relative"; then forbidden=1; break; fi
+    rel=$relative
+    if _aip_under_profile "$relative" "$profiles"; then rel=${relative#*/}; fi
+    if _aip_is_forbidden_path "$rel"; then forbidden=1; break; fi
   done <"$_AIP_TEMP_PATHS"
-  command rm -f "$_AIP_TEMP_PATHS"
-  _AIP_TEMP_PATHS=
   if [ "$forbidden" -eq 1 ]; then
+    command rm -f "$profiles"
+    command rm -f "$_AIP_TEMP_PATHS"
+    _AIP_TEMP_PATHS=
     _aip_error 'remote profile contains a forbidden credential or runtime path; remove it from the remote history before syncing'
     return 1
   fi
-  for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
-    link=${pair%%:*}
-    expected=${pair#*:}
-    entry=$(_aip_git -C "$profile" ls-tree "$tree" -- "$link") || return
-    mode=${entry%% *}
-    target=$(_aip_git -C "$profile" show "$tree:$link" 2>/dev/null) || target=
-    if [ "$mode" != 120000 ] || [ "$target" != "$expected" ]; then
-      _aip_error "remote profile has an invalid required link: $link should link to $expected"
+
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
+      link=${pair%%:*}
+      expected=${pair#*:}
+      entry=$(_aip_git -C "$root" ls-tree "$tree" -- "$p/$link") || {
+        command rm -f "$profiles"
+        return 1
+      }
+      mode=${entry%% *}
+      target=$(_aip_git -C "$root" show "$tree:$p/$link" 2>/dev/null) || target=
+      if [ "$mode" != 120000 ] || [ "$target" != "$expected" ]; then
+        command rm -f "$profiles"
+        _aip_error "remote profile has an invalid required link: $p/$link should link to $expected"
+        return 1
+      fi
+    done
+    for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+      entry=$(_aip_git -C "$root" ls-tree "$tree" -- "$p/$file") || {
+        command rm -f "$profiles"
+        return 1
+      }
+      mode=${entry%% *}
+      case $mode in 100644|100755) ;; *)
+        command rm -f "$profiles"
+        _aip_error "remote profile is missing a regular required file: $p/$file"
+        return 1
+        ;;
+      esac
+    done
+    text_temp=$(command mktemp "${TMPDIR:-/tmp}/aip-text.XXXXXX") || {
+      command rm -f "$profiles"
+      return 1
+    }
+    for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+      if ! _aip_git -C "$root" show "$tree:$p/$file" >|"$text_temp" 2>/dev/null || ! _aip_validate_utf8_text_file "$text_temp"; then
+        command rm -f "$text_temp" "$profiles"
+        _aip_error "remote required profile text is not valid NUL-free UTF-8: $p/$file"
+        return 1
+      fi
+    done
+    _aip_git -C "$root" show "$tree:$p/.aip/outfit" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp" "$profiles"; return 1; }
+    if ! outfit=$(_aip_read_outfit "$text_temp"); then
+      command rm -f "$text_temp" "$profiles"
+      _aip_error 'remote profile has an invalid outfit label'
       return 1
     fi
-  done
-  for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
-    entry=$(_aip_git -C "$profile" ls-tree "$tree" -- "$file") || return
-    mode=${entry%% *}
-    case $mode in 100644|100755) ;; *)
-      _aip_error "remote profile is missing a regular required file: $file"
-      return 1
-      ;;
-    esac
-  done
-  text_temp=$(command mktemp "${TMPDIR:-/tmp}/aip-text.XXXXXX") || return
-  for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
-    if ! _aip_git -C "$profile" show "$tree:$file" >|"$text_temp" 2>/dev/null || ! _aip_validate_utf8_text_file "$text_temp"; then
-      command rm -f "$text_temp"
-      _aip_error "remote required profile text is not valid NUL-free UTF-8: $file"
+    _aip_git -C "$root" show "$tree:$p/skills/.gitkeep" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp" "$profiles"; return 1; }
+    if [ -s "$text_temp" ]; then
+      command rm -f "$text_temp" "$profiles"
+      _aip_error 'remote profile skills/.gitkeep placeholder must be empty'
       return 1
     fi
-  done
-  _aip_git -C "$profile" show "$tree:.aip/outfit" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp"; return 1; }
-  if ! outfit=$(_aip_read_outfit "$text_temp"); then
+    _aip_git -C "$root" show "$tree:$p/claude/CLAUDE.md" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp" "$profiles"; return 1; }
+    IFS= read -r first_line <"$text_temp" || first_line=
+    first_line=${first_line%$'\r'}
     command rm -f "$text_temp"
-    _aip_error 'remote profile has an invalid outfit label'
-    return 1
-  fi
-  _aip_git -C "$profile" show "$tree:skills/.gitkeep" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp"; return 1; }
-  if [ -s "$text_temp" ]; then
-    command rm -f "$text_temp"
-    _aip_error 'remote profile skills/.gitkeep placeholder must be empty'
-    return 1
-  fi
-  _aip_git -C "$profile" show "$tree:claude/CLAUDE.md" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp"; return 1; }
-  IFS= read -r first_line <"$text_temp" || first_line=
-  first_line=${first_line%$'\r'}
-  command rm -f "$text_temp"
-  [ "$first_line" = '@../AGENTS.md' ] || {
-    _aip_error 'remote profile has an invalid Claude import; claude/CLAUDE.md must begin with @../AGENTS.md'
+    [ "$first_line" = '@../AGENTS.md' ] || {
+      command rm -f "$profiles"
+      _aip_error 'remote profile has an invalid Claude import; claude/CLAUDE.md must begin with @../AGENTS.md'
+      return 1
+    }
+    [ "$(_aip_git -C "$root" cat-file -t "$tree:$p/skills" 2>/dev/null)" = tree ] || {
+      command rm -f "$profiles"
+      _aip_error 'remote profile is missing required skills directory'
+      return 1
+    }
+  done <"$profiles"
+
+  entry=$(_aip_git -C "$root" ls-tree "$tree" -- .gitignore) || {
+    command rm -f "$profiles"
     return 1
   }
-  [ "$(_aip_git -C "$profile" cat-file -t "$tree:skills" 2>/dev/null)" = tree ] || {
-    _aip_error 'remote profile is missing required skills directory'
+  case ${entry%% *} in 100644|100755) ;; *)
+    command rm -f "$profiles"
+    _aip_error 'remote profiles repository is missing the root .gitignore'
     return 1
-  }
+    ;;
+  esac
+
+  command rm -f "$profiles"
+  command rm -f "$_AIP_TEMP_PATHS"
+  _AIP_TEMP_PATHS=
 }
 
 _aip_remove_stale_lock() {
@@ -1346,62 +1537,85 @@ _aip_sync_cleanup() {
 }
 
 _aip_check_tracked_forbidden() {
-  local profile=$1 relative forbidden=0
-  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-paths.XXXXXX") || return
-  _aip_git -C "$profile" ls-files -z >|"$_AIP_TEMP_PATHS" || return
+  local root=$1 relative rel forbidden=0 profiles
+  profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return
+  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-paths.XXXXXX") || { command rm -f "$profiles"; return; }
+  _aip_git -C "$root" ls-files -z >|"$_AIP_TEMP_PATHS" || {
+    command rm -f "$profiles"
+    return 1
+  }
   if ! _aip_validate_portable_paths_file "$_AIP_TEMP_PATHS"; then
+    command rm -f "$profiles"
     command rm -f "$_AIP_TEMP_PATHS"
     _AIP_TEMP_PATHS=
     _aip_error "tracked profile contains a path that is not portable to Windows: $_AIP_PORTABLE_PATH_ERROR"
     return 1
   fi
+  _aip_profile_prefixes_from_names "$_AIP_TEMP_PATHS" >|"$profiles" || {
+    command rm -f "$_AIP_TEMP_PATHS"
+    _AIP_TEMP_PATHS=
+    command rm -f "$profiles"
+    return 1
+  }
   while IFS= read -r -d '' relative; do
-    if _aip_is_forbidden_path "$relative"; then
+    rel=$relative
+    if _aip_under_profile "$relative" "$profiles"; then rel=${relative#*/}; fi
+    if _aip_is_forbidden_path "$rel"; then
       forbidden=1
       break
     fi
   done <"$_AIP_TEMP_PATHS"
+  command rm -f "$profiles"
   command rm -f "$_AIP_TEMP_PATHS"
   _AIP_TEMP_PATHS=
   if [ "$forbidden" -eq 1 ]; then
-    _aip_error "forbidden credential or runtime path is tracked; inspect with 'git -C \"$profile\" ls-files' and remove it with 'git rm --cached PATH'"
+    _aip_error "forbidden credential or runtime path is tracked; inspect with 'git -C \"$root\" ls-files' and remove it with 'git rm --cached PATH'"
     return 1
   fi
 }
 
 _aip_check_untracked_skills() {
-  local profile=$1 relative forbidden=0
-  _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-paths.XXXXXX") || return
-  _aip_git -C "$profile" ls-files --others --exclude-standard -z -- skills >|"$_AIP_TEMP_PATHS" || return
-  if ! _aip_validate_portable_paths_file "$_AIP_TEMP_PATHS"; then
+  local root=$1 name relative forbidden=0
+  for name in $(_aip_list_profile_names); do
+    _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-paths.XXXXXX") || return
+    _aip_git -C "$root" ls-files --others --exclude-standard -z -- "$name/skills" >|"$_AIP_TEMP_PATHS" || {
+      command rm -f "$_AIP_TEMP_PATHS"
+      _AIP_TEMP_PATHS=
+      return 1
+    }
+    if ! _aip_validate_portable_paths_file "$_AIP_TEMP_PATHS"; then
+      command rm -f "$_AIP_TEMP_PATHS"
+      _AIP_TEMP_PATHS=
+      _aip_error "shared skills contain a path that is not portable to Windows: $_AIP_PORTABLE_PATH_ERROR"
+      return 1
+    fi
+    while IFS= read -r -d '' relative; do
+      if _aip_is_forbidden_path "${relative#"$name"/}"; then
+        forbidden=1
+        break
+      fi
+    done <"$_AIP_TEMP_PATHS"
     command rm -f "$_AIP_TEMP_PATHS"
     _AIP_TEMP_PATHS=
-    _aip_error "shared skills contain a path that is not portable to Windows: $_AIP_PORTABLE_PATH_ERROR"
-    return 1
-  fi
-  while IFS= read -r -d '' relative; do
-    if _aip_is_forbidden_path "$relative"; then
-      forbidden=1
-      break
+    if [ "$forbidden" -eq 1 ]; then
+      _aip_error 'forbidden credential path exists under skills/; remove or ignore it before syncing'
+      return 1
     fi
-  done <"$_AIP_TEMP_PATHS"
-  command rm -f "$_AIP_TEMP_PATHS"
-  _AIP_TEMP_PATHS=
-  if [ "$forbidden" -eq 1 ]; then
-    _aip_error 'forbidden credential path exists under skills/; remove or ignore it before syncing'
-    return 1
-  fi
+  done
 }
 
 _aip_check_skill_repositories() {
-  local profile=$1 nested_git
-  nested_git=$(command find "$profile/skills" -mindepth 1 -name .git -print -quit 2>/dev/null) || return
-  if [ -n "$nested_git" ]; then
-    _aip_error 'nested Git repositories under skills/ are not supported; remove the nested .git directory and sync the skill files directly'
-    return 1
-  fi
+  local root=$1 name profile_path nested_git
+  for name in $(_aip_list_profile_names); do
+    profile_path=$(_aip_profile_path "$name")
+    nested_git=$(command find "$profile_path/skills" -mindepth 1 -name .git -print -quit 2>/dev/null) || return
+    if [ -n "$nested_git" ]; then
+      _aip_error 'nested Git repositories under skills/ are not supported; remove the nested .git directory and sync the skill files directly'
+      return 1
+    fi
+  done
   _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-paths.XXXXXX") || return
-  _aip_git -C "$profile" ls-files --stage >|"$_AIP_TEMP_PATHS" || return
+  _aip_git -C "$root" ls-files --stage >|"$_AIP_TEMP_PATHS" || return
   if command grep -q '^160000 ' "$_AIP_TEMP_PATHS"; then
     command rm -f "$_AIP_TEMP_PATHS"
     _AIP_TEMP_PATHS=
@@ -1413,34 +1627,72 @@ _aip_check_skill_repositories() {
 }
 
 _aip_check_tracked_links() {
-  local profile=$1 entries record mode relative
+  local root=$1 entries record mode relative profiles
   entries=$(command mktemp "${TMPDIR:-/tmp}/aip-index.XXXXXX") || return
-  _aip_git -C "$profile" ls-files --stage -z >|"$entries" || { command rm -f "$entries"; return 1; }
+  profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || { command rm -f "$entries"; return; }
+  _aip_git -C "$root" ls-files --stage -z >|"$entries" || { command rm -f "$entries" "$profiles"; return 1; }
+  while IFS= read -r -d '' record; do
+    case ${record%% *} in 100644) ;; *) continue ;; esac
+    relative=${record#*$'\t'}
+    case $relative in */.aip/outfit) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
+  done <"$entries"
   # Cleanup unlinks the name; the loop keeps its already-open descriptor.
   # shellcheck disable=SC2094
   while IFS= read -r -d '' record; do
     mode=${record%% *}
     relative=${record#*$'\t'}
-    if [ "$mode" = 120000 ] && ! _aip_is_required_profile_link "$relative"; then
-      command rm -f "$entries"
+    if [ "$mode" = 120000 ] &&
+       { ! _aip_under_profile "$relative" "$profiles" || ! _aip_is_required_profile_link "${relative#*/}"; }; then
+      command rm -f "$entries" "$profiles"
       _aip_error "tracked profile contains an unsupported symbolic link: $relative"
       return 1
     fi
+  done <"$entries"
+  command rm -f "$entries" "$profiles"
+}
+
+_aip_require_no_linked_profiles() {
+  local profile_path name entries
+  [ -d "$_AIP_PROFILE_ROOT" ] || return 0
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return 1
+  command find -H "$_AIP_PROFILE_ROOT" -mindepth 1 -maxdepth 1 -type l -print0 >|"$entries" || { command rm -f "$entries"; return 1; }
+  # Cleanup unlinks the name; the loop keeps its already-open descriptor.
+  # shellcheck disable=SC2094
+  while IFS= read -r -d '' profile_path; do
+    name=${profile_path##*/}
+    _aip_validate_name "$name" || continue
+    { [ -d "$profile_path" ] && { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; }; } || continue
+    command rm -f "$entries"
+    _aip_error "profile '$name' path must not be a symbolic link"
+    return 1
   done <"$entries"
   command rm -f "$entries"
 }
 
 _aip_stage_checkpoint() {
-  local profile=$1 mode=$2
-  _aip_require_no_nested_mounts "$profile" || return
-  _aip_check_tracked_forbidden "$profile" || return
-  _aip_check_skill_repositories "$profile" || return
-  _aip_check_tracked_links "$profile" || return
-  _aip_check_untracked_skills "$profile" || return
-  _aip_git -C "$profile" add -u -- . || return
-  _aip_git -C "$profile" add -- .aip/outfit .gitignore AGENTS.md skills claude/CLAUDE.md claude/skills codex/AGENTS.md codex/instructions.md codex/skills pi/AGENTS.md pi/APPEND_SYSTEM.md pi/skills opencode/AGENTS.md opencode/skills || return
-  if ! _aip_git -C "$profile" diff --cached --quiet --; then
-    _aip_git -C "$profile" commit -q -m "aip: checkpoint ($mode)" || {
+  local root=$1 mode=$2 name profile_path
+  _aip_require_no_nested_mounts "$root" || return
+  _aip_require_no_linked_profiles || return
+  _aip_check_tracked_forbidden "$root" || return
+  _aip_check_skill_repositories "$root" || return
+  _aip_check_tracked_links "$root" || return
+  _aip_check_untracked_skills "$root" || return
+  for name in $(_aip_list_profile_names); do
+    profile_path=$(_aip_profile_path "$name")
+    _aip_ensure_skills_placeholder "$profile_path" || return
+    _aip_validate_sync_layout "$profile_path" || return
+  done
+  _aip_git -C "$root" add -u -- . || return
+  _aip_git -C "$root" add .gitignore || return
+  for name in $(_aip_list_profile_names); do
+    _aip_git -C "$root" add \
+      "$name/.aip/outfit" "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
+      "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
+      "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
+      "$name/opencode/AGENTS.md" "$name/opencode/skills" || return
+  done
+  if ! _aip_git -C "$root" diff --cached --quiet --; then
+    _aip_git -C "$root" commit -q -m "aip: checkpoint ($mode)" || {
       _aip_error 'could not commit the local checkpoint; check Git identity and hooks'
       return 1
     }
@@ -1485,82 +1737,86 @@ _aip_require_rebase_preserves_untracked() {
   command rm -f "$remote_paths" "$local_paths"
 }
 
-_aip_sync_profile() (
-  local profile=$1 mode=${2-manual} upstream upstream_commit branch remote merge_ref
+_aip_sync() (
+  local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path
   _aip_clear_git_routing
   _AIP_SYNC_LOCK=
   _AIP_SYNC_TOKEN=
   _AIP_TEMP_PATHS=
   _AIP_GIT_OUTPUT=
-  _aip_require_git_containment "$profile" || return
-  _aip_acquire_lock "$profile" || return
+  _aip_require_root_repo || return
+  _aip_require_git_containment "$root" || return
+  _aip_acquire_lock "$root" || return
   trap '_aip_sync_cleanup' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
 
-  if _aip_has_unfinished_git_operation "$profile" || [ -n "$(_aip_git -C "$profile" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-    _aip_error "Git conflict or unfinished operation in $profile; run 'git -C \"$profile\" status', then resolve and continue or abort it"
+  if _aip_has_unfinished_git_operation "$root" || [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+    _aip_error "Git conflict or unfinished operation in $root; run 'git -C \"$root\" status', then resolve and continue or abort it"
     return 1
   fi
-  _aip_ensure_skills_placeholder "$profile" || return
-  _aip_validate_sync_layout "$profile" || return
-  _aip_stage_checkpoint "$profile" "$mode" || return
+  _aip_stage_checkpoint "$root" "$mode" || return
 
-  if ! _aip_git -C "$profile" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
-    printf 'Profile is local only (no upstream).\n'
+  if ! _aip_git -C "$root" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    printf 'Profiles are local only (no upstream).\n'
     return 0
   fi
 
-  upstream=$(_aip_git -C "$profile" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}') || return
-  branch=$(_aip_git -C "$profile" branch --show-current) || return
-  remote=$(_aip_git -C "$profile" config --get "branch.$branch.remote") || remote=
-  merge_ref=$(_aip_git -C "$profile" config --get "branch.$branch.merge") || merge_ref=
+  upstream=$(_aip_git -C "$root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}') || return
+  branch=$(_aip_git -C "$root" branch --show-current) || return
+  remote=$(_aip_git -C "$root" config --get "branch.$branch.remote") || remote=
+  merge_ref=$(_aip_git -C "$root" config --get "branch.$branch.merge") || merge_ref=
   [ -n "$remote" ] || { _aip_error 'configured upstream remote is invalid'; return 1; }
   case $merge_ref in refs/heads/*) ;; *) _aip_error 'configured upstream branch is invalid'; return 1 ;; esac
-  _AIP_GIT_OUTPUT=$(command mktemp "$profile/.git/aip-git.XXXXXX") || return
-  _aip_require_git_mutation_state "$profile" || return
-  if ! _aip_prepare_ssh_transport "$profile"; then
-    _aip_error 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profile'
+  _AIP_GIT_OUTPUT=$(command mktemp "$root/.git/aip-git.XXXXXX") || return
+  _aip_require_git_mutation_state "$root" || return
+  if ! _aip_prepare_ssh_transport "$root"; then
+    _aip_error 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profiles'
     return 0
   fi
-  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$profile" fetch --quiet "$remote" >|"$_AIP_GIT_OUTPUT" 2>&1; then
-    _aip_require_git_mutation_state "$profile" || return
-    _aip_error 'remote sync unavailable; using the committed local profile and retrying next time'
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet "$remote" >|"$_AIP_GIT_OUTPUT" 2>&1; then
+    _aip_require_git_mutation_state "$root" || return
+    _aip_error 'remote sync unavailable; using the committed local profiles and retrying next time'
     return 0
   fi
-  upstream_commit=$(_aip_git -C "$profile" rev-parse --verify "$upstream^{commit}") || return
-  _aip_validate_git_tree "$profile" "$upstream_commit" || return
-  _aip_require_rebase_preserves_untracked "$profile" "$upstream_commit" || return
-  if ! LC_ALL=C _aip_git -C "$profile" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
-    if _aip_has_unfinished_git_operation "$profile" || [ -n "$(_aip_git -C "$profile" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-      _aip_error "Git conflict in $profile; no side was chosen. Run 'git -C \"$profile\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+  upstream_commit=$(_aip_git -C "$root" rev-parse --verify "$upstream^{commit}") || return
+  _aip_validate_git_tree "$root" "$upstream_commit" || return
+  _aip_require_rebase_preserves_untracked "$root" "$upstream_commit" || return
+  if ! LC_ALL=C _aip_git -C "$root" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
+    if _aip_has_unfinished_git_operation "$root" || [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
+      _aip_error "Git conflict in $root; no side was chosen. Run 'git -C \"$root\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
     else
-      _aip_error "local Git integration failed in $profile; inspect it with 'git -C \"$profile\" status'"
+      _aip_error "local Git integration failed in $root; inspect it with 'git -C \"$root\" status'"
     fi
     return 1
   fi
-  _aip_validate_sync_layout "$profile" || return
-  _aip_check_tracked_forbidden "$profile" || return
-  _aip_check_untracked_skills "$profile" || return
-  _aip_require_git_mutation_state "$profile" || return
-  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$profile" push --quiet "$remote" "HEAD:$merge_ref" >|"$_AIP_GIT_OUTPUT" 2>&1; then
-    _aip_require_git_mutation_state "$profile" || return
+  for name in $(_aip_list_profile_names); do
+    profile_path=$(_aip_profile_path "$name")
+    _aip_validate_sync_layout "$profile_path" || return
+  done
+  _aip_check_tracked_forbidden "$root" || return
+  _aip_check_untracked_skills "$root" || return
+  _aip_require_git_mutation_state "$root" || return
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" push --quiet "$remote" "HEAD:$merge_ref" >|"$_AIP_GIT_OUTPUT" 2>&1; then
+    _aip_require_git_mutation_state "$root" || return
     _aip_error 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
     return 0
   fi
-  printf 'Profile synced with %s.\n' "$upstream"
+  printf 'Profiles synced with %s.\n' "$upstream"
 )
+
 
 _aip_sync_command() {
   [ "$#" -le 1 ] || {
-    _aip_error 'usage: aip sync [NAME]'
+    _aip_error 'usage: aip sync'
     return 2
   }
-  if [ "$#" -eq 1 ]; then _aip_resolve_profile "$1" || return
-  else _aip_resolve_profile || return
+  if [ "$#" -eq 1 ]; then
+    _aip_error "unexpected argument '$1'; aip sync syncs every profile in the profiles repository"
+    return 2
   fi
-  _aip_sync_profile "$(_aip_profile_path "$_AIP_RESOLVED_NAME")" manual
+  _aip_sync manual
 }
 
 _aip_toml_string() {
@@ -1600,7 +1856,7 @@ _aip_run_harness() (
     _aip_error "$harness executable was not found in PATH"
     return 127
   }
-  _aip_sync_profile "$profile_path" before || return
+  _aip_sync before || return
   trap '_AIP_CHILD_SIGNAL_STATUS=130' INT
   trap '_AIP_CHILD_SIGNAL_STATUS=143' TERM
   trap '_AIP_CHILD_SIGNAL_STATUS=129' HUP
@@ -1644,7 +1900,7 @@ _aip_run_harness() (
   trap - INT TERM HUP
   if [ -n "$_AIP_CHILD_SIGNAL_STATUS" ]; then child_status=$_AIP_CHILD_SIGNAL_STATUS; fi
 
-  _aip_sync_profile "$profile_path" after || :
+  _aip_sync after || :
   return "$child_status"
 )
 
@@ -1676,6 +1932,192 @@ _aip_run() {
   _aip_run_harness "$explicit_supplied" "$explicit" "$harness" "$@"
 }
 
+_aip_help() {
+  [ "$#" -eq 0 ] || { _aip_error 'usage: aip help'; return 2; }
+  cat <<'EOF'
+aip — shared AI profiles for Claude Code, Codex, Pi, and OpenCode
+
+A profile is one directory: shared AGENTS.md instructions, shared skills/, and
+per-harness launch settings. Every profile lives in a single Git repository
+(the profiles repository, ~/agent-profiles by default), so one remote keeps
+all of your profiles in sync across all of your machines.
+
+Commands:
+  aip create NAME [--outfit OUTFIT]  Create a new profile
+  aip list                           List profiles, outfits, and selection
+  aip which [NAME]                   Show the profile that would be selected
+  aip default [NAME]                 Show or set the default profile
+  aip use NAME                       Select NAME for this shell only
+  aip local [NAME | --remove]        Set or clear the per-directory marker
+  aip outfit NAME OUTFIT             Set a profile's outfit (label)
+  aip clone SOURCE TARGET            Copy a profile into a new profile
+  aip delete NAME [--force]          Delete a profile
+  aip sync                           Checkpoint and sync every profile
+  aip remote add URL                 Connect the profiles repository to a remote
+  aip remote show                    Show the configured remote (if any)
+  aip remote remove                  Disconnect the remote
+  aip doctor [NAME]                  Diagnose the repository and profiles
+  aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
+  aip update                         Update the aip npm package
+  aip version                        Show the aip version
+  aip help                           Show this help
+
+Harness wrappers:
+  claude, codex, pi, opencode [ARGS...] launch the named tool with the
+  selected profile's settings, checkpointing the profiles repository before
+  and after the run. If the remote is unreachable they warn and launch the
+  committed local profile instead; a Git conflict blocks the launch until
+  it is resolved.
+
+Quick start:
+  aip create work --outfit suit   create your first profile
+  aip remote add <git-url>        connect a shared remote (empty remote ok)
+  aip default work                choose your everyday profile
+  cd my-project && claude         work with your profile
+
+On a second machine:
+  aip remote add <same-git-url>   clones every profile you already have
+
+See the README for full documentation, including Windows setup and the
+security guarantees aip enforces on syncable content.
+EOF
+}
+
+_aip_remote_show() {
+  local root=$_AIP_PROFILE_ROOT url
+  if [ -d "$root/.git" ] && [ ! -L "$root/.git" ] && url=$(_aip_git -C "$root" remote get-url origin 2>/dev/null); then
+    printf '%s\n' "$url"
+    return 0
+  fi
+  printf 'no remote is configured\n'
+  return 0
+}
+
+_aip_remote_remove() {
+  local root=$_AIP_PROFILE_ROOT branch
+  if { [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; } && _aip_git -C "$root" remote get-url origin >/dev/null 2>&1; then
+    _aip_git -C "$root" remote remove origin 2>/dev/null || {
+      _aip_error 'could not remove the origin remote; inspect the profiles repository'
+      return 1
+    }
+    branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
+    if [ -n "$branch" ]; then
+      _aip_git -C "$root" branch --unset-upstream 2>/dev/null || :
+    fi
+    printf 'Remote removed; profiles are now local only.\n'
+    return 0
+  fi
+  printf 'no remote is configured\n'
+  return 0
+}
+
+_aip_remote_add() {
+  local url=$1 root=$_AIP_PROFILE_ROOT existing_origin
+  [ -n "$url" ] || { _aip_error 'usage: aip remote add URL'; return 2; }
+  case $url in
+    *' '*|*$'\n'*) _aip_error "invalid remote URL: $url"; return 2 ;;
+  esac
+  if [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; then
+    existing_origin=$(_aip_git -C "$root" remote get-url origin 2>/dev/null) || existing_origin=
+    if [ -n "$existing_origin" ]; then
+      _aip_error "origin is already configured ($existing_origin); run 'aip remote remove' first"
+      return 1
+    fi
+    _aip_git -C "$root" remote add origin "$url" 2>/dev/null || {
+      _aip_error "could not configure origin: $url"
+      return 1
+    }
+  else
+    if [ -e "$root" ] && [ ! -d "$root" ]; then
+      _aip_error "profiles path exists and is not a directory: $root"
+      return 1
+    fi
+    if [ -d "$root/.git" ]; then
+      _aip_error "profiles repository metadata is missing or linked: $root/.git"
+      return 1
+    fi
+    if [ -d "$root" ] && [ -n "$(command ls -A -- "$root" 2>/dev/null)" ]; then
+      _aip_error "profiles directory already contains content: $root; use 'aip create NAME' instead of 'aip remote add'"
+      return 1
+    fi
+    command mkdir -p -- "$root" || { _aip_error "could not create the profiles directory: $root"; return 1; }
+    if ! _aip_prepare_ssh_transport "$root"; then
+      _aip_error 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+      return 1
+    fi
+    if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone --quiet -- "$url" "$root" 2>/dev/null; then
+      _aip_error "could not clone $url into $root; the remote must be a profiles repository created by aip"
+      return 1
+    fi
+    _aip_git -C "$root" config core.symlinks true || { _aip_error 'could not configure symbolic-link checkout'; return 1; }
+    _aip_git -C "$root" config core.longpaths true 2>/dev/null || :
+    if ! _aip_git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1 &&
+       _aip_git -C "$root" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then
+      _aip_git -C "$root" checkout -q -B main refs/remotes/origin/main 2>/dev/null || {
+        _aip_error 'could not check out the cloned profiles branch'
+        return 1
+      }
+    fi
+    printf 'Cloned profiles from %s.\n' "$url"
+  fi
+  local branch
+  branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
+  if [ -z "$branch" ]; then
+    _aip_error 'cannot attach a remote while detached from a branch'
+    return 1
+  fi
+  if ! _aip_prepare_ssh_transport "$root"; then
+    _aip_error 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+    return 1
+  fi
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet origin 2>/dev/null; then
+    _aip_error 'could not fetch origin; check that the remote is reachable and that credentials are not required interactively'
+    return 1
+  fi
+  if _aip_git -C "$root" rev-parse --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    _aip_git -C "$root" branch --set-upstream-to="origin/$branch" "$branch" 2>/dev/null || {
+      _aip_error "could not attach branch $branch to origin"
+      return 1
+    }
+    _aip_sync manual
+    return
+  fi
+  _aip_check_tracked_forbidden "$root" || return
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" push --quiet -u origin "HEAD:refs/heads/$branch" 2>/dev/null; then
+    _aip_error 'could not publish the profiles repository to origin; the remote may need to be empty'
+    return 1
+  fi
+  printf 'Profiles published to origin/%s.\n' "$branch"
+}
+
+_aip_remote() {
+  local sub=${1-}
+  _aip_clear_git_routing
+  if [ -z "$sub" ]; then
+    _aip_error 'usage: aip remote add URL | aip remote show | aip remote remove'
+    return 2
+  fi
+  shift
+  case $sub in
+    add)
+      [ "$#" -eq 1 ] || { _aip_error 'usage: aip remote add URL'; return 2; }
+      _aip_remote_add "$1"
+      ;;
+    show)
+      [ "$#" -eq 0 ] || { _aip_error 'usage: aip remote show'; return 2; }
+      _aip_remote_show
+      ;;
+    remove)
+      [ "$#" -eq 0 ] || { _aip_error 'usage: aip remote remove'; return 2; }
+      _aip_remote_remove
+      ;;
+    *)
+      _aip_error "unknown remote command '$sub'; usage: aip remote add URL | aip remote show | aip remote remove"
+      return 2
+      ;;
+  esac
+}
+
 aip() {
   if [ "$#" -eq 0 ]; then
     _aip_status
@@ -1693,6 +2135,10 @@ aip() {
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
     outfit) _aip_outfit "$@" ;;
+    help) _aip_help "$@" ;;
+    --help) _aip_help ;;
+    -h) _aip_help ;;
+    remote) _aip_remote "$@" ;;
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;

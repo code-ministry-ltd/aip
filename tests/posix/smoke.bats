@@ -9,10 +9,41 @@
 
   run bash -c 'source "$0"; aip version' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.1.0' ]
+  [ "$output" = 'aip 0.2.0' ]
 
   run bash -c 'source "$0"; aip version extra' "$AIP_SOURCE"
   [ "$status" -ne 0 ]
+}
+
+@test "help, --help, and -h print the full command table and exit 0" {
+  export AIP_SOURCE="$BATS_TEST_DIRNAME/../../aip.sh"
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  mkdir -p "$_AIP_PROFILE_ROOT"
+
+  run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  local cmd
+  for cmd in create list which default use local outfit clone delete sync remote doctor run update version help; do
+    [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
+  done
+  [[ "$output" == *'aip remote add URL'* ]]
+  [[ "$output" == *'aip remote show'* ]]
+  [[ "$output" == *'aip remote remove'* ]]
+  [[ "$output" == *'Quick start'* ]]
+  [[ "$output" == *'README'* ]]
+  [[ "$output" == *'claude, codex, pi, opencode'* ]]
+
+  run bash -c 'source "$0"; aip --help' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(bash -c 'source "'"$AIP_SOURCE"'"; aip help')" ]
+
+  run bash -c 'source "$0"; aip -h' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(bash -c 'source "'"$AIP_SOURCE"'"; aip help')" ]
+
+  run bash -c 'source "$0"; aip help extra' "$AIP_SOURCE"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'usage: aip help'* ]]
 }
 
 @test "stock Zsh lists an empty profile root without glob errors" {

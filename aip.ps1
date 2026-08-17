@@ -6,7 +6,7 @@ if (-not (Get-Variable -Name AipProfileRoot -Scope Script -ErrorAction SilentlyC
     $script:AipProfileRoot = Join-Path $HOME 'agent-profiles'
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.1.0'
+$script:AipVersion = '0.2.0'
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -169,7 +169,7 @@ function Test-AipGitContainment {
     else { [IO.Path]::GetFullPath((Join-Path $ProfilePath ([string]$commonDirectory))) }
     $actualCommon = $actualCommon.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     if ($actualTop -ne $expectedTop -or $actualGit -ne $expectedGit -or $actualCommon -ne $expectedGit) {
-        $script:AipGitContainmentError = 'Git repository routing escapes the profile; remove core.worktree or external Git routing'
+        $script:AipGitContainmentError = 'Git repository routing escapes the profiles repository; remove core.worktree or external Git routing'
         if ($Report) { Write-AipError $script:AipGitContainmentError }
         return $false
     }
@@ -199,7 +199,7 @@ function Test-AipGitContainment {
     foreach ($alternate in '.git/objects/info/alternates', '.git/objects/info/http-alternates') {
         $alternatePath = Join-Path $ProfilePath $alternate
         if ($null -ne (Get-Item -LiteralPath $alternatePath -Force -ErrorAction SilentlyContinue)) {
-            $script:AipGitContainmentError = "Git object alternates escape the independent profile repository; remove: $alternatePath"
+            $script:AipGitContainmentError = "Git object alternates escape the profiles repository; remove: $alternatePath"
             if ($Report) { Write-AipError $script:AipGitContainmentError }
             return $false
         }
@@ -334,6 +334,66 @@ function Get-AipProfilePath {
     return Join-Path $script:AipProfileRoot $Name
 }
 
+function Test-AipRootRepo {
+    $rootItem = Get-Item -LiteralPath $script:AipProfileRoot -Force -ErrorAction SilentlyContinue
+    $gitItem = if ($null -ne $rootItem) { Get-Item -LiteralPath (Join-Path $script:AipProfileRoot '.git') -Force -ErrorAction SilentlyContinue } else { $null }
+    if ($null -eq $rootItem -or $null -eq $gitItem -or -not $gitItem.PSIsContainer -or $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        Write-AipError "profiles directory is not a Git repository: $script:AipProfileRoot; run 'aip create NAME' or 'aip doctor'"
+        $script:AipCommandStatus = 2
+        return $false
+    }
+    return $true
+}
+
+function Get-AipProfileNames {
+    $rootItem = Get-Item -LiteralPath $script:AipProfileRoot -Force -ErrorAction SilentlyContinue
+    if ($null -eq $rootItem -or $rootItem -isnot [IO.DirectoryInfo]) { return @() }
+    if ($rootItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        $rootItem = $rootItem.ResolveLinkTarget($true)
+        if ($null -eq $rootItem -or $rootItem -isnot [IO.DirectoryInfo]) { return @() }
+    }
+    return @(Get-ChildItem -LiteralPath $rootItem.FullName -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.PSIsContainer -and $null -eq $_.LinkType -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
+            (Test-AipProfileName $_.Name) -and
+            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.aip/outfit') -Force -ErrorAction SilentlyContinue))
+    } | Sort-Object Name | ForEach-Object { $_.Name })
+}
+
+function Get-AipRootGitIgnoreLines {
+    return @('# aip-managed root exclusions', '.default', '.aip-*/')
+}
+
+function Invoke-AipEnsureRootRepo {
+    $root = $script:AipProfileRoot
+    try { New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop | Out-Null }
+    catch { Write-AipError "could not create the profiles directory: $($_.Exception.Message)"; $script:AipCommandStatus = 1; return $false }
+    $gitItem = Get-Item -LiteralPath (Join-Path $root '.git') -Force -ErrorAction SilentlyContinue
+    if ($null -ne $gitItem -and $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        Write-AipError "profiles repository metadata must not be a symbolic link or reparse point: $(Join-Path $root '.git')"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    if ($null -eq $gitItem) {
+        Invoke-AipGit -C $root init -q -b main
+        if ($LASTEXITCODE -ne 0) { Write-AipError 'could not initialise the profiles repository'; $script:AipCommandStatus = 1; return $false }
+        Invoke-AipGit -C $root config core.symlinks true
+        if ($LASTEXITCODE -ne 0) { Write-AipError 'could not configure symbolic-link checkout'; $script:AipCommandStatus = 1; return $false }
+        Invoke-AipGit -C $root config core.longpaths true
+        if ($LASTEXITCODE -ne 0) { Write-AipError 'could not configure long-path support'; $script:AipCommandStatus = 1; return $false }
+    }
+    Invoke-AipGit -C $root var GIT_AUTHOR_IDENT *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-AipError "configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    $gitignorePath = Join-Path $root '.gitignore'
+    if ($null -eq (Get-Item -LiteralPath $gitignorePath -Force -ErrorAction SilentlyContinue)) {
+        Set-AipUtf8LfFile $gitignorePath @(Get-AipRootGitIgnoreLines)
+    }
+    return $true
+}
+
 function Get-AipNameFile {
     param([Parameter(Mandatory)][string]$LiteralPath)
     $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction SilentlyContinue
@@ -364,13 +424,7 @@ function Test-AipProfileExists {
         $script:AipCommandStatus = 2
         return $false
     }
-    $gitItem = Get-Item -LiteralPath (Join-Path $profilePath '.git') -Force -ErrorAction SilentlyContinue
-    if ($null -eq $gitItem -or -not $gitItem.PSIsContainer -or $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-        Write-AipError "profile '$Name' is not a Git repository; run 'aip doctor $Name'"
-        $script:AipCommandStatus = 2
-        return $false
-    }
-    return $true
+    return Test-AipRootRepo
 }
 
 function Find-AipProjectMarker {
@@ -512,29 +566,16 @@ function Invoke-AipCreate {
         return
     }
     if (-not (Get-AipGitApplication)) { Write-AipError 'Git is required'; return }
-    New-Item -ItemType Directory -Path $script:AipProfileRoot -Force | Out-Null
     $destination = Get-AipProfilePath $name
     if (Test-AipPathEntry $destination) { Write-AipError "destination already exists: $destination"; return }
+    if (-not (Invoke-AipEnsureRootRepo)) { return }
+    if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
     $temporary = $null
     try {
         $temporary = New-AipOwnedTemporaryDirectory $name
         New-AipProfileFiles $temporary $outfit
-        Invoke-AipGit -C $temporary init -q -b main
-        if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
-        Invoke-AipGit -C $temporary config core.symlinks true
-        if ($LASTEXITCODE -ne 0) { throw 'could not configure symbolic-link checkout' }
-        Invoke-AipGit -C $temporary config core.longpaths true
-        if ($LASTEXITCODE -ne 0) { throw 'could not configure long-path support' }
-        if (-not (Test-AipGitContainment $temporary)) { throw 'Git repository routing escapes the staged profile' }
-        Invoke-AipGit -C $temporary var GIT_AUTHOR_IDENT *> $null
-        if ($LASTEXITCODE -ne 0) { throw 'Git identity is not configured; set user.name and user.email' }
-        Invoke-AipGit -C $temporary add .aip/outfit .gitignore AGENTS.md skills claude/CLAUDE.md claude/skills codex/AGENTS.md codex/instructions.md codex/skills pi/AGENTS.md pi/APPEND_SYSTEM.md pi/skills opencode/AGENTS.md opencode/skills
-        if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
-        Invoke-AipGit -C $temporary commit -q -m 'aip: create profile'
-        if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
         [IO.Directory]::Move($temporary, $destination)
         $temporary = $null
-        Write-Output "Created profile '$name' at $destination"
     }
     catch {
         if ($temporary -and (Test-Path -LiteralPath $temporary)) { Remove-Item -LiteralPath $temporary -Recurse -Force }
@@ -542,7 +583,16 @@ function Invoke-AipCreate {
             Write-AipError 'could not create symbolic links; enable Windows Developer Mode and try again'
         }
         else { Write-AipError "could not create profile '$name': $($_.Exception.Message)" }
+        return
     }
+    Invoke-AipGit -C $script:AipProfileRoot add .gitignore $name
+    if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
+    Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
+    if ($LASTEXITCODE -ne 0) {
+        Invoke-AipGit -C $script:AipProfileRoot commit -q -m 'aip: create profile'
+        if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
+    }
+    Write-Output "Created profile '$name' at $destination"
 }
 
 function Test-AipUnfinishedGitOperation {
@@ -563,56 +613,58 @@ function Invoke-AipClone {
     if (-not (Test-AipProfileName $targetName)) { Write-AipError "invalid profile name '$targetName'"; $script:AipCommandStatus = 2; return }
     $sourcePath = Get-AipProfilePath $sourceName
     if ((Get-Item -LiteralPath $sourcePath).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { Write-AipError 'source profile path must not be a symbolic link'; return }
-    if (-not (Test-AipGitContainment $sourcePath -Report)) { return }
+    if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
     $targetPath = Get-AipProfilePath $targetName
     if (Test-AipPathEntry $targetPath) { Write-AipError "destination already exists: $targetPath"; return }
-    Invoke-AipSyncProfile $sourcePath 'clone'
+    # Capture the source profile's committed executable paths before the sync
+    # checkpoint can re-stage files from disk (where the executable bit may
+    # differ, and never exists on platforms without file modes such as Windows).
+    $executablePaths = [System.Collections.Generic.List[string]]::new()
+    $sourceListing = [string](Invoke-AipGit -C $script:AipProfileRoot ls-files -s -z -- (Join-Path $sourceName ''))
+    if ($LASTEXITCODE -ne 0) { Write-AipError "could not clone profile '$sourceName'"; return }
+    foreach ($record in @($sourceListing -split "`0")) {
+        if ($record -eq '') { continue }
+        $tabIndex = $record.IndexOf([char]9)
+        if ($tabIndex -lt 0 -or -not $record.Substring(0, $tabIndex).StartsWith('100755')) { continue }
+        $executablePaths.Add($record.Substring($tabIndex + 1))
+    }
+    Invoke-AipSync 'clone'
     if ($script:AipCommandStatus -ne 0) { return }
 
     $temporary = $null
+    $tarball = [IO.Path]::GetTempFileName()
     try {
         $temporary = New-AipOwnedTemporaryDirectory $targetName
-        $tree = Join-Path $temporary 'tree'
-        Invoke-AipGit -c core.symlinks=true clone --no-hardlinks -q $sourcePath $tree
-        if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
-        $rawIndex = (Invoke-AipGit -C $tree ls-files --stage -z) -join "`n"
-        if ($LASTEXITCODE -ne 0) { throw 'could not inspect cloned file modes' }
-        $executablePaths = @()
-        foreach ($record in ($rawIndex -split "`0")) {
-            if (-not $record.StartsWith('100755 ')) { continue }
-            $tab = $record.IndexOf("`t")
-            if ($tab -lt 0) { throw 'could not parse cloned file modes' }
-            $executablePaths += $record.Substring($tab + 1)
-        }
-        $layoutResult = @(Test-AipLayout $tree)
+        Invoke-AipGit -C $script:AipProfileRoot archive -o $tarball HEAD $sourceName
+        if ($LASTEXITCODE -ne 0) { throw 'could not archive the tracked source profile' }
+        & tar -xf $tarball --strip-components=1 -C $temporary
+        if ($LASTEXITCODE -ne 0) { throw 'could not extract the archived profile' }
+        $layoutResult = @(Test-AipLayout $temporary)
         if (-not [bool]$layoutResult[-1]) { throw 'cloned profile layout is invalid' }
-        Remove-Item -LiteralPath (Join-Path $tree '.git') -Recurse -Force -ErrorAction Stop
-        Invoke-AipGit -C $tree init -q -b main
-        if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
-        Invoke-AipGit -C $tree config core.symlinks true
-        if ($LASTEXITCODE -ne 0) { throw 'could not configure symbolic-link checkout' }
-        Invoke-AipGit -C $tree config core.longpaths true
-        if ($LASTEXITCODE -ne 0) { throw 'could not configure long-path support' }
-        if (-not (Test-AipGitContainment $tree)) { throw 'Git repository routing escapes the staged profile' }
-        Invoke-AipGit -C $tree var GIT_AUTHOR_IDENT *> $null
-        if ($LASTEXITCODE -ne 0) { throw 'Git identity is not configured; set user.name and user.email' }
-        Invoke-AipGit -C $tree add -A
-        if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
-        foreach ($executablePath in $executablePaths) {
-            Invoke-AipGit -C $tree update-index --chmod=+x -- $executablePath
-            if ($LASTEXITCODE -ne 0) { throw "could not preserve executable mode for $executablePath" }
-        }
-        Invoke-AipGit -C $tree commit -q -m "aip: clone $sourceName"
-        if ($LASTEXITCODE -ne 0) { throw 'git commit failed' }
-        [IO.Directory]::Move($tree, $targetPath)
-        Remove-Item -LiteralPath $temporary -Force -ErrorAction Stop
+        [IO.Directory]::Move($temporary, $targetPath)
         $temporary = $null
-        Write-Output "Cloned profile '$sourceName' to '$targetName' at $targetPath"
     }
     catch {
         if ($temporary -and (Test-Path -LiteralPath $temporary)) { Remove-Item -LiteralPath $temporary -Recurse -Force }
+        Remove-Item -LiteralPath $tarball -Force -ErrorAction SilentlyContinue
         Write-AipError "could not clone profile '$sourceName': $($_.Exception.Message)"
+        return
     }
+    Remove-Item -LiteralPath $tarball -Force -ErrorAction SilentlyContinue
+    Invoke-AipGit -C $script:AipProfileRoot add $targetName
+    if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    # Executable bits do not survive tar extraction on platforms without file modes
+    # (e.g. Windows); restore them from the source profile's committed modes.
+    foreach ($trackedPath in $executablePaths) {
+        Invoke-AipGit -C $script:AipProfileRoot update-index --add --chmod=+x -- (Join-Path $targetName $trackedPath.Substring($sourceName.Length + 1))
+        if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    }
+    Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
+    if ($LASTEXITCODE -ne 0) {
+        Invoke-AipGit -C $script:AipProfileRoot commit -q -m "aip: clone $sourceName"
+        if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    }
+    Write-Output "Cloned profile '$sourceName' to '$targetName' at $targetPath"
 }
 
 function Invoke-AipDelete {
@@ -627,26 +679,26 @@ function Invoke-AipDelete {
     if (-not (Test-AipProfileExists $name)) { return }
     $profilePath = Get-AipProfilePath $name
     if ((Get-Item -LiteralPath $profilePath).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { Write-AipError 'profile path must not be a symbolic link'; return }
-    if (-not (Test-AipGitContainment $profilePath -Report)) { return }
+    if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
     if ($env:AIP_PROFILE -eq $name) { Write-AipError "cannot delete session profile '$name'; select another profile first"; return }
     $rootFull = [IO.Path]::GetFullPath($script:AipProfileRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
     $parentFull = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($profilePath)).TrimEnd([IO.Path]::DirectorySeparatorChar)
     if ($rootFull -ne $parentFull) { Write-AipError 'refusing to delete a profile outside the profile root'; return }
 
     $risks = @()
-    $changes = Invoke-AipGit -C $profilePath status --porcelain 2>$null
+    $changes = Invoke-AipGit -C $script:AipProfileRoot status --porcelain -- $name 2>$null
     if ($LASTEXITCODE -ne 0) { $risks += 'working-tree state could not be inspected' }
     elseif ($changes) { $risks += 'uncommitted changes' }
-    if (Test-AipUnfinishedGitOperation $profilePath) { $risks += 'unfinished Git operation' }
-    Invoke-AipGit -C $profilePath rev-parse --verify '@{upstream}' *> $null
+    if (Test-AipUnfinishedGitOperation $script:AipProfileRoot) { $risks += 'unfinished Git operation' }
+    Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify '@{upstream}' *> $null
     $fullyRecoverable = $false
     if ($LASTEXITCODE -eq 0) {
-        $unpushed = Invoke-AipGit -C $profilePath rev-list --branches --not --remotes 2>$null
+        $unpushed = Invoke-AipGit -C $script:AipProfileRoot rev-list --branches --not --remotes 2>$null
         if ($LASTEXITCODE -ne 0) { $risks += 'commit reachability could not be inspected' }
         elseif ($unpushed) { $risks += 'unpushed commits on local branches' }
-        Invoke-AipGit -C $profilePath rev-parse --verify refs/stash *> $null
+        Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify refs/stash *> $null
         if ($LASTEXITCODE -eq 0) { $risks += 'stashed changes' }
-        $tags = Invoke-AipGit -C $profilePath for-each-ref '--format=%(refname)' refs/tags 2>$null
+        $tags = Invoke-AipGit -C $script:AipProfileRoot for-each-ref '--format=%(refname)' refs/tags 2>$null
         if ($LASTEXITCODE -ne 0) { $risks += 'tags could not be inspected' }
         elseif ($tags) { $risks += 'local tags' }
         if ($risks.Count -eq 0) { $fullyRecoverable = $true }
@@ -672,12 +724,28 @@ function Invoke-AipDelete {
         Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction Stop
         if (Test-AipPathEntry $profilePath) { throw 'the profile path still exists after deletion' }
         if ($defaultName -eq $name) { Remove-Item -LiteralPath $defaultPath -Force -ErrorAction Stop }
-        if ($fullyRecoverable) { Write-Output "Deleted $profilePath; its committed content is recoverable from the configured Git upstream." }
-        else { Write-Output "Deleted $profilePath; no complete remote recovery is available; local or unpushed changes were removed." }
     }
     catch {
         Write-AipError "could not completely delete profile '$name': $($_.Exception.Message)"
+        return
     }
+    try {
+        Invoke-AipGit -C $script:AipProfileRoot add -u -- $name 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet -- 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Invoke-AipGit -C $script:AipProfileRoot commit -q -m "aip: delete profile $name" 2>$null
+                if ($LASTEXITCODE -ne 0) { Write-AipError 'deletion is complete, but its commit failed; check the profiles repository and commit the removal manually'; $script:AipCommandStatus = 0 }
+            }
+        }
+        else { Write-AipError 'deletion is complete, but the profiles repository could not stage the removal; inspect it and commit manually'; $script:AipCommandStatus = 0 }
+    }
+    catch {
+        Write-AipError 'deletion is complete, but the profiles repository could not stage the removal; inspect it and commit manually'
+        $script:AipCommandStatus = 0
+    }
+    if ($fullyRecoverable) { Write-Output "Deleted $profilePath; its committed content is recoverable from the configured Git upstream." }
+    else { Write-Output "Deleted $profilePath; no complete remote recovery is available; local or unpushed changes were removed." }
 }
 
 function Test-AipProfileReparsePoints {
@@ -741,10 +809,8 @@ function Test-AipLayout {
         $valid = $false
     }
     $profileItem = Get-Item -LiteralPath $ProfilePath -Force -ErrorAction SilentlyContinue
-    $gitItem = Get-Item -LiteralPath (Join-Path $ProfilePath '.git') -Force -ErrorAction SilentlyContinue
-    if ($null -eq $profileItem -or -not $profileItem.PSIsContainer -or $profileItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or
-        $null -eq $gitItem -or -not $gitItem.PSIsContainer -or $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-        if ($Report) { Write-Output 'ERROR: profile path and .git must be ordinary directories' }
+    if ($null -eq $profileItem -or -not $profileItem.PSIsContainer -or $profileItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        if ($Report) { Write-Output 'ERROR: profile path must be an ordinary directory' }
         $valid = $false
     }
     foreach ($directory in '.aip', 'skills', 'claude', 'codex', 'pi', 'opencode') {
@@ -794,11 +860,10 @@ function Test-AipLayout {
 function Add-AipSkillsPlaceholder {
     param([Parameter(Mandatory)][string]$ProfilePath)
     $profileItem = Get-Item -LiteralPath $ProfilePath -Force -ErrorAction SilentlyContinue
-    $gitItem = Get-Item -LiteralPath (Join-Path $ProfilePath '.git') -Force -ErrorAction SilentlyContinue
     $skillsItem = Get-Item -LiteralPath (Join-Path $ProfilePath 'skills') -Force -ErrorAction SilentlyContinue
-    foreach ($item in $profileItem, $gitItem, $skillsItem) {
+    foreach ($item in $profileItem, $skillsItem) {
         if ($null -eq $item -or -not $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-            Write-AipError 'profile, Git metadata, and skills paths must be ordinary directories'
+            Write-AipError 'profile and skills paths must be ordinary directories'
             return $false
         }
     }
@@ -845,68 +910,86 @@ function Invoke-AipDoctor {
     $profile = Resolve-AipDoctorProfile $explicit ($Arguments.Count -eq 1)
     if ($null -eq $profile) { return }
     $errors = 0
+    $repoOk = $true
     $profileItem = Get-Item -LiteralPath $profile.Path -Force
     $safeProfile = $profileItem.PSIsContainer -and -not $profileItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
     if (-not $safeProfile) { Write-Output 'ERROR: profile path must be an ordinary directory'; $errors++ }
-    $gitItem = if ($safeProfile) { Get-Item -LiteralPath (Join-Path $profile.Path '.git') -Force -ErrorAction SilentlyContinue } else { $null }
-    $repoReadable = $null -ne $gitItem -and $gitItem.PSIsContainer -and -not $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
-    if ($safeProfile -and -not $repoReadable) { Write-Output 'ERROR: .git must be an ordinary directory'; $errors++ }
+
+    $rootGitItem = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot '.git') -Force -ErrorAction SilentlyContinue
+    $rootExists = $null -ne (Get-Item -LiteralPath $script:AipProfileRoot -Force -ErrorAction SilentlyContinue)
+    $repoReadable = $rootExists -and $null -ne $rootGitItem -and $rootGitItem.PSIsContainer -and -not $rootGitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
+    if (-not $repoReadable) {
+        Write-Output "ERROR: profiles repository metadata is missing or linked: $(Join-Path $script:AipProfileRoot '.git')"
+        Write-Output 'FIX: restore an ordinary .git directory at the profiles root'
+        $errors++
+        $repoOk = $false
+    }
     $gitAvailable = $null -ne (Get-AipGitApplication)
     if (-not $gitAvailable) {
         Write-Output 'ERROR: Git was not found'
         $errors++
+        $repoOk = $false
     }
     elseif ($repoReadable) {
-        if (-not (Test-AipGitContainment $profile.Path)) {
+        if (-not (Test-AipGitContainment $script:AipProfileRoot)) {
             Write-Output "ERROR: $script:AipGitContainmentError"
             $errors++
             $repoReadable = $false
+            $repoOk = $false
         }
     }
     if ($gitAvailable -and $repoReadable) {
-        Invoke-AipGit -C $profile.Path var GIT_AUTHOR_IDENT *> $null
-        if ($LASTEXITCODE -ne 0) { Write-Output "ERROR: configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'"; $errors++ }
-        Invoke-AipGit -C $profile.Path status --porcelain *> $null
-        if ($LASTEXITCODE -ne 0) { Write-Output 'ERROR: profile Git repository is unreadable'; $errors++ }
-        $symlinkMode = Invoke-AipGit -C $profile.Path config --bool core.symlinks 2>$null
+        Invoke-AipGit -C $script:AipProfileRoot var GIT_AUTHOR_IDENT *> $null
+        if ($LASTEXITCODE -ne 0) { Write-Output "ERROR: configure Git identity with 'git config --global user.name NAME' and 'git config --global user.email EMAIL'"; $errors++; $repoOk = $false }
+        Invoke-AipGit -C $script:AipProfileRoot status --porcelain *> $null
+        if ($LASTEXITCODE -ne 0) { Write-Output 'ERROR: profiles Git repository is unreadable'; $errors++; $repoOk = $false }
+        $symlinkMode = Invoke-AipGit -C $script:AipProfileRoot config --bool core.symlinks 2>$null
         if ($LASTEXITCODE -eq 0 -and $symlinkMode -eq 'false') {
             Write-Output 'ERROR: Git symbolic-link checkout is disabled'
-            Write-Output "FIX: git -C '$($profile.Path)' config core.symlinks true, then re-clone the profile or restore its links after saving local changes"
+            Write-Output "FIX: git -C '$($script:AipProfileRoot)' config core.symlinks true, then re-clone the profiles repository"
             $errors++
+            $repoOk = $false
         }
-        $branch = Invoke-AipGit -C $profile.Path branch --show-current 2>$null
+        $branch = Invoke-AipGit -C $script:AipProfileRoot branch --show-current 2>$null
         if ($LASTEXITCODE -eq 0 -and $branch) {
-            $configuredRemote = Invoke-AipGit -C $profile.Path config --get "branch.$branch.remote" 2>$null
+            $configuredRemote = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.remote" 2>$null
             if ($LASTEXITCODE -ne 0) { $configuredRemote = '' }
-            $configuredMerge = Invoke-AipGit -C $profile.Path config --get "branch.$branch.merge" 2>$null
+            $configuredMerge = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.merge" 2>$null
             if ($LASTEXITCODE -ne 0) { $configuredMerge = '' }
             if (($configuredRemote -or $configuredMerge)) {
-                Invoke-AipGit -C $profile.Path rev-parse --verify '@{upstream}' *> $null
+                Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify '@{upstream}' *> $null
                 if ($LASTEXITCODE -ne 0) {
                     Write-Output 'ERROR: the configured Git upstream cannot be resolved'
-                    Write-Output "FIX: repair or fetch the configured remote branch, or run 'git -C `"$($profile.Path)`" branch --unset-upstream'"
+                    Write-Output "FIX: repair or fetch the configured remote branch, or run 'git -C `"$($script:AipProfileRoot)`" branch --unset-upstream'"
                     $errors++
+                    $repoOk = $false
                 }
             }
         }
     }
-    if ($safeProfile) {
-        $layoutResult = @(Test-AipLayout $profile.Path -Report)
+
+    foreach ($name in (@(Get-AipProfileNames) + @($profile.Name)) | Where-Object { $_ } | Select-Object -Unique) {
+        $profilePath = Get-AipProfilePath $name
+        $item = Get-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item -or -not $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { continue }
+        $layoutResult = @(Test-AipLayout $profilePath -Report)
         if ($layoutResult.Count -gt 1) { $layoutResult[0..($layoutResult.Count - 2)] | Write-Output }
         if (-not [bool]$layoutResult[-1]) { $errors++ }
+        else { Write-Output "OK: profile layout and links ($name)" }
     }
+
     if ($gitAvailable -and $repoReadable) {
-        if (-not (Test-AipTrackedPathsSafe $profile.Path)) {
+        if (-not (Test-AipTrackedPathsSafe $script:AipProfileRoot)) {
             Write-Output 'ERROR: tracked profile path validation failed; see the diagnostic above'
             $errors++
         }
-        $unmerged = Invoke-AipGit -C $profile.Path diff --name-only --diff-filter=U 2>$null
-        if ((Test-AipUnfinishedGitOperation $profile.Path) -or $unmerged) {
-            Write-Output "ERROR: Git conflict or unfinished operation; run 'git -C `"$($profile.Path)`" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+        $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
+        if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) {
+            Write-Output "ERROR: Git conflict or unfinished operation; run 'git -C `"$($script:AipProfileRoot)`" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
             $errors++
         }
     }
-    $lockPath = Join-Path $profile.Path '.git/aip-sync.lock'
+    $lockPath = Join-Path $script:AipProfileRoot '.git/aip-sync.lock'
     if (Test-Path -LiteralPath $lockPath -PathType Container) {
         $ownerPid = 0
         $pidText = if (Test-Path -LiteralPath (Join-Path $lockPath 'pid')) { (Get-Content -LiteralPath (Join-Path $lockPath 'pid') -Raw).Trim() } else { '' }
@@ -919,7 +1002,7 @@ function Invoke-AipDoctor {
         }
         else { Write-Output "WARN: sync lock is owned by a live or remote process; inspect $lockPath" }
     }
-    if ($errors -eq 0) { Write-Output 'OK: profile layout and links' }
+    if ($repoOk) { Write-Output 'OK: profiles repository' }
     foreach ($harness in 'claude', 'codex', 'pi', 'opencode') {
         if (Get-AipRealCommand $harness) { Write-Output "OK: $harness executable found" }
         else { Write-Output "WARN: $harness executable was not found; install it before using this wrapper" }
@@ -1064,54 +1147,117 @@ function Test-AipPortablePaths {
     return $true
 }
 
+function Get-AipTrackedProfilePrefixes {
+    param([Parameter(Mandatory)][string[]]$Paths)
+    $prefixes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($relative in $Paths) {
+        if ([string]::IsNullOrEmpty($relative)) { continue }
+        $normalized = [string]$relative.Replace('\', '/')
+        if ($normalized -like '*/.aip/outfit') { [void]$prefixes.Add($normalized.Split('/')[0]) }
+    }
+    return @($prefixes)
+}
+
+function Test-AipPathUnderProfile {
+    param([Parameter(Mandatory)][string]$RelativePath, [Parameter(Mandatory)][string[]]$ProfilePrefixes)
+    $normalized = [string]$RelativePath.Replace('\', '/')
+    $first = $normalized.Split('/')[0]
+    if ($normalized -eq $first) { return $false }
+    return @($ProfilePrefixes) -contains $first
+}
+
 function Test-AipTrackedPathsSafe {
-    param([Parameter(Mandatory)][string]$ProfilePath)
-    $raw = (Invoke-AipGit -C $ProfilePath ls-files -z) -join "`n"
+    param([Parameter(Mandatory)][string]$Root)
+    $raw = (Invoke-AipGit -C $Root ls-files -z) -join "`n"
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect tracked profile paths'; return $false }
     $paths = @($raw -split "`0" | Where-Object { $_ })
     if (-not (Test-AipPortablePaths $paths 'tracked profile')) { return $false }
+    $prefixes = Get-AipTrackedProfilePrefixes $paths
     foreach ($relative in $paths) {
-        if ($relative -and (Test-AipForbiddenPath $relative)) {
-            Write-AipError "forbidden credential or runtime path is tracked; inspect with 'git -C `"$ProfilePath`" ls-files' and remove it with 'git rm --cached PATH'"
+        if ([string]::IsNullOrEmpty($relative)) { continue }
+        $check = [string]$relative.Replace('\', '/')
+        if (Test-AipPathUnderProfile $check $prefixes) { $check = $check.Substring($check.IndexOf('/') + 1) }
+        if (Test-AipForbiddenPath $check) {
+            Write-AipError "forbidden credential or runtime path is tracked; inspect with 'git -C `"$Root`" ls-files' and remove it with 'git rm --cached PATH'"
             return $false
         }
     }
     $requiredLinks = @('claude/skills', 'codex/AGENTS.md', 'codex/skills', 'pi/AGENTS.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
-    $stagedEntries = @(Invoke-AipGit -C $ProfilePath ls-files --stage)
+    $stagedEntries = @(Invoke-AipGit -C $Root ls-files --stage)
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect tracked profile modes'; return $false }
     foreach ($entry in $stagedEntries) {
-        if ([string]$entry -match '^120000 [0-9a-f]+ \d+\t(.+)$' -and $Matches[1] -cnotin $requiredLinks) {
-            Write-AipError "tracked profile contains an unsupported symbolic link: $($Matches[1])"
-            return $false
+        if ([string]$entry -match '^120000 [0-9a-f]+ \d+\t(.+)$') {
+            $relative = ([string]$Matches[1]).Replace('\', '/')
+            if (-not (Test-AipPathUnderProfile $relative $prefixes) -or
+                $relative.Substring($relative.IndexOf('/') + 1) -cnotin $requiredLinks) {
+                Write-AipError "tracked profile contains an unsupported symbolic link: $relative"
+                return $false
+            }
         }
     }
     return $true
 }
 
 function Test-AipUntrackedSkillsSafe {
-    param([Parameter(Mandatory)][string]$ProfilePath)
-    $raw = (Invoke-AipGit -C $ProfilePath ls-files --others --exclude-standard -z -- skills) -join "`n"
-    if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect untracked skill paths'; return $false }
-    $paths = @($raw -split "`0" | Where-Object { $_ })
-    if (-not (Test-AipPortablePaths $paths 'shared skills')) { return $false }
-    foreach ($relative in $paths) {
-        if ($relative -and (Test-AipForbiddenPath $relative)) {
-            Write-AipError 'forbidden credential path exists under skills/; remove or ignore it before syncing'
-            return $false
+    param([Parameter(Mandatory)][string]$Root)
+    foreach ($name in (Get-AipProfileNames)) {
+        $raw = (Invoke-AipGit -C $Root ls-files --others --exclude-standard -z -- "$($name)/skills") -join "`n"
+        if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect untracked skill paths'; return $false }
+        $paths = @($raw -split "`0" | Where-Object { $_ })
+        if (-not (Test-AipPortablePaths $paths 'shared skills')) { return $false }
+        foreach ($relative in $paths) {
+            if ([string]::IsNullOrEmpty($relative)) { continue }
+            $normalized = [string]$relative.Replace('\', '/')
+            if (Test-AipForbiddenPath $normalized.Substring($normalized.IndexOf('/') + 1)) {
+                Write-AipError 'forbidden credential path exists under skills/; remove or ignore it before syncing'
+                return $false
+            }
         }
     }
     return $true
 }
 
 function Test-AipSkillRepositoriesSafe {
-    param([Parameter(Mandatory)][string]$ProfilePath)
-    $nestedGit = Get-ChildItem -LiteralPath (Join-Path $ProfilePath 'skills') -Force -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -eq '.git' } | Select-Object -First 1
-    $staged = (Invoke-AipGit -C $ProfilePath ls-files --stage) -join "`n"
+    param([Parameter(Mandatory)][string]$Root)
+    foreach ($name in (Get-AipProfileNames)) {
+        $profilePath = Get-AipProfilePath $name
+        if (-not (Test-AipSkillsMountsSafe $profilePath)) { return $false }
+        $nestedGit = Get-ChildItem -LiteralPath (Join-Path $profilePath 'skills') -Force -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq '.git' } | Select-Object -First 1
+        if ($null -ne $nestedGit) {
+            Write-AipError 'nested Git repositories under skills/ are not supported; remove the nested .git directory and sync the skill files directly'
+            return $false
+        }
+    }
+    $staged = (Invoke-AipGit -C $Root ls-files --stage) -join "`n"
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect profile gitlinks'; return $false }
-    if ($null -ne $nestedGit -or $staged -match '(?m)^160000 ') {
+    if ($staged -match '(?m)^160000 ') {
         Write-AipError 'Git submodules are not supported in profiles; remove the gitlink and sync ordinary files directly'
         return $false
+    }
+    return $true
+}
+
+function Test-AipLinkedProfiles {
+    $rootItem = Get-Item -LiteralPath $script:AipProfileRoot -Force -ErrorAction SilentlyContinue
+    if ($null -eq $rootItem -or $rootItem -isnot [IO.DirectoryInfo]) { return $true }
+    if ($rootItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        $rootItem = $rootItem.ResolveLinkTarget($true)
+        if ($null -eq $rootItem -or $rootItem -isnot [IO.DirectoryInfo]) { return $true }
+    }
+    foreach ($item in (Get-ChildItem -LiteralPath $rootItem.FullName -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and (Test-AipProfileName $_.Name)
+    })) {
+        $targetIsProfile = $false
+        try {
+            $resolved = $item.ResolveLinkTarget($true)
+            if ($null -ne $resolved -and (Test-Path -LiteralPath (Join-Path $resolved.FullName '.aip/outfit'))) { $targetIsProfile = $true }
+        }
+        catch { $targetIsProfile = $false }
+        if ($targetIsProfile) {
+            Write-AipError "profile '$($item.Name)' path must not be a symbolic link or reparse point"
+            return $false
+        }
     }
     return $true
 }
@@ -1138,26 +1284,40 @@ function Test-AipSkillsMountsSafe {
 }
 
 function Test-AipGitTree {
-    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Tree)
-    $remoteTree = (Invoke-AipGit -C $ProfilePath ls-tree -r $Tree) -join "`n"
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Tree)
+    $remoteTree = (Invoke-AipGit -C $Root ls-tree -r $Tree) -join "`n"
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect remote gitlinks'; return $false }
     if ($remoteTree -match '(?m)^160000 ') {
         Write-AipError 'remote profile contains an unsupported Git submodule'
         return $false
     }
-    $requiredLinkPaths = @('claude/skills', 'codex/AGENTS.md', 'codex/skills', 'pi/AGENTS.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
-    foreach ($entry in @($remoteTree -split "`n")) {
-        if ($entry -match '^120000 (?:blob )?[0-9a-f]+\t(.+)$' -and $Matches[1] -cnotin $requiredLinkPaths) {
-            Write-AipError "remote profile contains an unsupported symbolic link: $($Matches[1])"
-            return $false
+    $prefixes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($line in @($remoteTree -split "`n")) {
+        if ([string]$line -match '^100644 \S+ \S+\t(.+)$' -and ([string]$Matches[1]).Replace('\', '/') -like '*/.aip/outfit') {
+            [void]$prefixes.Add(([string]$Matches[1]).Replace('\', '/').Split('/')[0])
         }
     }
-    $raw = (Invoke-AipGit -C $ProfilePath ls-tree -rz --name-only $Tree) -join "`n"
+    $profilePrefixList = @($prefixes)
+    $requiredLinks = @('claude/skills', 'codex/AGENTS.md', 'codex/skills', 'pi/AGENTS.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    foreach ($entry in @($remoteTree -split "`n")) {
+        if ($entry -match '^120000 (?:blob )?[0-9a-f]+\t(.+)$') {
+            $relative = ([string]$Matches[1]).Replace('\', '/')
+            if (-not (Test-AipPathUnderProfile $relative $profilePrefixList) -or
+                $relative.Substring($relative.IndexOf('/') + 1) -cnotin $requiredLinks) {
+                Write-AipError "remote profile contains an unsupported symbolic link: $relative"
+                return $false
+            }
+        }
+    }
+    $raw = (Invoke-AipGit -C $Root ls-tree -rz --name-only $Tree) -join "`n"
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect the fetched profile tree'; return $false }
     $paths = @($raw -split "`0" | Where-Object { $_ })
     if (-not (Test-AipPortablePaths $paths 'remote profile')) { return $false }
     foreach ($relative in $paths) {
-        if ($relative -and (Test-AipForbiddenPath $relative)) {
+        if ([string]::IsNullOrEmpty($relative)) { continue }
+        $check = [string]$relative.Replace('\', '/')
+        if (Test-AipPathUnderProfile $check $profilePrefixList) { $check = $check.Substring($check.IndexOf('/') + 1) }
+        if (Test-AipForbiddenPath $check) {
             Write-AipError 'remote profile contains a forbidden credential or runtime path; remove it from the remote history before syncing'
             return $false
         }
@@ -1171,55 +1331,63 @@ function Test-AipGitTree {
         'opencode/AGENTS.md' = '../AGENTS.md'
         'opencode/skills' = '../skills'
     }
-    foreach ($link in $links.GetEnumerator()) {
-        $entry = Invoke-AipGit -C $ProfilePath ls-tree $Tree -- $link.Key
-        if ($LASTEXITCODE -ne 0) { return $false }
-        $mode = if ($entry) { ([string]$entry -split ' ')[0] } else { '' }
-        $target = Invoke-AipGit -C $ProfilePath show "$Tree`:$($link.Key)" 2>$null
-        if ($LASTEXITCODE -ne 0 -or $mode -ne '120000' -or [string]$target -ne $link.Value) {
-            Write-AipError "remote profile has an invalid required link: $($link.Key) should link to $($link.Value)"
-            return $false
-        }
-    }
     $requiredFiles = @('.aip/outfit', '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md')
-    foreach ($file in $requiredFiles) {
-        $entry = Invoke-AipGit -C $ProfilePath ls-tree $Tree -- $file
-        $mode = if ($LASTEXITCODE -eq 0 -and $entry) { ([string]$entry -split ' ')[0] } else { '' }
-        if ($mode -notin '100644', '100755') { Write-AipError "remote profile is missing a regular required file: $file"; return $false }
-    }
-    $temporary = [IO.Path]::GetTempFileName()
-    try {
+    foreach ($prefix in $profilePrefixList) {
+        foreach ($link in $links.GetEnumerator()) {
+            $entry = Invoke-AipGit -C $Root ls-tree $Tree -- "$($prefix)/$($link.Key)"
+            if ($LASTEXITCODE -ne 0) { return $false }
+            $mode = if ($entry) { ([string]$entry -split ' ')[0] } else { '' }
+            $target = Invoke-AipGit -C $Root show "$Tree`:$($prefix)/$($link.Key)" 2>$null
+            if ($LASTEXITCODE -ne 0 -or $mode -ne '120000' -or [string]$target -ne $link.Value) {
+                Write-AipError "remote profile has an invalid required link: $($prefix)/$($link.Key) should link to $($link.Value)"
+                return $false
+            }
+        }
         foreach ($file in $requiredFiles) {
-            if (-not (Export-AipGitBlob $ProfilePath "$Tree`:$file" $temporary) -or -not (Test-AipUtf8TextFile $temporary)) {
-                Write-AipError "remote profile contains a required text file that is not valid NUL-free UTF-8: $file"
-                return $false
-            }
-            $text = Get-AipUtf8TextFile $temporary
-            if ($file -eq 'skills/.gitkeep' -and $text.Length -ne 0) {
-                Write-AipError 'remote profile skills/.gitkeep placeholder must be empty'
-                return $false
-            }
-            elseif ($file -eq '.aip/outfit') {
-                $outfit = ConvertFrom-AipOutfitText $text
-                if (-not (Test-AipOutfit $outfit)) {
-                    Write-AipError 'remote profile contains an invalid outfit'
+            $entry = Invoke-AipGit -C $Root ls-tree $Tree -- "$($prefix)/$file"
+            $mode = if ($LASTEXITCODE -eq 0 -and $entry) { ([string]$entry -split ' ')[0] } else { '' }
+            if ($mode -notin '100644', '100755') { Write-AipError "remote profile is missing a regular required file: $($prefix)/$file"; return $false }
+        }
+        $temporary = [IO.Path]::GetTempFileName()
+        try {
+            foreach ($file in $requiredFiles) {
+                if (-not (Export-AipGitBlob $Root "$Tree`:$($prefix)/$file" $temporary) -or -not (Test-AipUtf8TextFile $temporary)) {
+                    Write-AipError "remote profile contains a required text file that is not valid NUL-free UTF-8: $($prefix)/$file"
                     return $false
                 }
-            }
-            elseif ($file -eq 'claude/CLAUDE.md') {
-                $firstLine = ($text -split "`n", 2)[0].TrimEnd("`r")
-                if ($firstLine -cne '@../AGENTS.md') {
-                    Write-AipError 'remote profile has an invalid Claude import; claude/CLAUDE.md must begin with @../AGENTS.md'
+                $text = Get-AipUtf8TextFile $temporary
+                if ($file -eq 'skills/.gitkeep' -and $text.Length -ne 0) {
+                    Write-AipError 'remote profile skills/.gitkeep placeholder must be empty'
                     return $false
+                }
+                elseif ($file -eq '.aip/outfit') {
+                    $outfit = ConvertFrom-AipOutfitText $text
+                    if (-not (Test-AipOutfit $outfit)) {
+                        Write-AipError 'remote profile contains an invalid outfit'
+                        return $false
+                    }
+                }
+                elseif ($file -eq 'claude/CLAUDE.md') {
+                    $firstLine = ($text -split "`n", 2)[0].TrimEnd("`r")
+                    if ($firstLine -cne '@../AGENTS.md') {
+                        Write-AipError 'remote profile has an invalid Claude import; claude/CLAUDE.md must begin with @../AGENTS.md'
+                        return $false
+                    }
                 }
             }
         }
+        finally {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+        $skillsType = Invoke-AipGit -C $Root cat-file -t "$Tree`:$($prefix)/skills" 2>$null
+        if ($LASTEXITCODE -ne 0 -or $skillsType -ne 'tree') { Write-AipError 'remote profile is missing required skills directory'; return $false }
     }
-    finally {
-        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+    $gitignoreEntry = Invoke-AipGit -C $Root ls-tree $Tree -- .gitignore
+    $gitignoreMode = if ($LASTEXITCODE -eq 0 -and $gitignoreEntry) { ([string]$gitignoreEntry -split ' ')[0] } else { '' }
+    if ($gitignoreMode -notin '100644', '100755') {
+        Write-AipError 'remote profiles repository is missing the root .gitignore'
+        return $false
     }
-    $skillsType = Invoke-AipGit -C $ProfilePath cat-file -t "$Tree`:skills" 2>$null
-    if ($LASTEXITCODE -ne 0 -or $skillsType -ne 'tree') { Write-AipError 'remote profile is missing required skills directory'; return $false }
     return $true
 }
 
@@ -1281,20 +1449,24 @@ function Exit-AipSyncLock {
 }
 
 function Add-AipCheckpoint {
-    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Mode)
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Mode)
     $script:AipCheckpointCreated = $false
-    if (-not (Test-AipSkillsMountsSafe $ProfilePath)) { return $false }
-    if (-not (Test-AipTrackedPathsSafe $ProfilePath)) { return $false }
-    if (-not (Test-AipSkillRepositoriesSafe $ProfilePath)) { return $false }
-    if (-not (Test-AipUntrackedSkillsSafe $ProfilePath)) { return $false }
-    Invoke-AipGit -C $ProfilePath add -u -- .
+    if (-not (Test-AipLinkedProfiles)) { return $false }
+    if (-not (Test-AipTrackedPathsSafe $Root)) { return $false }
+    if (-not (Test-AipSkillRepositoriesSafe $Root)) { return $false }
+    if (-not (Test-AipUntrackedSkillsSafe $Root)) { return $false }
+    Invoke-AipGit -C $Root add -u -- .
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage tracked profile changes'; return $false }
+    Invoke-AipGit -C $Root add .gitignore
+    if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage the root Git exclusions'; return $false }
     $owned = @('.aip/outfit', '.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
-    Invoke-AipGit -C $ProfilePath add -- @owned
-    if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage aip-owned profile files'; return $false }
-    Invoke-AipGit -C $ProfilePath diff --cached --quiet --
+    foreach ($name in (Get-AipProfileNames)) {
+        Invoke-AipGit -C $Root add -- @($owned | ForEach-Object { "$($name)/$_" })
+        if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage aip-owned profile files'; return $false }
+    }
+    Invoke-AipGit -C $Root diff --cached --quiet --
     if ($LASTEXITCODE -ne 0) {
-        Invoke-AipGit -C $ProfilePath commit -q -m "aip: checkpoint ($Mode)"
+        Invoke-AipGit -C $Root commit -q -m "aip: checkpoint ($Mode)"
         if ($LASTEXITCODE -ne 0) { Write-AipError 'could not commit the local checkpoint; check Git identity and hooks'; return $false }
         $script:AipCheckpointCreated = $true
     }
@@ -1333,72 +1505,22 @@ function Test-AipRebasePreservesUntracked {
     return $true
 }
 
-function Invoke-AipSyncProfileCore {
-    param([Parameter(Mandatory)][string]$ProfilePath, [string]$Mode = 'manual')
+function Invoke-AipSyncCore {
+    param([string]$Mode = 'manual')
     $script:AipCommandStatus = 0
-    if (-not (Test-AipGitContainment $ProfilePath -Report)) { return }
-    if (-not (Enter-AipSyncLock $ProfilePath)) { return }
+    if (-not (Test-AipRootRepo)) { return }
+    if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
+    if (-not (Enter-AipSyncLock $script:AipProfileRoot)) { return }
     try {
-        $unmerged = Invoke-AipGit -C $ProfilePath diff --name-only --diff-filter=U 2>$null
-        if ((Test-AipUnfinishedGitOperation $ProfilePath) -or $unmerged) {
-            Write-AipError "Git conflict or unfinished operation in $ProfilePath; run 'git -C `"$ProfilePath`" status', then resolve and continue or abort it"
+        $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
+        if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) {
+            Write-AipError "Git conflict or unfinished operation in $script:AipProfileRoot; run 'git -C `"$script:AipProfileRoot`" status', then resolve and continue or abort it"
             return
         }
-        if (-not (Add-AipSkillsPlaceholder $ProfilePath)) { return }
-        $layoutResult = @(Test-AipLayout $ProfilePath)
-        if (-not [bool]$layoutResult[-1]) {
-            if (-not $script:AipLastError) {
-                if ($script:AipProfileBoundaryError) { Write-AipError $script:AipProfileBoundaryError }
-                else { Write-AipError 'required profile file or link is missing or invalid' }
-            }
-            return
-        }
-        if (-not (Add-AipCheckpoint $ProfilePath $Mode)) { return }
-        if ($script:AipCheckpointCreated) { Write-Output 'Checkpointed local profile changes.' }
-        Invoke-AipGit -C $ProfilePath rev-parse --verify '@{upstream}' *> $null
-        if ($LASTEXITCODE -ne 0) { Write-Output 'Profile is local only (no upstream).'; return }
-
-        $upstream = Invoke-AipGit -C $ProfilePath rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
-        $branch = Invoke-AipGit -C $ProfilePath branch --show-current
-        $remote = Invoke-AipGit -C $ProfilePath config --get "branch.$branch.remote"
-        $mergeRef = Invoke-AipGit -C $ProfilePath config --get "branch.$branch.merge"
-        if (-not $remote) { Write-AipError 'configured upstream remote is invalid'; return }
-        if ($LASTEXITCODE -ne 0 -or $mergeRef -notlike 'refs/heads/*') { Write-AipError 'configured upstream branch is invalid'; return }
-        $previousPrompt = $env:GIT_TERMINAL_PROMPT
-        $previousCredentialManager = $env:GCM_INTERACTIVE
-        $previousSshCommand = $env:GIT_SSH_COMMAND
-        $previousSshVariant = $env:GIT_SSH_VARIANT
-        try {
-            if (-not (Test-AipGitMutationState $ProfilePath -Report)) { return }
-            $transport = Get-AipSshTransport $ProfilePath
-            if ($null -eq $transport) {
-                Write-AipWarning 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profile'
-                return
-            }
-            $env:GIT_TERMINAL_PROMPT = '0'
-            $env:GCM_INTERACTIVE = 'never'
-            $env:GIT_SSH_COMMAND = $transport.Command
-            $env:GIT_SSH_VARIANT = $transport.Variant
-            Invoke-AipGit -C $ProfilePath fetch --quiet $remote *> $null
-            if ($LASTEXITCODE -ne 0) {
-                if (-not (Test-AipGitMutationState $ProfilePath -Report)) { return }
-                Write-AipWarning 'remote sync unavailable; using the committed local profile and retrying next time'
-                return
-            }
-            $upstreamCommit = Invoke-AipGit -C $ProfilePath rev-parse --verify "$upstream^{commit}"
-            if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
-            if (-not (Test-AipGitTree $ProfilePath $upstreamCommit)) { return }
-            if (-not (Test-AipRebasePreservesUntracked $ProfilePath $upstreamCommit)) { return }
-            Invoke-AipGit -C $ProfilePath rebase $upstreamCommit *> $null
-            if ($LASTEXITCODE -ne 0) {
-                $unmerged = Invoke-AipGit -C $ProfilePath diff --name-only --diff-filter=U 2>$null
-                if ((Test-AipUnfinishedGitOperation $ProfilePath) -or $unmerged) {
-                    Write-AipError "Git conflict in $ProfilePath; no side was chosen. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
-                }
-                else { Write-AipError "local Git integration failed in $ProfilePath; inspect it with 'git status'" }
-                return
-            }
-            $layoutResult = @(Test-AipLayout $ProfilePath)
+        foreach ($name in (Get-AipProfileNames)) {
+            $profilePath = Get-AipProfilePath $name
+            if (-not (Add-AipSkillsPlaceholder $profilePath)) { return }
+            $layoutResult = @(Test-AipLayout $profilePath)
             if (-not [bool]$layoutResult[-1]) {
                 if (-not $script:AipLastError) {
                     if ($script:AipProfileBoundaryError) { Write-AipError $script:AipProfileBoundaryError }
@@ -1406,17 +1528,73 @@ function Invoke-AipSyncProfileCore {
                 }
                 return
             }
-            if (-not (Test-AipTrackedPathsSafe $ProfilePath)) { return }
-            if (-not (Test-AipUntrackedSkillsSafe $ProfilePath)) { return }
-            if (-not (Test-AipSkillRepositoriesSafe $ProfilePath)) { return }
-            if (-not (Test-AipGitMutationState $ProfilePath -Report)) { return }
-            Invoke-AipGit -C $ProfilePath push --quiet $remote "HEAD`:$mergeRef" *> $null
+        }
+        if (-not (Add-AipCheckpoint $script:AipProfileRoot $Mode)) { return }
+        if ($script:AipCheckpointCreated) { Write-Output 'Checkpointed local profile changes.' }
+        Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify '@{upstream}' *> $null
+        if ($LASTEXITCODE -ne 0) { Write-Output 'Profiles are local only (no upstream).'; return }
+
+        $upstream = Invoke-AipGit -C $script:AipProfileRoot rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
+        $branch = Invoke-AipGit -C $script:AipProfileRoot branch --show-current
+        $remote = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.remote"
+        $mergeRef = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.merge"
+        if (-not $remote) { Write-AipError 'configured upstream remote is invalid'; return }
+        if ($LASTEXITCODE -ne 0 -or $mergeRef -notlike 'refs/heads/*') { Write-AipError 'configured upstream branch is invalid'; return }
+        $previousPrompt = $env:GIT_TERMINAL_PROMPT
+        $previousCredentialManager = $env:GCM_INTERACTIVE
+        $previousSshCommand = $env:GIT_SSH_COMMAND
+        $previousSshVariant = $env:GIT_SSH_VARIANT
+        try {
+            if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
+            $transport = Get-AipSshTransport $script:AipProfileRoot
+            if ($null -eq $transport) {
+                Write-AipWarning 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profiles'
+                return
+            }
+            $env:GIT_TERMINAL_PROMPT = '0'
+            $env:GCM_INTERACTIVE = 'never'
+            $env:GIT_SSH_COMMAND = $transport.Command
+            $env:GIT_SSH_VARIANT = $transport.Variant
+            Invoke-AipGit -C $script:AipProfileRoot fetch --quiet $remote *> $null
             if ($LASTEXITCODE -ne 0) {
-                if (-not (Test-AipGitMutationState $ProfilePath -Report)) { return }
+                if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
+                Write-AipWarning 'remote sync unavailable; using the committed local profiles and retrying next time'
+                return
+            }
+            $upstreamCommit = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify "$upstream^{commit}"
+            if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
+            if (-not (Test-AipGitTree $script:AipProfileRoot $upstreamCommit)) { return }
+            if (-not (Test-AipRebasePreservesUntracked $script:AipProfileRoot $upstreamCommit)) { return }
+            Invoke-AipGit -C $script:AipProfileRoot rebase $upstreamCommit *> $null
+            if ($LASTEXITCODE -ne 0) {
+                $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
+                if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) {
+                    Write-AipError "Git conflict in $script:AipProfileRoot; no side was chosen. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+                }
+                else { Write-AipError "local Git integration failed in $script:AipProfileRoot; inspect it with 'git status'" }
+                return
+            }
+            foreach ($name in (Get-AipProfileNames)) {
+                $layoutResult = @(Test-AipLayout (Get-AipProfilePath $name))
+                if (-not [bool]$layoutResult[-1]) {
+                    if (-not $script:AipLastError) {
+                        if ($script:AipProfileBoundaryError) { Write-AipError $script:AipProfileBoundaryError }
+                        else { Write-AipError 'required profile file or link is missing or invalid' }
+                    }
+                    return
+                }
+            }
+            if (-not (Test-AipTrackedPathsSafe $script:AipProfileRoot)) { return }
+            if (-not (Test-AipUntrackedSkillsSafe $script:AipProfileRoot)) { return }
+            if (-not (Test-AipSkillRepositoriesSafe $script:AipProfileRoot)) { return }
+            if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
+            Invoke-AipGit -C $script:AipProfileRoot push --quiet $remote "HEAD`:$mergeRef" *> $null
+            if ($LASTEXITCODE -ne 0) {
+                if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
                 Write-AipWarning 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
                 return
             }
-            Write-Output "Profile synced with $upstream."
+            Write-Output "Profiles synced with $upstream."
         }
         finally {
             if ($null -eq $previousPrompt) { Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue }
@@ -1432,17 +1610,20 @@ function Invoke-AipSyncProfileCore {
     finally { Exit-AipSyncLock }
 }
 
-function Invoke-AipSyncProfile {
-    param([Parameter(Mandatory)][string]$ProfilePath, [string]$Mode = 'manual')
-    Invoke-AipWithoutGitRouting { Invoke-AipSyncProfileCore $ProfilePath $Mode }
+function Invoke-AipSync {
+    param([string]$Mode = 'manual')
+    Invoke-AipWithoutGitRouting { Invoke-AipSyncCore $Mode }
 }
 
-function Invoke-AipSync {
+function Invoke-AipSyncCommand {
     param([object[]]$Arguments)
-    if ($Arguments.Count -gt 1) { Write-AipError 'usage: aip sync [NAME]'; $script:AipCommandStatus = 2; return }
-    $explicit = if ($Arguments.Count) { [string]$Arguments[0] } else { '' }
-    $profile = Resolve-AipProfile $explicit ($Arguments.Count -eq 1)
-    if ($null -ne $profile) { Invoke-AipSyncProfile $profile.Path 'manual' }
+    if ($Arguments.Count -gt 1) { Write-AipError 'usage: aip sync'; $script:AipCommandStatus = 2; return }
+    if ($Arguments.Count -eq 1) {
+        Write-AipError "unexpected argument '$($Arguments[0])'; aip sync syncs every profile in the profiles repository"
+        $script:AipCommandStatus = 2
+        return
+    }
+    Invoke-AipSync 'manual'
 }
 
 function Invoke-AipHarness {
@@ -1468,7 +1649,7 @@ function Invoke-AipHarness {
         $global:LASTEXITCODE = 127
         return
     }
-    Invoke-AipSyncProfile $profile.Path 'before'
+    Invoke-AipSync 'before'
     if ($script:AipCommandStatus -ne 0) { $global:LASTEXITCODE = $script:AipCommandStatus; return }
 
     $variables = @{
@@ -1519,7 +1700,7 @@ function Invoke-AipHarness {
             $childStatus = if ($childStarted -and $null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { $LASTEXITCODE } elseif ($childStarted) { 130 } else { 1 }
         }
         try {
-            Invoke-AipSyncProfile $profile.Path 'after'
+            Invoke-AipSync 'after'
         }
         catch {
             Write-AipWarning "after-run sync failed during cleanup: $($_.Exception.Message)"
@@ -1670,25 +1851,24 @@ function Invoke-AipOutfit {
 }
 
 function Get-AipGitSummary {
-    param([Parameter(Mandatory)][string]$ProfilePath)
-    if (-not (Test-AipGitContainment $ProfilePath)) { return 'unreadable; run aip doctor' }
-    $changes = Invoke-AipGit -C $ProfilePath status --porcelain 2>$null
+    if (-not (Test-AipGitContainment $script:AipProfileRoot)) { return 'unreadable; run aip doctor' }
+    $changes = Invoke-AipGit -C $script:AipProfileRoot status --porcelain 2>$null
     if ($LASTEXITCODE -ne 0) { return 'unreadable; run aip doctor' }
     $state = if ($changes) { 'changes' } else { 'clean' }
-    $unmerged = Invoke-AipGit -C $ProfilePath diff --name-only --diff-filter=U 2>$null
-    if ((Test-AipUnfinishedGitOperation $ProfilePath) -or $unmerged) { return "$state, conflict or unfinished Git operation" }
-    Invoke-AipGit -C $ProfilePath rev-parse --verify '@{upstream}' *> $null
+    $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
+    if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) { return "$state, conflict or unfinished Git operation" }
+    Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify '@{upstream}' *> $null
     if ($LASTEXITCODE -ne 0) {
-        $branch = Invoke-AipGit -C $ProfilePath branch --show-current 2>$null
+        $branch = Invoke-AipGit -C $script:AipProfileRoot branch --show-current 2>$null
         if ($LASTEXITCODE -ne 0) { return 'unreadable; run aip doctor' }
-        $configuredRemote = Invoke-AipGit -C $ProfilePath config --get "branch.$branch.remote" 2>$null
-        $configuredMerge = Invoke-AipGit -C $ProfilePath config --get "branch.$branch.merge" 2>$null
+        $configuredRemote = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.remote" 2>$null
+        $configuredMerge = Invoke-AipGit -C $script:AipProfileRoot config --get "branch.$branch.merge" 2>$null
         if ($configuredRemote -or $configuredMerge) { return 'unreadable; run aip doctor' }
         return "$state, local only"
     }
-    $upstream = Invoke-AipGit -C $ProfilePath rev-parse --abbrev-ref '@{upstream}' 2>$null
+    $upstream = Invoke-AipGit -C $script:AipProfileRoot rev-parse --abbrev-ref '@{upstream}' 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $upstream) { return 'unreadable; run aip doctor' }
-    $countText = Invoke-AipGit -C $ProfilePath rev-list --left-right --count 'HEAD...@{upstream}' 2>$null
+    $countText = Invoke-AipGit -C $script:AipProfileRoot rev-list --left-right --count 'HEAD...@{upstream}' 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]$countText -notmatch '^\d+\s+\d+$') { return 'unreadable; run aip doctor' }
     $counts = ([string]$countText -split '\s+')
     $ahead = [int]$counts[0]
@@ -1705,7 +1885,7 @@ function Invoke-AipStatus {
     Write-Output "🐵 $($profile.Name) — $(Get-AipOutfit $profile.Path)"
     Write-Output "Selected by: $($profile.Source)"
     Write-Output "Path: $($profile.Path)"
-    Write-Output "Git: $(Get-AipGitSummary $profile.Path)"
+    Write-Output "Git: $(Get-AipGitSummary)"
     $availability = foreach ($harness in 'claude', 'codex', 'pi', 'opencode') {
         "$harness=$(if (Get-AipRealCommand $harness) { 'available' } else { 'missing' })"
     }
@@ -1724,10 +1904,8 @@ function Invoke-AipList {
         if ($null -eq $rootItem -or $rootItem -isnot [IO.DirectoryInfo]) { Write-Output 'No profiles. Create one with: aip create NAME'; return }
     }
     $profiles = @(Get-ChildItem -LiteralPath $rootItem.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
-        $gitItem = Get-Item -LiteralPath (Join-Path $_.FullName '.git') -Force -ErrorAction SilentlyContinue
         (Test-AipProfileName $_.Name) -and $null -eq $_.LinkType -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
-            $null -ne $gitItem -and $gitItem.PSIsContainer -and -not $gitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
-            (Test-AipGitContainment $_.FullName)
+            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.aip/outfit') -Force -ErrorAction SilentlyContinue))
     } | Sort-Object Name)
     if ($profiles.Count -eq 0) { Write-Output 'No profiles. Create one with: aip create NAME'; return }
     foreach ($profile in $profiles) {
@@ -1770,6 +1948,252 @@ function Invoke-AipRun {
     $script:AipCommandStatus = $global:LASTEXITCODE
 }
 
+function Invoke-AipRemoteShow {
+    $root = $script:AipProfileRoot
+    $url = @()
+    $rootGit = Join-Path $root '.git'
+    if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))) {
+        $url = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -ne 0) { $url = @() }
+    }
+    if ($url.Count -eq 1 -and "$url[0]".Trim().Length -gt 0) { Write-Output $url[0] }
+    else { Write-Output 'no remote is configured' }
+}
+
+function Invoke-AipRemoteRemove {
+    $root = $script:AipProfileRoot
+    $url = @()
+    $rootGit = Join-Path $root '.git'
+    if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))) {
+        $url = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -ne 0) { $url = @() }
+    }
+    if ($url.Count -eq 0 -or "$url[0]".Trim().Length -eq 0) { Write-Output 'no remote is configured'; return }
+    $null = Invoke-AipGit -C $root remote remove origin
+    if ($LASTEXITCODE -ne 0) {
+        Write-AipError 'could not remove the origin remote; inspect the profiles repository'
+        return 1
+    }
+    $branch = Invoke-AipGit -C $root branch --show-current 2>$null
+    if ($LASTEXITCODE -eq 0 -and $branch) { Invoke-AipGit -C $root branch --unset-upstream 2>$null | Out-Null }
+    Write-Output 'Remote removed; profiles are now local only.'
+}
+
+function Invoke-AipRemoteAdd {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Url)
+    if ("$Url".Trim().Length -eq 0) { Write-AipError 'usage: aip remote add URL'; $script:AipCommandStatus = 2; return }
+    if ($Url -match '\s') { Write-AipError "invalid remote URL: $Url"; $script:AipCommandStatus = 2; return }
+    $root = $script:AipProfileRoot
+    $rootGit = Join-Path $root '.git'
+    $repoExists = (Test-Path -LiteralPath $rootGit -PathType Container) -and
+        $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
+        -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))
+    if ($repoExists) {
+        $existing = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $existing.Count -eq 1 -and "$existing[0]".Trim().Length -gt 0) {
+            Write-AipError "origin is already configured ($($existing[0])); run 'aip remote remove' first"
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root remote add origin $Url
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError "could not configure origin: $Url"
+            $script:AipCommandStatus = 1
+            return
+        }
+    }
+    else {
+        if ((Test-Path -LiteralPath $root) -and -not (Test-Path -LiteralPath $root -PathType Container)) {
+            Write-AipError "profiles path exists and is not a directory: $root"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (Test-Path -LiteralPath $rootGit) {
+            Write-AipError "profiles repository metadata is missing or linked: $rootGit"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (Test-Path -LiteralPath $root) {
+            $contents = Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue
+            if ($null -ne $contents) {
+                Write-AipError "profiles directory already contains content: $root; use 'aip create NAME' instead of 'aip remote add'"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        try { New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop | Out-Null }
+        catch { Write-AipError "could not create the profiles directory: $root"; $script:AipCommandStatus = 1; return }
+        $transport = Get-AipSshTransport $root
+        if ($null -eq $transport) {
+            Write-AipError 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $env:GIT_TERMINAL_PROMPT = '0'
+        $env:GCM_INTERACTIVE = 'never'
+        $env:GIT_SSH_COMMAND = $transport.Command
+        $env:GIT_SSH_VARIANT = $transport.Variant
+        try {
+            $null = Invoke-AipGit clone --quiet -- $Url $root
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not clone $Url into $root; the remote must be a profiles repository created by aip"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+        $null = Invoke-AipGit -C $root config core.symlinks true
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not configure symbolic-link checkout'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root config core.longpaths true
+        $null = Invoke-AipGit -C $root rev-parse --verify HEAD 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $null = Invoke-AipGit -C $root rev-parse --verify refs/remotes/origin/main 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $null = Invoke-AipGit -C $root checkout -q -B main refs/remotes/origin/main 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-AipError 'could not check out the cloned profiles branch'
+                    $script:AipCommandStatus = 1
+                    return
+                }
+            }
+        }
+        Write-Output "Cloned profiles from $Url."
+    }
+    $branch = Invoke-AipGit -C $root branch --show-current 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $branch) { $branch = '' }
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        Write-AipError 'cannot attach a remote while detached from a branch'
+        $script:AipCommandStatus = 1
+        return
+    }
+    $transport = Get-AipSshTransport $root
+    if ($null -eq $transport) {
+        Write-AipError 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
+        $script:AipCommandStatus = 1
+        return
+    }
+    $env:GIT_TERMINAL_PROMPT = '0'
+    $env:GCM_INTERACTIVE = 'never'
+    $env:GIT_SSH_COMMAND = $transport.Command
+    $env:GIT_SSH_VARIANT = $transport.Variant
+    try {
+        $null = Invoke-AipGit -C $root fetch --quiet origin 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not fetch origin; check that the remote is reachable and that credentials are not required interactively'
+            $script:AipCommandStatus = 1
+            return
+        }
+        $null = Invoke-AipGit -C $root rev-parse --verify "refs/remotes/origin/$branch" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $null = Invoke-AipGit -C $root branch --set-upstream-to "origin/$branch" $branch 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not attach branch $branch to origin"
+                $script:AipCommandStatus = 1
+                return
+            }
+            Invoke-AipSync 'manual'
+            return
+        }
+        if (-not (Test-AipTrackedPathsSafe $root)) { return }
+        $null = Invoke-AipGit -C $root push --quiet -u origin "HEAD:refs/heads/$branch" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError 'could not publish the profiles repository to origin; the remote may need to be empty'
+            $script:AipCommandStatus = 1
+            return
+        }
+        Write-Output "Profiles published to origin/$branch."
+    }
+    finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+}
+
+function Invoke-AipRemote {
+    param([object[]]$Arguments)
+    $sub = if ($Arguments.Count -gt 0) { [string]$Arguments[0] } else { '' }
+    if ($sub -eq '') {
+        Write-AipError 'usage: aip remote add URL | aip remote show | aip remote remove'
+        $script:AipCommandStatus = 2
+        return
+    }
+    switch -CaseSensitive ($sub) {
+        'add' {
+            if ($Arguments.Count -ne 2) { Write-AipError 'usage: aip remote add URL'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteAdd ([string]$Arguments[1])
+        }
+        'show' {
+            if ($Arguments.Count -ne 1) { Write-AipError 'usage: aip remote show'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteShow
+        }
+        'remove' {
+            if ($Arguments.Count -ne 1) { Write-AipError 'usage: aip remote remove'; $script:AipCommandStatus = 2; return }
+            Invoke-AipRemoteRemove
+        }
+        default {
+            Write-AipError "unknown remote command '$sub'; usage: aip remote add URL | aip remote show | aip remote remove"
+            $script:AipCommandStatus = 2
+        }
+    }
+}
+
+function Invoke-AipHelp {
+    param([object[]]$Arguments)
+    if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip help'; $script:AipCommandStatus = 2; return }
+    @'
+aip — shared AI profiles for Claude Code, Codex, Pi, and OpenCode
+
+A profile is one directory: shared AGENTS.md instructions, shared skills/, and
+per-harness launch settings. Every profile lives in a single Git repository
+(the profiles repository, ~/agent-profiles by default), so one remote keeps
+all of your profiles in sync across all of your machines.
+
+Commands:
+  aip create NAME [--outfit OUTFIT]  Create a new profile
+  aip list                           List profiles, outfits, and selection
+  aip which [NAME]                   Show the profile that would be selected
+  aip default [NAME]                 Show or set the default profile
+  aip use NAME                       Select NAME for this shell only
+  aip local [NAME | --remove]        Set or clear the per-directory marker
+  aip outfit NAME OUTFIT             Set a profile's outfit (label)
+  aip clone SOURCE TARGET            Copy a profile into a new profile
+  aip delete NAME [--force]          Delete a profile
+  aip sync                           Checkpoint and sync every profile
+  aip remote add URL                 Connect the profiles repository to a remote
+  aip remote show                    Show the configured remote (if any)
+  aip remote remove                  Disconnect the remote
+  aip doctor [NAME]                  Diagnose the repository and profiles
+  aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
+  aip update                         Update the aip npm package
+  aip version                        Show the aip version
+  aip help                           Show this help
+
+Harness wrappers:
+  claude, codex, pi, opencode [ARGS...] launch the named tool with the
+  selected profile's settings, checkpointing the profiles repository before
+  and after the run. If the remote is unreachable they warn and launch the
+  committed local profile instead; a Git conflict blocks the launch until
+  it is resolved.
+
+Quick start:
+  aip create work --outfit suit   create your first profile
+  aip remote add <git-url>        connect a shared remote (empty remote ok)
+  aip default work                choose your everyday profile
+  cd my-project && claude         work with your profile
+
+On a second machine:
+  aip remote add <same-git-url>   clones every profile you already have
+
+See the README for full documentation, including Windows setup and the
+security guarantees aip enforces on syncable content.
+'@ -split "`n" | ForEach-Object { Write-Output $_ }
+}
+
 function aip {
     $script:AipCommandStatus = 0
     $script:AipLastError = $null
@@ -1788,8 +2212,12 @@ function aip {
             'list' { Invoke-AipWithoutGitRouting { Invoke-AipList $rest } }
             'local' { Invoke-AipLocal $rest }
             'outfit' { Invoke-AipOutfit $rest }
+            'help' { Invoke-AipHelp $rest }
+            '--help' { Invoke-AipHelp @() }
+            '-h' { Invoke-AipHelp @() }
+            'remote' { Invoke-AipWithoutGitRouting { Invoke-AipRemote $rest } }
             'run' { Invoke-AipRun $rest }
-            'sync' { Invoke-AipSync $rest }
+            'sync' { Invoke-AipSyncCommand $rest }
             'use' { Invoke-AipUse $rest }
             'update' { Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }
             'version' { Invoke-AipVersion $rest }

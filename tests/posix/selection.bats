@@ -203,13 +203,13 @@ setup() {
 
 @test "caller noclobber does not break marker, outfit, or sync temp files" {
   export AIP_PROFILE=work
-  run bash -c 'set -o noclobber; source "$AIP_SOURCE"; aip default work && aip outfit work jacket && aip sync work'
+  run bash -c 'set -o noclobber; source "$AIP_SOURCE"; aip default work && aip outfit work jacket && aip sync'
   [ "$status" -eq 0 ]
   [ "$(cat "$_AIP_PROFILE_ROOT/.default")" = work ]
   [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = jacket ]
 
   if command -v zsh >/dev/null; then
-    run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip outfit work coat && aip sync work'
+    run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip outfit work coat && aip sync'
     [ "$status" -eq 0 ]
     [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = coat ]
   fi
@@ -255,36 +255,36 @@ setup() {
   local remote="$BATS_TEST_TMPDIR/status.git" other="$BATS_TEST_TMPDIR/status-other"
   AIP_PROFILE=work
   git init -q --bare "$remote"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin "$remote"
-  git -C "$_AIP_PROFILE_ROOT/work" push -q -u origin main
+  git -C "$_AIP_PROFILE_ROOT" remote add origin "$remote"
+  git -C "$_AIP_PROFILE_ROOT" push -q -u origin main
   git -C "$remote" symbolic-ref HEAD refs/heads/main
 
   run aip
   [[ "$output" == *'synced with origin/main'* ]]
 
   printf 'local\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
-  git -C "$_AIP_PROFILE_ROOT/work" add AGENTS.md
-  git -C "$_AIP_PROFILE_ROOT/work" commit -q -m local
+  git -C "$_AIP_PROFILE_ROOT" add work/AGENTS.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m local
   run aip
   [[ "$output" == *'pending push (1 ahead of origin/main)'* ]]
 
-  git -C "$_AIP_PROFILE_ROOT/work" reset -q --hard origin/main
+  git -C "$_AIP_PROFILE_ROOT" reset -q --hard origin/main
   git clone -q "$remote" "$other"
   printf 'remote\n' >"$other/REMOTE.md"
   git -C "$other" add REMOTE.md
   git -C "$other" commit -q -m remote
   git -C "$other" push -q
-  git -C "$_AIP_PROFILE_ROOT/work" fetch -q origin
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
   run aip
   [[ "$output" == *'pending pull (1 behind origin/main)'* ]]
 
   printf 'local again\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
-  git -C "$_AIP_PROFILE_ROOT/work" add AGENTS.md
-  git -C "$_AIP_PROFILE_ROOT/work" commit -q -m diverge
+  git -C "$_AIP_PROFILE_ROOT" add work/AGENTS.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m diverge
   run aip
   [[ "$output" == *'diverged (1 ahead, 1 behind origin/main)'* ]]
 
-  mkdir -p "$_AIP_PROFILE_ROOT/work/.git/rebase-merge"
+  mkdir -p "$_AIP_PROFILE_ROOT/.git/rebase-merge"
   run aip
   [[ "$output" == *'conflict or unfinished Git operation'* ]]
 }

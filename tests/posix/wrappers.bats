@@ -195,11 +195,11 @@ setup() {
 
   run bash -c 'set -e; source "$AIP_SOURCE"; claude prompt'
   [ "$status" -eq 37 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:AGENTS.md | tail -1)" = 'changed under errexit' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed under errexit' ]
 
-  git -C "$_AIP_PROFILE_ROOT/work" reset -q --hard HEAD~1
+  git -C "$_AIP_PROFILE_ROOT" reset -q --hard HEAD~1
   command -v zsh >/dev/null || skip 'Zsh is not installed'
   run zsh -c 'set -e; source "$AIP_SOURCE"; claude prompt'
   [ "$status" -eq 37 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:AGENTS.md | tail -1)" = 'changed under errexit' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed under errexit' ]
 }
