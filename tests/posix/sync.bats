@@ -13,9 +13,19 @@ setup() {
 make_upstream() {
   export TEST_REMOTE="$BATS_TEST_TMPDIR/profile.git"
   git init -q --bare "$TEST_REMOTE"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin "$TEST_REMOTE"
-  git -C "$_AIP_PROFILE_ROOT/work" push -q -u origin main
+  git -C "$_AIP_PROFILE_ROOT" remote add origin "$TEST_REMOTE"
+  git -C "$_AIP_PROFILE_ROOT" push -q -u origin main
   git -C "$TEST_REMOTE" symbolic-ref HEAD refs/heads/main
+}
+
+@test "sync rejects unexpected arguments" {
+  run aip sync work
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unexpected argument 'work'"* ]]
+
+  run aip sync extra one
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'usage: aip sync'* ]]
 }
 
 @test "sync checkpoints owned files and new skills but leaves new native files untracked" {
@@ -23,53 +33,63 @@ make_upstream() {
   printf '%s\n' '# Reviewer' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/SKILL.md"
   printf '{"theme":"dark"}\n' >"$_AIP_PROFILE_ROOT/work/claude/settings.json"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:skills/reviewer/SKILL.md)" = '# Reviewer' ]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- claude/settings.json)" ]
-  [[ "$(git -C "$_AIP_PROFILE_ROOT/work" status --porcelain)" == *'?? claude/settings.json'* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/skills/reviewer/SKILL.md)" = '# Reviewer' ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/claude/settings.json)" ]
+  [[ "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" == *'?? work/claude/settings.json'* ]]
+}
+
+@test "sync checkpoints changes in every profile, not only the selected one" {
+  create_profile personal
+  printf 'personal change\n' >>"$_AIP_PROFILE_ROOT/personal/AGENTS.md"
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:personal/AGENTS.md | tail -1)" = 'personal change' ]
 }
 
 @test "sync checkpoints updates and deletions to files the user already tracks" {
   printf 'safe setting\n' >"$_AIP_PROFILE_ROOT/work/claude/settings.json"
-  git -C "$_AIP_PROFILE_ROOT/work" add claude/settings.json
-  git -C "$_AIP_PROFILE_ROOT/work" commit -q -m 'track reviewed setting'
+  git -C "$_AIP_PROFILE_ROOT" add work/claude/settings.json
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'track reviewed setting'
   printf 'changed setting\n' >"$_AIP_PROFILE_ROOT/work/claude/settings.json"
   rm "$_AIP_PROFILE_ROOT/work/pi/APPEND_SYSTEM.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'required profile file or link is missing'* ]]
-  git -C "$_AIP_PROFILE_ROOT/work" restore pi/APPEND_SYSTEM.md
+  git -C "$_AIP_PROFILE_ROOT" restore work/pi/APPEND_SYSTEM.md
 
-  run aip sync work
+  run aip sync
   [ "$status" -eq 0 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:claude/settings.json)" = 'changed setting' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/claude/settings.json)" = 'changed setting' ]
 }
 
 @test "sync hard-fails before staging when a forbidden runtime path is tracked" {
   printf 'credential material\n' >"$_AIP_PROFILE_ROOT/work/codex/auth.json"
-  git -C "$_AIP_PROFILE_ROOT/work" add -f codex/auth.json
-  git -C "$_AIP_PROFILE_ROOT/work" commit -q -m 'unsafe tracked file'
+  git -C "$_AIP_PROFILE_ROOT" add -f work/codex/auth.json
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'unsafe tracked file'
   printf 'change waiting\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'forbidden credential or runtime path is tracked'* ]]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" diff --cached --name-only)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only)" ]
 }
 
 @test "sync never adds an ignored credential file under the auto-tracked skills tree" {
   mkdir -p "$_AIP_PROFILE_ROOT/work/skills/reviewer"
   printf 'do not track\n' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/.env"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- skills/reviewer/.env)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/reviewer/.env)" ]
 }
 
 @test "sync blocks extensionless credentials under skills even when explicitly unignored" {
@@ -77,11 +97,11 @@ make_upstream() {
   printf '!skills/reviewer/id_ed25519\n' >>"$_AIP_PROFILE_ROOT/work/.gitignore"
   printf 'private key\n' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/id_ed25519"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'forbidden credential path exists under skills'* ]]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- skills/reviewer/id_ed25519)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/reviewer/id_ed25519)" ]
 }
 
 @test "sync blocks uppercase credential extensions under skills" {
@@ -89,19 +109,19 @@ make_upstream() {
   printf '!skills/reviewer/SECRET.PEM\n' >>"$_AIP_PROFILE_ROOT/work/.gitignore"
   printf 'private key\n' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/SECRET.PEM"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'forbidden credential path exists under skills'* ]]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- skills/reviewer/SECRET.PEM)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/reviewer/SECRET.PEM)" ]
 }
 
 @test "sync blocks Windows-incompatible and case-colliding shared-skill paths" {
   local paths="$BATS_TEST_TMPDIR/portable-paths"
-  printf 'skills/CON.txt\0' >"$paths"
+  printf 'work/skills/CON.txt\0' >"$paths"
   run _aip_validate_portable_paths_file "$paths"
   [ "$status" -ne 0 ]
-  printf 'skills/Foo/one.md\0skills/foo/two.md\0' >"$paths"
+  printf 'work/skills/Foo/one.md\0work/skills/foo/two.md\0' >"$paths"
   run _aip_validate_portable_paths_file "$paths"
   [ "$status" -ne 0 ]
 }
@@ -110,7 +130,7 @@ make_upstream() {
   local shadow_flag="$BATS_TEST_TMPDIR/shadow-git-called"
   git() { printf 'called\n' >"$shadow_flag"; return 99; }
 
-  run aip sync work
+  run aip sync
   unset -f git
 
   [ "$status" -eq 0 ]
@@ -118,7 +138,7 @@ make_upstream() {
 }
 
 @test "sync ignores aliases for filesystem inspection commands" {
-  run bash -c 'shopt -s expand_aliases; alias find="find -L"; alias grep="grep -v"; source "$AIP_SOURCE"; aip sync work'
+  run bash -c 'shopt -s expand_aliases; alias find="find -L"; alias grep="grep -v"; source "$AIP_SOURCE"; aip sync'
 
   [ "$status" -eq 0 ]
 }
@@ -127,7 +147,7 @@ make_upstream() {
   cd() { printf 'shadow cd\n'; return 99; }
   pwd() { printf '/wrong/path\n'; return 0; }
 
-  run aip sync work
+  run aip sync
   unset -f cd pwd
 
   [ "$status" -eq 0 ]
@@ -137,9 +157,9 @@ make_upstream() {
 @test "sync rejects node_modules under skills even when force-tracked" {
   mkdir -p "$_AIP_PROFILE_ROOT/work/skills/reviewer/node_modules/pkg"
   printf 'generated\n' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/node_modules/pkg/index.js"
-  git -C "$_AIP_PROFILE_ROOT/work" add -f skills/reviewer/node_modules/pkg/index.js
+  git -C "$_AIP_PROFILE_ROOT" add -f work/skills/reviewer/node_modules/pkg/index.js
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'forbidden credential or runtime path is tracked'* ]]
@@ -148,11 +168,11 @@ make_upstream() {
 @test "sync recreates the owned skills placeholder when the directory is empty" {
   rm "$_AIP_PROFILE_ROOT/work/skills/.gitkeep"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   [ -f "$_AIP_PROFILE_ROOT/work/skills/.gitkeep" ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" cat-file -t HEAD:skills)" = tree ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" cat-file -t HEAD:work/skills)" = tree ]
 }
 
 @test "sync rejects a nested Git repository instead of recording a gitlink" {
@@ -160,11 +180,11 @@ make_upstream() {
   git -C "$_AIP_PROFILE_ROOT/work/skills/nested" init -q
   printf '# Nested\n' >"$_AIP_PROFILE_ROOT/work/skills/nested/SKILL.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'nested Git repositories under skills/'* ]]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files --stage -- skills/nested)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files --stage -- work/skills/nested)" ]
 }
 
 @test "remote gitlink validation remains fail-closed under caller pipefail" {
@@ -174,39 +194,40 @@ make_upstream() {
   printf '# Nested\n' >"$nested/SKILL.md"
   git -C "$nested" add SKILL.md
   git -C "$nested" commit -q -m nested
-  git -C "$_AIP_PROFILE_ROOT/work" add "skills/!nested"
+  git -C "$_AIP_PROFILE_ROOT" add "work/skills/!nested"
   rm -rf "$nested/.git"
   while [ "$index" -lt 3000 ]; do
     printf 'skill\n' >"$bulk/$index.md"
     index=$((index + 1))
   done
-  git -C "$_AIP_PROFILE_ROOT/work" add skills/bulk
-  git -C "$_AIP_PROFILE_ROOT/work" commit -q -m 'gitlink and bulk skills'
+  git -C "$_AIP_PROFILE_ROOT" add work/skills/bulk
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'gitlink and bulk skills'
   set -o pipefail
 
-  run _aip_validate_git_tree "$_AIP_PROFILE_ROOT/work" HEAD
+  run _aip_validate_git_tree "$_AIP_PROFILE_ROOT" HEAD
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported Git submodule'* ]]
 }
 
-@test "sync refuses profile and Git metadata directory links" {
+@test "sync refuses a linked profile path and a linked repository metadata directory" {
   local external="$BATS_TEST_TMPDIR/external-profile" before
   mv "$_AIP_PROFILE_ROOT/work" "$external"
-  before=$(git -C "$external" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
   ln -s "$external" "$_AIP_PROFILE_ROOT/work"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
-  [ "$(git -C "$external" rev-parse HEAD)" = "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 
   rm "$_AIP_PROFILE_ROOT/work"
   mv "$external" "$_AIP_PROFILE_ROOT/work"
-  mv "$_AIP_PROFILE_ROOT/work/.git" "$BATS_TEST_TMPDIR/external-git"
-  ln -s "$BATS_TEST_TMPDIR/external-git" "$_AIP_PROFILE_ROOT/work/.git"
-  run aip sync work
+  mv "$_AIP_PROFILE_ROOT/.git" "$BATS_TEST_TMPDIR/external-git"
+  ln -s "$BATS_TEST_TMPDIR/external-git" "$_AIP_PROFILE_ROOT/.git"
+  run aip sync
   [ "$status" -ne 0 ]
+  [[ "$output" == *'not a Git repository'* ]]
 }
 
 @test "sync rejects a linked required file without reading or staging its target" {
@@ -215,14 +236,14 @@ make_upstream() {
   rm "$_AIP_PROFILE_ROOT/work/codex/instructions.md"
   ln -s "$external" "$_AIP_PROFILE_ROOT/work/codex/instructions.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [ "$(cat "$external")" = outside ]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" diff --cached --name-only)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only)" ]
 }
 
-@test "sync ignores exported Git routing and mutates only the selected profile" {
+@test "sync ignores exported Git routing and mutates only the profiles repository" {
   local external="$BATS_TEST_TMPDIR/external-repository" external_head
   git init -q "$external"
   printf 'external\n' >"$external/file"
@@ -233,36 +254,36 @@ make_upstream() {
   export GIT_DIR="$external/.git"
   export GIT_WORK_TREE="$external"
 
-  run aip sync work
+  run aip sync
 
   unset GIT_DIR GIT_WORK_TREE
   [ "$status" -eq 0 ]
   [ "$(git -C "$external" rev-parse HEAD)" = "$external_head" ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:AGENTS.md | tail -1)" = 'profile change' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'profile change' ]
 }
 
-@test "sync rejects a profile whose local Git config routes to another worktree" {
+@test "sync rejects a profiles repository whose local Git config routes to another worktree" {
   local external="$BATS_TEST_TMPDIR/external-worktree" before
   mkdir "$external"
   cp -R "$_AIP_PROFILE_ROOT/work/." "$external/"
-  git --git-dir="$_AIP_PROFILE_ROOT/work/.git" config core.worktree "$external"
+  git -C "$_AIP_PROFILE_ROOT" config core.worktree "$external"
   printf 'external change\n' >>"$external/AGENTS.md"
-  before=$(git --git-dir="$_AIP_PROFILE_ROOT/work/.git" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'Git repository routing escapes the profile'* ]]
-  [ "$(git --git-dir="$_AIP_PROFILE_ROOT/work/.git" rev-parse HEAD)" = "$before" ]
+  [[ "$output" == *'Git repository routing escapes the profiles repository'* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 }
 
 @test "sync and doctor reject linked Git metadata beneath the repository" {
   local external="$BATS_TEST_TMPDIR/external-objects" before
-  mv "$_AIP_PROFILE_ROOT/work/.git/objects" "$external"
-  ln -s "$external" "$_AIP_PROFILE_ROOT/work/.git/objects"
+  mv "$_AIP_PROFILE_ROOT/.git/objects" "$external"
+  ln -s "$external" "$_AIP_PROFILE_ROOT/.git/objects"
   before=$(find "$external" -type f | wc -l)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'Git metadata contains a symbolic link'* ]]
@@ -277,7 +298,7 @@ make_upstream() {
   printf 'outside\n' >"$external"
   ln -s "$external" "$_AIP_PROFILE_ROOT/work/claude/settings.json"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported symbolic link'* ]]
@@ -286,12 +307,12 @@ make_upstream() {
 
 @test "a no-op sync does not create another commit" {
   local before
-  before=$(git -C "$_AIP_PROFILE_ROOT/work" rev-list --count HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-list --count HEAD)" -eq "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)" -eq "$before" ]
   [[ "$output" == *'local only'* ]]
 }
 
@@ -305,28 +326,28 @@ make_upstream() {
   mkdir -p "$_AIP_PROFILE_ROOT/work/skills/local"
   printf 'local skill\n' >"$_AIP_PROFILE_ROOT/work/skills/local/SKILL.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
-  [ -f "$_AIP_PROFILE_ROOT/work/REMOTE.md" ]
+  [ -f "$_AIP_PROFILE_ROOT/REMOTE.md" ]
   git -C "$BATS_TEST_TMPDIR/other" pull -q
-  [ -f "$BATS_TEST_TMPDIR/other/skills/local/SKILL.md" ]
+  [ -f "$BATS_TEST_TMPDIR/other/work/skills/local/SKILL.md" ]
 }
 
 @test "sync pushes to the fetched upstream even when pushRemote points elsewhere" {
   make_upstream
   local other="$BATS_TEST_TMPDIR/other.git" other_before
   git init -q --bare "$other"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add other "$other"
-  git -C "$_AIP_PROFILE_ROOT/work" push -q other main
+  git -C "$_AIP_PROFILE_ROOT" remote add other "$other"
+  git -C "$_AIP_PROFILE_ROOT" push -q other main
   other_before=$(git --git-dir="$other" rev-parse refs/heads/main)
-  git -C "$_AIP_PROFILE_ROOT/work" config branch.main.pushRemote other
+  git -C "$_AIP_PROFILE_ROOT" config branch.main.pushRemote other
   printf 'upstream only\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
-  [ "$(git --git-dir="$TEST_REMOTE" rev-parse refs/heads/main)" = "$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)" ]
+  [ "$(git --git-dir="$TEST_REMOTE" rev-parse refs/heads/main)" = "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" ]
   [ "$(git --git-dir="$other" rev-parse refs/heads/main)" = "$other_before" ]
 }
 
@@ -339,12 +360,12 @@ make_upstream() {
     printf '%s\n' 'exit 1'
   } >"$fake_ssh"
   chmod +x "$fake_ssh"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin 'ssh://example.invalid/profile.git'
-  git -C "$_AIP_PROFILE_ROOT/work" update-ref refs/remotes/origin/main HEAD
-  git -C "$_AIP_PROFILE_ROOT/work" branch --set-upstream-to origin/main >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" remote add origin 'ssh://example.invalid/profile.git'
+  git -C "$_AIP_PROFILE_ROOT" update-ref refs/remotes/origin/main HEAD
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to origin/main >/dev/null
   export GIT_SSH_COMMAND="$fake_ssh" SSH_ARGS="$ssh_args" SSH_PROMPT_FLAG="$prompt_flag"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'remote sync unavailable'* ]]
@@ -356,12 +377,12 @@ make_upstream() {
   local fake_ssh="$BATS_TEST_TMPDIR/fake-ssh" ssh_args="$BATS_TEST_TMPDIR/ssh-args"
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >"$SSH_ARGS"' 'exit 1' >"$fake_ssh"
   chmod +x "$fake_ssh"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin 'ssh://example.invalid/profile.git'
-  git -C "$_AIP_PROFILE_ROOT/work" update-ref refs/remotes/origin/main HEAD
-  git -C "$_AIP_PROFILE_ROOT/work" branch --set-upstream-to origin/main >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" remote add origin 'ssh://example.invalid/profile.git'
+  git -C "$_AIP_PROFILE_ROOT" update-ref refs/remotes/origin/main HEAD
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to origin/main >/dev/null
   export GIT_SSH_COMMAND="$fake_ssh -o BatchMode=no" SSH_ARGS="$ssh_args"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   [ "$(sed -n '1p' "$ssh_args")" = -o ]
@@ -378,14 +399,14 @@ make_upstream() {
     printf '%s\n' 'exit 1'
   } >"$fake_plink"
   chmod +x "$fake_plink"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin 'ssh://example.invalid/profile.git'
-  git -C "$_AIP_PROFILE_ROOT/work" update-ref refs/remotes/origin/main HEAD
-  git -C "$_AIP_PROFILE_ROOT/work" branch --set-upstream-to origin/main >/dev/null
-  git -C "$_AIP_PROFILE_ROOT/work" config core.sshCommand "$fake_plink"
-  git -C "$_AIP_PROFILE_ROOT/work" config ssh.variant plink
+  git -C "$_AIP_PROFILE_ROOT" remote add origin 'ssh://example.invalid/profile.git'
+  git -C "$_AIP_PROFILE_ROOT" update-ref refs/remotes/origin/main HEAD
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to origin/main >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" config core.sshCommand "$fake_plink"
+  git -C "$_AIP_PROFILE_ROOT" config ssh.variant plink
   export SSH_ARGS="$ssh_args"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   grep -Fx -- '-batch' "$ssh_args"
@@ -396,13 +417,13 @@ make_upstream() {
   local fake_ssh="$BATS_TEST_TMPDIR/fake ssh" ssh_args="$BATS_TEST_TMPDIR/spaced-ssh-args"
   printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >"$SSH_ARGS"' 'exit 1' >"$fake_ssh"
   chmod +x "$fake_ssh"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin 'ssh://example.invalid/profile.git'
-  git -C "$_AIP_PROFILE_ROOT/work" update-ref refs/remotes/origin/main HEAD
-  git -C "$_AIP_PROFILE_ROOT/work" branch --set-upstream-to origin/main >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" remote add origin 'ssh://example.invalid/profile.git'
+  git -C "$_AIP_PROFILE_ROOT" update-ref refs/remotes/origin/main HEAD
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to origin/main >/dev/null
   export GIT_SSH="$fake_ssh" SSH_ARGS="$ssh_args"
   unset GIT_SSH_COMMAND GIT_SSH_VARIANT
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   grep -F 'BatchMode=yes' "$ssh_args"
@@ -412,14 +433,14 @@ make_upstream() {
   local fake_ssh="$BATS_TEST_TMPDIR/simple-ssh" invoked="$BATS_TEST_TMPDIR/invoked"
   printf '%s\n' '#!/bin/sh' ': >"$INVOKED"' 'exit 1' >"$fake_ssh"
   chmod +x "$fake_ssh"
-  git -C "$_AIP_PROFILE_ROOT/work" remote add origin 'ssh://example.invalid/profile.git'
-  git -C "$_AIP_PROFILE_ROOT/work" update-ref refs/remotes/origin/main HEAD
-  git -C "$_AIP_PROFILE_ROOT/work" branch --set-upstream-to origin/main >/dev/null
-  git -C "$_AIP_PROFILE_ROOT/work" config core.sshCommand "$fake_ssh"
-  git -C "$_AIP_PROFILE_ROOT/work" config ssh.variant simple
+  git -C "$_AIP_PROFILE_ROOT" remote add origin 'ssh://example.invalid/profile.git'
+  git -C "$_AIP_PROFILE_ROOT" update-ref refs/remotes/origin/main HEAD
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to origin/main >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" config core.sshCommand "$fake_ssh"
+  git -C "$_AIP_PROFILE_ROOT" config ssh.variant simple
   export INVOKED="$invoked"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'cannot be made non-interactive'* ]]
@@ -429,26 +450,26 @@ make_upstream() {
 @test "remote integration never overwrites ignored local profile state" {
   local other="$BATS_TEST_TMPDIR/other" native_path="$_AIP_PROFILE_ROOT/work/claude/native-state.json"
   make_upstream
-  printf '%s\n' 'claude/native-state.json' >>"$_AIP_PROFILE_ROOT/work/.git/info/exclude"
+  printf '%s\n' 'work/claude/native-state.json' >>"$_AIP_PROFILE_ROOT/.git/info/exclude"
   printf '%s\n' 'local ignored bytes' >"$native_path"
   git clone -q "$TEST_REMOTE" "$other"
-  printf '%s\n' 'remote tracked bytes' >"$other/claude/native-state.json"
-  git -C "$other" add claude/native-state.json
+  printf '%s\n' 'remote tracked bytes' >"$other/work/claude/native-state.json"
+  git -C "$other" add work/claude/native-state.json
   git -C "$other" commit -q -m 'track colliding native state'
   git -C "$other" push -q
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'would overwrite or replace untracked or ignored local profile state'* ]]
   [ "$(cat "$native_path")" = 'local ignored bytes' ]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" ls-files -- claude/native-state.json)" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/claude/native-state.json)" ]
 }
 
 @test "local Git metadata failures are not downgraded to remote-offline warnings" {
   make_upstream
-  rm -f "$_AIP_PROFILE_ROOT/work/.git/FETCH_HEAD"
-  mkdir "$_AIP_PROFILE_ROOT/work/.git/FETCH_HEAD"
+  rm -f "$_AIP_PROFILE_ROOT/.git/FETCH_HEAD"
+  mkdir "$_AIP_PROFILE_ROOT/.git/FETCH_HEAD"
   rm -f "$FAKE_CAPTURE"
 
   run claude prompt
@@ -460,10 +481,10 @@ make_upstream() {
 
 @test "stale Git ref locks block sync instead of looking like network failures" {
   make_upstream
-  mkdir -p "$_AIP_PROFILE_ROOT/work/.git/refs/remotes/origin"
-  mkdir "$_AIP_PROFILE_ROOT/work/.git/refs/remotes/origin/main.lock"
+  mkdir -p "$_AIP_PROFILE_ROOT/.git/refs/remotes/origin"
+  mkdir "$_AIP_PROFILE_ROOT/.git/refs/remotes/origin/main.lock"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'existing lock file'* ]]
@@ -472,10 +493,10 @@ make_upstream() {
 @test "hard-linked mutable Git metadata is rejected without changing the external inode" {
   local external="$BATS_TEST_TMPDIR/external-fetch-head"
   printf 'external\n' >"$external"
-  rm -f "$_AIP_PROFILE_ROOT/work/.git/FETCH_HEAD"
-  ln "$external" "$_AIP_PROFILE_ROOT/work/.git/FETCH_HEAD"
+  rm -f "$_AIP_PROFILE_ROOT/.git/FETCH_HEAD"
+  ln "$external" "$_AIP_PROFILE_ROOT/.git/FETCH_HEAD"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'hard-linked mutable file'* ]]
@@ -483,10 +504,10 @@ make_upstream() {
 }
 
 @test "sync reports an unfinished operation before validating conflicted content" {
-  mkdir "$_AIP_PROFILE_ROOT/work/.git/rebase-merge"
+  mkdir -p "$_AIP_PROFILE_ROOT/.git/rebase-merge"
   printf 'broken import\n' >"$_AIP_PROFILE_ROOT/work/claude/CLAUDE.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'Git conflict or unfinished operation'* ]]
@@ -495,10 +516,10 @@ make_upstream() {
 
 @test "Git submodules are rejected anywhere in a profile" {
   local commit
-  commit=$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)
-  git -C "$_AIP_PROFILE_ROOT/work" update-index --add --cacheinfo "160000,$commit,claude/plugins/tool"
+  commit=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+  git -C "$_AIP_PROFILE_ROOT" update-index --add --cacheinfo "160000,$commit,work/claude/plugins/tool"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'Git submodules are not supported'* ]]
@@ -507,31 +528,46 @@ make_upstream() {
 @test "sync rejects a remote forbidden path before it enters the working profile" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'remote credential\n' >"$BATS_TEST_TMPDIR/other/codex/auth.json"
-  git -C "$BATS_TEST_TMPDIR/other" add -f codex/auth.json
+  printf 'remote credential\n' >"$BATS_TEST_TMPDIR/other/work/codex/auth.json"
+  git -C "$BATS_TEST_TMPDIR/other" add -f work/codex/auth.json
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'unsafe remote content'
   git -C "$BATS_TEST_TMPDIR/other" push -q
   local before
-  before=$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'remote profile contains a forbidden credential or runtime path'* ]]
   [ ! -e "$_AIP_PROFILE_ROOT/work/codex/auth.json" ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)" = "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
+}
+
+@test "sync rejects a remote forbidden path in a different profile" {
+  create_profile personal
+  make_upstream
+  git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
+  printf 'remote credential\n' >"$BATS_TEST_TMPDIR/other/personal/codex/auth.json"
+  git -C "$BATS_TEST_TMPDIR/other" add -f personal/codex/auth.json
+  git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'unsafe remote content'
+  git -C "$BATS_TEST_TMPDIR/other" push -q
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'remote profile contains a forbidden credential or runtime path'* ]]
 }
 
 @test "sync rejects a corrupt remote link before it changes the working profile" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  rm "$BATS_TEST_TMPDIR/other/codex/skills"
-  ln -s ../other "$BATS_TEST_TMPDIR/other/codex/skills"
-  git -C "$BATS_TEST_TMPDIR/other" add codex/skills
+  rm "$BATS_TEST_TMPDIR/other/work/codex/skills"
+  ln -s ../other "$BATS_TEST_TMPDIR/other/work/codex/skills"
+  git -C "$BATS_TEST_TMPDIR/other" add work/codex/skills
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'corrupt remote link'
   git -C "$BATS_TEST_TMPDIR/other" push -q
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'remote profile has an invalid required link'* ]]
@@ -541,12 +577,12 @@ make_upstream() {
 @test "sync rejects optional remote links before they enter a harness directory" {
   make_upstream
   git -c core.symlinks=true clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  ln -s /outside/settings "$BATS_TEST_TMPDIR/other/claude/settings.json"
-  git -C "$BATS_TEST_TMPDIR/other" add claude/settings.json
+  ln -s /outside/settings "$BATS_TEST_TMPDIR/other/work/claude/settings.json"
+  git -C "$BATS_TEST_TMPDIR/other" add work/claude/settings.json
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'add escaping optional link'
   git -C "$BATS_TEST_TMPDIR/other" push -q
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported symbolic link'* ]]
@@ -556,46 +592,46 @@ make_upstream() {
 @test "sync rejects a remote profile that stops importing common Claude instructions" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf '%s\n' '../AGENTS.md' '' '# Claude Code instructions' >"$BATS_TEST_TMPDIR/other/claude/CLAUDE.md"
-  git -C "$BATS_TEST_TMPDIR/other" add claude/CLAUDE.md
+  printf '%s\n' '../AGENTS.md' '' '# Claude Code instructions' >"$BATS_TEST_TMPDIR/other/work/claude/CLAUDE.md"
+  git -C "$BATS_TEST_TMPDIR/other" add work/claude/CLAUDE.md
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'break Claude import'
   git -C "$BATS_TEST_TMPDIR/other" push -q
   local before
-  before=$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'claude/CLAUDE.md must begin with @../AGENTS.md'* ]]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)" = "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 }
 
 @test "sync rejects invalid remote outfit framing before rebase" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'suit\n\n' >"$BATS_TEST_TMPDIR/other/.aip/outfit"
-  git -C "$BATS_TEST_TMPDIR/other" add .aip/outfit
+  printf 'suit\n\n' >"$BATS_TEST_TMPDIR/other/work/.aip/outfit"
+  git -C "$BATS_TEST_TMPDIR/other" add work/.aip/outfit
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'break outfit framing'
   git -C "$BATS_TEST_TMPDIR/other" push -q
   local before
-  before=$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'invalid outfit label'* ]]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)" = "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 }
 
 @test "sync rejects NUL bytes in remote required text before rebase" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'before\0after\n' >"$BATS_TEST_TMPDIR/other/codex/instructions.md"
-  git -C "$BATS_TEST_TMPDIR/other" add codex/instructions.md
+  printf 'before\0after\n' >"$BATS_TEST_TMPDIR/other/work/codex/instructions.md"
+  git -C "$BATS_TEST_TMPDIR/other" add work/codex/instructions.md
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'add NUL text'
   git -C "$BATS_TEST_TMPDIR/other" push -q
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'not valid NUL-free UTF-8'* ]]
@@ -604,12 +640,12 @@ make_upstream() {
 @test "sync rejects remote paths that cannot be checked out on Windows" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'not portable\n' >"$BATS_TEST_TMPDIR/other/skills/CON.txt"
-  git -C "$BATS_TEST_TMPDIR/other" add skills/CON.txt
+  printf 'not portable\n' >"$BATS_TEST_TMPDIR/other/work/skills/CON.txt"
+  git -C "$BATS_TEST_TMPDIR/other" add work/skills/CON.txt
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'add nonportable path'
   git -C "$BATS_TEST_TMPDIR/other" push -q
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'not portable to Windows'* ]]
@@ -619,19 +655,19 @@ make_upstream() {
 @test "sync rejects a remote required file stored as a symbolic link" {
   make_upstream
   git -c core.symlinks=true clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  rm "$BATS_TEST_TMPDIR/other/AGENTS.md"
-  ln -s outside "$BATS_TEST_TMPDIR/other/AGENTS.md"
-  git -C "$BATS_TEST_TMPDIR/other" add AGENTS.md
+  rm "$BATS_TEST_TMPDIR/other/work/AGENTS.md"
+  ln -s outside "$BATS_TEST_TMPDIR/other/work/AGENTS.md"
+  git -C "$BATS_TEST_TMPDIR/other" add work/AGENTS.md
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'link required file'
   git -C "$BATS_TEST_TMPDIR/other" push -q
   local before
-  before=$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported symbolic link'* ]]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-parse HEAD)" = "$before" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 }
 
 @test "remote unavailability warns but a wrapper launches and retains its local checkpoint" {
@@ -644,26 +680,26 @@ make_upstream() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'remote sync unavailable'* ]]
   [ -e "$FAKE_CAPTURE" ]
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT/work" status --porcelain --untracked-files=no)" ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" rev-list --count '@{upstream}..HEAD')" -eq 1 ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain --untracked-files=no)" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-list --count '@{upstream}..HEAD')" -eq 1 ]
 }
 
 @test "a rebase conflict preserves both commits and blocks the next harness launch" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'remote version\n' >"$BATS_TEST_TMPDIR/other/AGENTS.md"
-  git -C "$BATS_TEST_TMPDIR/other" add AGENTS.md
+  printf 'remote version\n' >"$BATS_TEST_TMPDIR/other/work/AGENTS.md"
+  git -C "$BATS_TEST_TMPDIR/other" add work/AGENTS.md
   git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'remote conflict'
   git -C "$BATS_TEST_TMPDIR/other" push -q
   printf 'local version\n' >"$_AIP_PROFILE_ROOT/work/AGENTS.md"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'Git conflict'* ]]
-  [ -d "$_AIP_PROFILE_ROOT/work/.git/rebase-merge" ] || [ -d "$_AIP_PROFILE_ROOT/work/.git/rebase-apply" ]
-  git -C "$_AIP_PROFILE_ROOT/work" show 'ORIG_HEAD:AGENTS.md' | grep -F 'local version'
-  git -C "$_AIP_PROFILE_ROOT/work" show 'refs/remotes/origin/main:AGENTS.md' | grep -F 'remote version'
+  [ -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ] || [ -d "$_AIP_PROFILE_ROOT/.git/rebase-apply" ]
+  git -C "$_AIP_PROFILE_ROOT" show 'ORIG_HEAD:work/AGENTS.md' | grep -F 'local version'
+  git -C "$_AIP_PROFILE_ROOT" show 'refs/remotes/origin/main:work/AGENTS.md' | grep -F 'remote version'
 
   run claude prompt
   [ "$status" -ne 0 ]
@@ -671,28 +707,28 @@ make_upstream() {
 }
 
 @test "a live sync lock blocks another sync without stealing the lock" {
-  mkdir "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock"
-  printf '%s\n' "$BASHPID" >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/pid"
-  hostname >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/host"
-  printf 'held-by-test\n' >"$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/token"
+  mkdir "$_AIP_PROFILE_ROOT/.git/aip-sync.lock"
+  printf '%s\n' "$BASHPID" >"$_AIP_PROFILE_ROOT/.git/aip-sync.lock/pid"
+  hostname >"$_AIP_PROFILE_ROOT/.git/aip-sync.lock/host"
+  printf 'held-by-test\n' >"$_AIP_PROFILE_ROOT/.git/aip-sync.lock/token"
   export _AIP_LOCK_ATTEMPTS=1
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'sync is already running'* ]]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock/token")" = 'held-by-test' ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/.git/aip-sync.lock/token")" = 'held-by-test' ]
 }
 
 @test "a lock metadata failure removes the incomplete lock" {
   printf '#!/bin/sh\nexit 1\n' >"$FAKE_BIN/hostname"
   chmod +x "$FAKE_BIN/hostname"
 
-  run aip sync work
+  run aip sync
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'incomplete lock was removed'* ]]
-  [ ! -e "$_AIP_PROFILE_ROOT/work/.git/aip-sync.lock" ]
+  [ ! -e "$_AIP_PROFILE_ROOT/.git/aip-sync.lock" ]
 }
 
 @test "an interrupt still checkpoints harness changes and returns status 130" {
@@ -706,5 +742,5 @@ make_upstream() {
   run -130 claude
 
   [ "$status" -eq 130 ]
-  [ "$(git -C "$_AIP_PROFILE_ROOT/work" show HEAD:AGENTS.md | tail -1)" = 'changed during run' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed during run' ]
 }
