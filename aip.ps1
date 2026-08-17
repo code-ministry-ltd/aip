@@ -616,6 +616,18 @@ function Invoke-AipClone {
     if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
     $targetPath = Get-AipProfilePath $targetName
     if (Test-AipPathEntry $targetPath) { Write-AipError "destination already exists: $targetPath"; return }
+    # Capture the source profile's committed executable paths before the sync
+    # checkpoint can re-stage files from disk (where the executable bit may
+    # differ, and never exists on platforms without file modes such as Windows).
+    $executablePaths = [System.Collections.Generic.List[string]]::new()
+    $sourceListing = [string](Invoke-AipGit -C $script:AipProfileRoot ls-files -s -z -- (Join-Path $sourceName ''))
+    if ($LASTEXITCODE -ne 0) { Write-AipError "could not clone profile '$sourceName'"; return }
+    foreach ($record in @($sourceListing -split "`0")) {
+        if ($record -eq '') { continue }
+        $tabIndex = $record.IndexOf([char]9)
+        if ($tabIndex -lt 0 -or -not $record.Substring(0, $tabIndex).StartsWith('100755')) { continue }
+        $executablePaths.Add($record.Substring($tabIndex + 1))
+    }
     Invoke-AipSync 'clone'
     if ($script:AipCommandStatus -ne 0) { return }
 
@@ -641,6 +653,12 @@ function Invoke-AipClone {
     Remove-Item -LiteralPath $tarball -Force -ErrorAction SilentlyContinue
     Invoke-AipGit -C $script:AipProfileRoot add $targetName
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    # Executable bits do not survive tar extraction on platforms without file modes
+    # (e.g. Windows); restore them from the source profile's committed modes.
+    foreach ($trackedPath in $executablePaths) {
+        Invoke-AipGit -C $script:AipProfileRoot update-index --add --chmod=+x -- (Join-Path $targetName $trackedPath.Substring($sourceName.Length + 1))
+        if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    }
     Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
     if ($LASTEXITCODE -ne 0) {
         Invoke-AipGit -C $script:AipProfileRoot commit -q -m "aip: clone $sourceName"
@@ -1932,7 +1950,7 @@ function Invoke-AipRun {
 
 function Invoke-AipRemoteShow {
     $root = $script:AipProfileRoot
-    $url = $null
+    $url = @()
     $rootGit = Join-Path $root '.git'
     if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
         $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and
@@ -1946,7 +1964,7 @@ function Invoke-AipRemoteShow {
 
 function Invoke-AipRemoteRemove {
     $root = $script:AipProfileRoot
-    $url = $null
+    $url = @()
     $rootGit = Join-Path $root '.git'
     if ((Test-Path -LiteralPath $rootGit -PathType Container) -and
         $null -ne (Get-Item -LiteralPath $rootGit -Force -ErrorAction SilentlyContinue) -and

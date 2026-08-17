@@ -710,6 +710,15 @@ _aip_clone() (
     _aip_error "invalid profile name '$target_name'"
     return 2
   }
+  # Capture the source profile's committed executable paths before the sync
+  # checkpoint can re-stage files from disk (where the executable bit may
+  # differ, and never exists on platforms without file modes such as Windows).
+  local clone_record clone_execs=''
+  while IFS= read -r -d '' clone_record; do
+    case ${clone_record%%$'\t'*} in
+      100755*) clone_execs+="${clone_record#*$'\t'}"$'\n' ;;
+    esac
+  done < <(_aip_git -C "$_AIP_PROFILE_ROOT" ls-files -s -z -- "$source_name/")
   source_path=$(_aip_profile_path "$source_name")
   _aip_require_git_containment "$_AIP_PROFILE_ROOT" || return
   target_path=$(_aip_profile_path "$target_name")
@@ -738,6 +747,17 @@ _aip_clone() (
     _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
     return 1
   }
+  # Executable bits do not survive tar extraction on platforms without file modes
+  # (e.g. Windows); restore them from the source profile's committed modes.
+  local clone_path chmod_failed=0
+  while IFS= read -r clone_path; do
+    [ -n "$clone_path" ] || continue
+    _aip_git -C "$_AIP_PROFILE_ROOT" update-index --add --chmod=+x -- "$target_name/${clone_path#"$source_name"/}" || chmod_failed=1
+  done <<< "$clone_execs"
+  if [ "$chmod_failed" -ne 0 ]; then
+    _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
+    return 1
+  fi
   if ! _aip_git -C "$_AIP_PROFILE_ROOT" diff --cached --quiet --; then
     _aip_git -C "$_AIP_PROFILE_ROOT" commit -q -m "aip: clone $source_name" || {
       _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
