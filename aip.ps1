@@ -6,7 +6,7 @@ if (-not (Get-Variable -Name AipProfileRoot -Scope Script -ErrorAction SilentlyC
     $script:AipProfileRoot = Join-Path $HOME 'agent-profiles'
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.1.0'
+$script:AipVersion = '0.2.0'
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)

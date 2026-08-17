@@ -9,7 +9,7 @@
 
   run bash -c 'source "$0"; aip version' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.1.0' ]
+  [ "$output" = 'aip 0.2.0' ]
 
   run bash -c 'source "$0"; aip version extra' "$AIP_SOURCE"
   [ "$status" -ne 0 ]

@@ -93,7 +93,7 @@ AfterEach {
 }
 
 It 'reports the embedded version and rejects extra arguments' {
-    aip version | Should -Be 'aip 0.1.0'
+    aip version | Should -Be 'aip 0.2.0'
     $global:LASTEXITCODE | Should -Be 0
     aip version extra *> $null
     $global:LASTEXITCODE | Should -Not -Be 0
@@ -1779,27 +1779,27 @@ Describe 'installer' {
     try {
         $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.1.0'
-        $output | Should -Match 'Installed aip 0\.1\.0\.'
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.2.0'
+        $output | Should -Match 'Installed aip 0\.2\.0\.'
 
         $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        $output | Should -Match 'aip 0\.1\.0 is already installed'
+        $output | Should -Match 'aip 0\.2\.0 is already installed'
 
         $pkgCopy = Join-Path $TestDrive 'pkg'
         New-Item -ItemType Directory -Path $pkgCopy | Out-Null
         $aipCopy = Join-Path $pkgCopy 'aip.ps1'
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Destination $aipCopy
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'install.ps1') -Destination (Join-Path $pkgCopy 'install.ps1')
-        $pattern = [regex]::Escape("`$script:AipVersion = '0.1.0'")
-        $replacement = "`$script:AipVersion = '0.2.0'"
+        $pattern = [regex]::Escape("`$script:AipVersion = '0.2.0'")
+        $replacement = "`$script:AipVersion = '0.3.0'"
         $content = (Get-Content -LiteralPath $aipCopy -Raw) -replace $pattern, $replacement
         Set-Content -LiteralPath $aipCopy -Value $content -Encoding utf8NoBOM
 
         $output = (& (Join-Path $pkgCopy 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.2.0'
-        $output | Should -Match 'Updated aip from 0\.1\.0 to 0\.2\.0\.'
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.3.0'
+        $output | Should -Match 'Updated aip from 0\.2\.0 to 0\.3\.0\.'
     }
     finally {
         $env:_AIP_INSTALL_ROOT = $null

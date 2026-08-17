@@ -47,7 +47,7 @@ Restart your shell, and you're ready. Every command supports `aip help` (or `aip
 aip update
 ```
 
-Re-runs the idempotent installer against the latest published version and reports the version change (for example `Updated aip from 0.1.0 to 0.2.0`). The installed copy keeps working offline until you update it.
+Re-runs the idempotent installer against the latest published version and reports the version change (for example `Updated aip from 0.2.0 to 0.3.0`). The installed copy keeps working offline until you update it.
 
 ### Without installing
 
