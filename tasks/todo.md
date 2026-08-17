@@ -1,6 +1,6 @@
 # Tasks — Whole-directory sync model + `help`
 
-Status: **IN PROGRESS** — T1 done (60307ab, 3b05b22), T2 done (35b3e02), T3 done (a3ae913), T4 done; now on T5
+Status: **COMPLETE** — T1 (60307ab, 3b05b22), T2 (35b3e02), T3 (a3ae913), T4 (ca8509b), T5 (this commit). Bats 137/137 + Pester 108/108 green.
 Spec: `tasks/spec.md` · Plan: `tasks/plan.md`
 
 > **Re-slice note (why the boundaries differ from v1 of this file).** The per-profile →
@@ -86,7 +86,9 @@ Run the `readme-review` skill against the finished code: monorepo Git section, m
 setup flow, updated command table, Windows wording, verify every remaining README claim,
 consistency with `--help`.
 
-- [ ] Every README claim verified against the final code
-- [ ] New-machine setup section accurate; help/README consistent
+- [x] Every README claim verified against the final code
+- [x] New-machine setup section accurate; help/README consistent
+
+**DONE** (full README rewrite for the root-repo model; all claims re-verified against the finished code; consistent with `aip help`).
 
 Depends: T4 · Files: `README.md` (+ help text if drift found) · Size S
