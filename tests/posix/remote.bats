@@ -68,7 +68,11 @@ make_upstream() {
   export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/fresh machine/profile root"
 
   run aip remote add "$TEST_REMOTE"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 0 ] || {
+    # Print the captured output so an intermittent failure shows the real error.
+    printf 'remote add failed (status %s):\n%s\n' "$status" "$output" >&2
+    return 1
+  }
   [[ "$output" == *"Cloned profiles from $TEST_REMOTE."* ]]
 
   [ -d "$_AIP_PROFILE_ROOT/.git" ]
