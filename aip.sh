@@ -1742,40 +1742,50 @@ _aip_stage_checkpoint() {
 }
 
 _aip_require_rebase_preserves_untracked() {
-  local profile=$1 upstream_commit=$2 remote_paths local_paths remote_path local_path remote_folded local_folded
+  local profile=$1 upstream_commit=$2 remote_paths local_paths remote_lines local_lines
   remote_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-paths.XXXXXX") || return
   local_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-local-paths.XXXXXX") || { command rm -f "$remote_paths"; return 1; }
+  remote_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths"; return 1; }
+  local_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-local-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths" "$remote_lines"; return 1; }
   if ! _aip_git -C "$profile" diff --name-only --diff-filter=ACMRT -z HEAD "$upstream_commit" >|"$remote_paths" ||
      ! _aip_git -C "$profile" ls-files --others --exclude-standard -z >|"$local_paths" ||
-     ! _aip_git -C "$profile" ls-files --others --ignored --exclude-standard -z >>"$local_paths"; then
-    command rm -f "$remote_paths" "$local_paths"
+     ! _aip_git -C "$profile" ls-files --others --ignored --exclude-standard -z >>"$local_paths" ||
+     ! command tr '\0' '\n' <"$remote_paths" >"$remote_lines" ||
+     ! command tr '\0' '\n' <"$local_paths" >"$local_lines"; then
+    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
     _aip_error 'could not inspect local untracked and ignored paths before integrating the remote profile'
     return 1
   fi
-  # Cleanup only unlinks the temporary names; both loops keep their open descriptors.
-  # shellcheck disable=SC2094
-  while IFS= read -r -d '' remote_path; do
-    remote_path=${remote_path%/}
-    remote_folded=$(LC_ALL=C printf '%s' "$remote_path" | command tr '[:upper:]' '[:lower:]') || {
-      command rm -f "$remote_paths" "$local_paths"
-      return 1
+  # One C-locale pass replaces the old per-pair loop: a collision is folded
+  # equality or containment in either directory direction. A path containing a
+  # literal newline is split into fragments, which can only add collisions.
+  if ! LC_ALL=C command awk '
+    FILENAME == ARGV[1] {
+      p = tolower($0)
+      sub(/\/+$/, "", p)
+      if (p != "") { locals[++n] = p; seen[p] = 1 }
+      next
     }
-    while IFS= read -r -d '' local_path; do
-      local_path=${local_path%/}
-      local_folded=$(LC_ALL=C printf '%s' "$local_path" | command tr '[:upper:]' '[:lower:]') || {
-        command rm -f "$remote_paths" "$local_paths"
-        return 1
+    {
+      r = tolower($0)
+      sub(/\/+$/, "", r)
+      if (r == "") next
+      if (seen[r]) exit 1
+      m = split(r, parts, "/")
+      prefix = parts[1]
+      for (k = 2; k <= m; k++) {
+        if (seen[prefix]) exit 1
+        prefix = prefix "/" parts[k]
       }
-      if [ "$remote_folded" = "$local_folded" ] ||
-         case $remote_folded in "$local_folded"/*) true ;; *) false ;; esac ||
-         case $local_folded in "$remote_folded"/*) true ;; *) false ;; esac; then
-        command rm -f "$remote_paths" "$local_paths"
-        _aip_error "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C \"$profile\" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
-        return 1
-      fi
-    done <"$local_paths"
-  done <"$remote_paths"
-  command rm -f "$remote_paths" "$local_paths"
+      for (i = 1; i <= n; i++)
+        if (index(locals[i], r "/") == 1) exit 1
+    }
+'  "$local_lines" "$remote_lines"; then
+    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
+    _aip_error "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C \"$profile\" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
+    return 1
+  fi
+  command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
 }
 
 _aip_sync() (

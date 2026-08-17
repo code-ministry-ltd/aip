@@ -753,3 +753,36 @@ make_upstream() {
   [ "$status" -eq 130 ]
   [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed during run' ]
 }
+
+@test "rebase precheck stays fast with many remote changes and untracked local state" {
+  make_upstream
+  local other="$BATS_TEST_TMPDIR/other" i
+  git clone -q "$TEST_REMOTE" "$other"
+  for i in $(seq 1 50); do printf 'remote %s\n' "$i" >"$other/work/skills/rfile-$i.md"; done
+  git -C "$other" add -A
+  git -C "$other" commit -q -m 'remote changes'
+  git -C "$other" push -q
+  mkdir -p "$_AIP_PROFILE_ROOT/work/scratch"
+  for i in $(seq 1 300); do printf 'local %s\n' "$i" >"$_AIP_PROFILE_ROOT/work/scratch/local-$i.txt"; done
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local start=$SECONDS
+  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+  [ "$status" -eq 0 ]
+  [ $((SECONDS - start)) -lt 5 ]
+}
+
+@test "rebase precheck detects case-insensitive collisions with untracked local state" {
+  make_upstream
+  local other="$BATS_TEST_TMPDIR/other"
+  printf 'local bytes\n' >"$_AIP_PROFILE_ROOT/work/scratch-case.txt"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/SCRATCH-CASE.txt"
+  git -C "$other" add work/SCRATCH-CASE.txt
+  git -C "$other" commit -q -m 'case collision'
+  git -C "$other" push -q
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+
+  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+
+  [ "$status" -ne 0 ]
+}
