@@ -166,7 +166,7 @@ setup() {
 @test "mount containment treats the profile mount itself as destructive scope" {
   _aip_mount_target_is_profile_or_descendant '/profiles/work' '/profiles/work'
   _aip_mount_target_is_profile_or_descendant '/profiles/work' '/profiles/work/skills'
-  ! _aip_mount_target_is_profile_or_descendant '/profiles/work' '/profiles/worker'
+  if _aip_mount_target_is_profile_or_descendant '/profiles/work' '/profiles/worker'; then return 1; fi
 }
 
 @test "doctor diagnoses a configured upstream that cannot be resolved" {

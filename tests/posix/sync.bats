@@ -419,7 +419,7 @@ make_upstream() {
 
   [ "$status" -eq 0 ]
   grep -Fx -- '-batch' "$ssh_args"
-  ! grep -F -- 'BatchMode' "$ssh_args"
+  if grep -F -- 'BatchMode' "$ssh_args"; then return 1; fi
 }
 
 @test "GIT_SSH executable paths with spaces remain noninteractive" {
