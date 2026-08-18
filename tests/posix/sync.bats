@@ -844,3 +844,48 @@ make_upstream() {
   [[ "$output" == *"remote sync unavailable"* ]]
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
 }
+
+setup_git_logger() {
+  local real_git
+  real_git=$(command -v git)
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'for a in "$@"; do printf "%s " "$a" >>"${GIT_LOG:?}"; done; printf "\n" >>"${GIT_LOG:?}"'
+    printf 'exec %s "$@"\n' "$real_git"
+  } >"$FAKE_BIN/git"
+  chmod +x "$FAKE_BIN/git"
+  hash -r
+}
+
+@test "before sync skips the remote probe when local changes force a full sync" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  setup_git_logger
+  export GIT_LOG="$BATS_TEST_TMPDIR/git.log"
+  : >"$GIT_LOG"
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  if grep -q ' ls-remote ' "$GIT_LOG"; then return 1; fi
+  grep -q ' fetch ' "$GIT_LOG"
+  grep -q ' push ' "$GIT_LOG"
+}
+
+@test "before sync still probes the remote when the profile is clean" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  setup_git_logger
+  export GIT_LOG="$BATS_TEST_TMPDIR/git.log"
+  : >"$GIT_LOG"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"up to date with origin/main"* ]]
+  grep -q ' ls-remote ' "$GIT_LOG"
+  if grep -q ' fetch ' "$GIT_LOG"; then return 1; fi
+  if grep -q ' push ' "$GIT_LOG"; then return 1; fi
+}

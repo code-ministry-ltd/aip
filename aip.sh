@@ -1832,13 +1832,17 @@ _aip_sync() (
     # the pre-checkpoint SHA, it matches the last stored remote-tracking ref,
     # and ls-remote proves the remote has not moved, so no round trip is
     # needed. Every failure (no stored ref, ls-remote error) falls through
-    # to the full sync below.
+    # to the full sync below. When the checkpoint committed anything (cur
+    # differs from pre), the skip condition can never hold because a push is
+    # already required, so the ls-remote probe is skipped with it.
     cur_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || cur_sha=
-    stored_sha=$(_aip_git -C "$root" rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>/dev/null) || stored_sha=
-    remote_sha=$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" ls-remote "$remote" "$merge_ref" 2>/dev/null | command awk 'NR == 1 { print $1; exit }')
-    if [ -n "$remote_sha" ] && [ "$remote_sha" = "$stored_sha" ] && [ "$cur_sha" = "$stored_sha" ] && [ "$cur_sha" = "$pre_sha" ]; then
-      printf 'Profiles up to date with %s.\n' "$upstream"
-      return 0
+    if [ "$cur_sha" = "$pre_sha" ]; then
+      stored_sha=$(_aip_git -C "$root" rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>/dev/null) || stored_sha=
+      remote_sha=$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" ls-remote "$remote" "$merge_ref" 2>/dev/null | command awk 'NR == 1 { print $1; exit }')
+      if [ -n "$remote_sha" ] && [ "$remote_sha" = "$stored_sha" ] && [ "$cur_sha" = "$stored_sha" ]; then
+        printf 'Profiles up to date with %s.\n' "$upstream"
+        return 0
+      fi
     fi
   fi
   if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet "$remote" >|"$_AIP_GIT_OUTPUT" 2>&1; then
