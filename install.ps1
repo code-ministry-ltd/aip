@@ -36,6 +36,12 @@ try {
     $profileParent = Split-Path -Parent $shellProfile
     if ($profileParent) { New-Item -ItemType Directory -Path $profileParent -Force -ErrorAction Stop | Out-Null }
     Copy-Item -LiteralPath $sourceFile -Destination $installedFile -Force -ErrorAction Stop
+    $pickerSource = Join-Path (Join-Path $PSScriptRoot 'bin') 'aip-picker.js'
+    if (Test-Path -LiteralPath $pickerSource) {
+        $pickerDest = Join-Path (Join-Path $installRoot 'bin') 'aip-picker.js'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $pickerDest) -Force -ErrorAction Stop | Out-Null
+        Copy-Item -LiteralPath $pickerSource -Destination $pickerDest -Force -ErrorAction Stop
+    }
     if (-not (Test-Path -LiteralPath $shellProfile)) { New-Item -ItemType File -Path $shellProfile -ErrorAction Stop | Out-Null }
 
     $quotedSource = $installedFile.Replace("'", "''")
