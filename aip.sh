@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.2.0'
+_AIP_VERSION='0.3.0'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
@@ -87,13 +87,15 @@ _aip_prepare_ssh_transport() {
   fi
   if [ -z "$variant" ] || [ "$variant" = auto ]; then
     executable=${executable##*/}
-    case $(LC_ALL=C printf '%s' "$executable" | command tr '[:upper:]' '[:lower:]') in
+    _aip_ascii_lower "$executable"
+    case $_AIP_ASCII_LOWER in
       plink|plink.exe|putty|putty.exe) variant=plink ;;
       tortoiseplink|tortoiseplink.exe) variant=tortoiseplink ;;
       *) variant=ssh ;;
     esac
   fi
-  case $(LC_ALL=C printf '%s' "$variant" | command tr '[:upper:]' '[:lower:]') in
+  _aip_ascii_lower "$variant"
+  case $_AIP_ASCII_LOWER in
     plink|putty|tortoiseplink) effective="$command_prefix -batch$command_remainder" ;;
     ssh) effective="$command_prefix -o BatchMode=yes$command_remainder" ;;
     *) return 1 ;;
@@ -1159,9 +1161,42 @@ _aip_find_real_command() {
   return 1
 }
 
+_aip_ascii_lower() {
+  # Fork-free exact equivalent of LC_ALL=C tr uppercase-lowering:
+  # only ASCII A-Z folds; every other byte passes through untouched.
+  _AIP_ASCII_LOWER=${1-}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//A/a}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//B/b}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//C/c}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//D/d}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//E/e}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//F/f}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//G/g}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//H/h}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//I/i}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//J/j}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//K/k}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//L/l}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//M/m}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//N/n}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//O/o}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//P/p}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Q/q}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//R/r}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//S/s}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//T/t}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//U/u}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//V/v}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//W/w}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//X/x}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Y/y}
+  _AIP_ASCII_LOWER=${_AIP_ASCII_LOWER//Z/z}
+}
+
 _aip_is_forbidden_path() {
   local lower
-  lower=$(LC_ALL=C printf '%s' "$1" | command tr '[:upper:]' '[:lower:]') || return 0
+  _aip_ascii_lower "$1"
+  lower=$_AIP_ASCII_LOWER
   case $lower in
     .env.example|*/.env.example) return 1 ;;
     .env|.env.*|*/.env|*/.env.*|*.pem|*.key|*.p12|*.pfx|.netrc|*/.netrc|.npmrc|*/.npmrc|.pypirc|*/.pypirc|id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519) return 0 ;;
@@ -1201,14 +1236,16 @@ _aip_validate_portable_paths_file() {
         return 1
       fi
       base=${component%%.*}
-      case $(LC_ALL=C printf '%s' "$component" | command tr '[:upper:]' '[:lower:]') in
+      _aip_ascii_lower "$component"
+      case $_AIP_ASCII_LOWER in
         .git)
           _AIP_PORTABLE_PATH_ERROR=$relative
           command rm -f "$lines" "$keys" "$sorted"
           return 1
           ;;
       esac
-      case $(LC_ALL=C printf '%s' "$base" | command tr '[:upper:]' '[:lower:]') in
+      _aip_ascii_lower "$base"
+      case $_AIP_ASCII_LOWER in
         con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)
           _AIP_PORTABLE_PATH_ERROR=$relative
           command rm -f "$lines" "$keys" "$sorted"
@@ -1319,8 +1356,12 @@ _aip_profile_prefixes_from_names() {
 }
 
 _aip_under_profile() {
-  local first=${1%%/*}
-  [ "$first" != "$1" ] && command grep -qxF -- "$first" "$2"
+  local first=${1%%/*} name
+  [ "$first" != "$1" ] || return 1
+  while IFS= read -r name; do
+    [ "$name" = "$first" ] && return 0
+  done <"$2"
+  return 1
 }
 
 _aip_validate_git_tree() {
@@ -1701,44 +1742,54 @@ _aip_stage_checkpoint() {
 }
 
 _aip_require_rebase_preserves_untracked() {
-  local profile=$1 upstream_commit=$2 remote_paths local_paths remote_path local_path remote_folded local_folded
+  local profile=$1 upstream_commit=$2 remote_paths local_paths remote_lines local_lines
   remote_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-paths.XXXXXX") || return
   local_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-local-paths.XXXXXX") || { command rm -f "$remote_paths"; return 1; }
+  remote_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths"; return 1; }
+  local_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-local-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths" "$remote_lines"; return 1; }
   if ! _aip_git -C "$profile" diff --name-only --diff-filter=ACMRT -z HEAD "$upstream_commit" >|"$remote_paths" ||
      ! _aip_git -C "$profile" ls-files --others --exclude-standard -z >|"$local_paths" ||
-     ! _aip_git -C "$profile" ls-files --others --ignored --exclude-standard -z >>"$local_paths"; then
-    command rm -f "$remote_paths" "$local_paths"
+     ! _aip_git -C "$profile" ls-files --others --ignored --exclude-standard -z >>"$local_paths" ||
+     ! command tr '\0' '\n' <"$remote_paths" >"$remote_lines" ||
+     ! command tr '\0' '\n' <"$local_paths" >"$local_lines"; then
+    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
     _aip_error 'could not inspect local untracked and ignored paths before integrating the remote profile'
     return 1
   fi
-  # Cleanup only unlinks the temporary names; both loops keep their open descriptors.
-  # shellcheck disable=SC2094
-  while IFS= read -r -d '' remote_path; do
-    remote_path=${remote_path%/}
-    remote_folded=$(LC_ALL=C printf '%s' "$remote_path" | command tr '[:upper:]' '[:lower:]') || {
-      command rm -f "$remote_paths" "$local_paths"
-      return 1
+  # One C-locale pass replaces the old per-pair loop: a collision is folded
+  # equality or containment in either directory direction. A path containing a
+  # literal newline is split into fragments, which can only add collisions.
+  if ! LC_ALL=C command awk '
+    FILENAME == ARGV[1] {
+      p = tolower($0)
+      sub(/\/+$/, "", p)
+      if (p != "") { locals[++n] = p; seen[p] = 1 }
+      next
     }
-    while IFS= read -r -d '' local_path; do
-      local_path=${local_path%/}
-      local_folded=$(LC_ALL=C printf '%s' "$local_path" | command tr '[:upper:]' '[:lower:]') || {
-        command rm -f "$remote_paths" "$local_paths"
-        return 1
+    {
+      r = tolower($0)
+      sub(/\/+$/, "", r)
+      if (r == "") next
+      if (seen[r]) exit 1
+      m = split(r, parts, "/")
+      prefix = parts[1]
+      for (k = 2; k <= m; k++) {
+        if (seen[prefix]) exit 1
+        prefix = prefix "/" parts[k]
       }
-      if [ "$remote_folded" = "$local_folded" ] ||
-         case $remote_folded in "$local_folded"/*) true ;; *) false ;; esac ||
-         case $local_folded in "$remote_folded"/*) true ;; *) false ;; esac; then
-        command rm -f "$remote_paths" "$local_paths"
-        _aip_error "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C \"$profile\" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
-        return 1
-      fi
-    done <"$local_paths"
-  done <"$remote_paths"
-  command rm -f "$remote_paths" "$local_paths"
+      for (i = 1; i <= n; i++)
+        if (index(locals[i], r "/") == 1) exit 1
+    }
+'  "$local_lines" "$remote_lines"; then
+    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
+    _aip_error "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C \"$profile\" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
+    return 1
+  fi
+  command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
 }
 
 _aip_sync() (
-  local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path
+  local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
   _AIP_SYNC_LOCK=
   _AIP_SYNC_TOKEN=
@@ -1756,6 +1807,7 @@ _aip_sync() (
     _aip_error "Git conflict or unfinished operation in $root; run 'git -C \"$root\" status', then resolve and continue or abort it"
     return 1
   fi
+  pre_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || pre_sha=
   _aip_stage_checkpoint "$root" "$mode" || return
 
   if ! _aip_git -C "$root" rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
@@ -1774,6 +1826,24 @@ _aip_sync() (
   if ! _aip_prepare_ssh_transport "$root"; then
     _aip_error 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profiles'
     return 0
+  fi
+  if [ "$mode" = before ] || [ "$mode" = after ]; then
+    # Staleness check for harness-triggered syncs: HEAD has not moved since
+    # the pre-checkpoint SHA, it matches the last stored remote-tracking ref,
+    # and ls-remote proves the remote has not moved, so no round trip is
+    # needed. Every failure (no stored ref, ls-remote error) falls through
+    # to the full sync below. When the checkpoint committed anything (cur
+    # differs from pre), the skip condition can never hold because a push is
+    # already required, so the ls-remote probe is skipped with it.
+    cur_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || cur_sha=
+    if [ "$cur_sha" = "$pre_sha" ]; then
+      stored_sha=$(_aip_git -C "$root" rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>/dev/null) || stored_sha=
+      remote_sha=$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" ls-remote "$remote" "$merge_ref" 2>/dev/null | command awk 'NR == 1 { print $1; exit }')
+      if [ -n "$remote_sha" ] && [ "$remote_sha" = "$stored_sha" ] && [ "$cur_sha" = "$stored_sha" ]; then
+        printf 'Profiles up to date with %s.\n' "$upstream"
+        return 0
+      fi
+    fi
   fi
   if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" fetch --quiet "$remote" >|"$_AIP_GIT_OUTPUT" 2>&1; then
     _aip_require_git_mutation_state "$root" || return

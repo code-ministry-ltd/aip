@@ -126,6 +126,15 @@ make_upstream() {
   [ "$status" -ne 0 ]
 }
 
+@test "portable path validation stays fast for large path lists" {
+  local paths="$BATS_TEST_TMPDIR/portable-paths" i
+  for i in $(seq 1 2000); do printf 'work/skills/skill-%04d/SKILL.md\0' "$i"; done >"$paths"
+  local start=$SECONDS
+  run _aip_validate_portable_paths_file "$paths"
+  [ "$status" -eq 0 ]
+  [ $((SECONDS - start)) -lt 5 ]
+}
+
 @test "sync bypasses a caller-defined git function" {
   local shadow_flag="$BATS_TEST_TMPDIR/shadow-git-called"
   git() { printf 'called\n' >"$shadow_flag"; return 99; }
@@ -410,7 +419,7 @@ make_upstream() {
 
   [ "$status" -eq 0 ]
   grep -Fx -- '-batch' "$ssh_args"
-  ! grep -F -- 'BatchMode' "$ssh_args"
+  if grep -F -- 'BatchMode' "$ssh_args"; then return 1; fi
 }
 
 @test "GIT_SSH executable paths with spaces remain noninteractive" {
@@ -743,4 +752,140 @@ make_upstream() {
 
   [ "$status" -eq 130 ]
   [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed during run' ]
+}
+
+@test "rebase precheck stays fast with many remote changes and untracked local state" {
+  make_upstream
+  local other="$BATS_TEST_TMPDIR/other" i
+  git clone -q "$TEST_REMOTE" "$other"
+  for i in $(seq 1 50); do printf 'remote %s\n' "$i" >"$other/work/skills/rfile-$i.md"; done
+  git -C "$other" add -A
+  git -C "$other" commit -q -m 'remote changes'
+  git -C "$other" push -q
+  mkdir -p "$_AIP_PROFILE_ROOT/work/scratch"
+  for i in $(seq 1 300); do printf 'local %s\n' "$i" >"$_AIP_PROFILE_ROOT/work/scratch/local-$i.txt"; done
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local start=$SECONDS
+  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+  [ "$status" -eq 0 ]
+  [ $((SECONDS - start)) -lt 5 ]
+}
+
+@test "rebase precheck detects case-insensitive collisions with untracked local state" {
+  make_upstream
+  local other="$BATS_TEST_TMPDIR/other"
+  printf 'local bytes\n' >"$_AIP_PROFILE_ROOT/work/scratch-case.txt"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/SCRATCH-CASE.txt"
+  git -C "$other" add work/SCRATCH-CASE.txt
+  git -C "$other" commit -q -m 'case collision'
+  git -C "$other" push -q
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+
+  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+
+  [ "$status" -ne 0 ]
+}
+
+@test "before sync skips the remote round trip when the profile is already up to date" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local head_sha
+  head_sha=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"up to date with origin/main"* ]]
+  [[ "$output" != *"Profiles synced"* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$head_sha" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" log --oneline origin/main..HEAD)" ]
+}
+
+@test "before sync still syncs fully when local changes exist" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show origin/main:work/AGENTS.md | tail -1)" = 'local edit' ]
+}
+
+@test "before sync still syncs fully when the remote moved ahead" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  local other="$BATS_TEST_TMPDIR/other" head_sha
+  head_sha=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote edit\n' >>"$other/work/AGENTS.md"
+  git -C "$other" commit -qam 'remote edit'
+  git -C "$other" push -q
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" != "$head_sha" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'remote edit' ]
+}
+
+@test "before sync degrades gracefully when the remote is unreachable" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  git -C "$_AIP_PROFILE_ROOT" remote set-url origin "$TEST_REMOTE/does-not-exist.git"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remote sync unavailable"* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
+setup_git_logger() {
+  local real_git
+  real_git=$(command -v git)
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'for a in "$@"; do printf "%s " "$a" >>"${GIT_LOG:?}"; done; printf "\n" >>"${GIT_LOG:?}"'
+    printf 'exec %s "$@"\n' "$real_git"
+  } >"$FAKE_BIN/git"
+  chmod +x "$FAKE_BIN/git"
+  hash -r
+}
+
+@test "before sync skips the remote probe when local changes force a full sync" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  setup_git_logger
+  export GIT_LOG="$BATS_TEST_TMPDIR/git.log"
+  : >"$GIT_LOG"
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  if grep -q ' ls-remote ' "$GIT_LOG"; then return 1; fi
+  grep -q ' fetch ' "$GIT_LOG"
+  grep -q ' push ' "$GIT_LOG"
+}
+
+@test "before sync still probes the remote when the profile is clean" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  setup_git_logger
+  export GIT_LOG="$BATS_TEST_TMPDIR/git.log"
+  : >"$GIT_LOG"
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"up to date with origin/main"* ]]
+  grep -q ' ls-remote ' "$GIT_LOG"
+  if grep -q ' fetch ' "$GIT_LOG"; then return 1; fi
+  if grep -q ' push ' "$GIT_LOG"; then return 1; fi
 }

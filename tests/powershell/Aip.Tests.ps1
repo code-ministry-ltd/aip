@@ -93,7 +93,7 @@ AfterEach {
 }
 
 It 'reports the embedded version and rejects extra arguments' {
-    aip version | Should -Be 'aip 0.2.0'
+    aip version | Should -Be 'aip 0.3.0'
     $global:LASTEXITCODE | Should -Be 0
     aip version extra *> $null
     $global:LASTEXITCODE | Should -Not -Be 0
@@ -1776,30 +1776,34 @@ Describe 'installer' {
     'keep' | Set-Content -LiteralPath $profilePath
     $env:_AIP_INSTALL_ROOT = $installRoot
     $env:_AIP_SHELL_PROFILE = $profilePath
+    $aipSource = Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Raw
+    $current = [regex]::Match($aipSource, "\`$script:AipVersion = '([^']+)'").Groups[1].Value
+    $parts = $current.Split('.')
+    $newer = '{0}.{1}.{2}' -f $parts[0], $parts[1], ([int]$parts[2] + 1)
     try {
         $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.2.0'
-        $output | Should -Match 'Installed aip 0\.2\.0\.'
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be $current
+        $output | Should -Match ([regex]::Escape("Installed aip $current."))
 
         $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        $output | Should -Match 'aip 0\.2\.0 is already installed'
+        $output | Should -Match ([regex]::Escape("aip $current is already installed"))
 
         $pkgCopy = Join-Path $TestDrive 'pkg'
         New-Item -ItemType Directory -Path $pkgCopy | Out-Null
         $aipCopy = Join-Path $pkgCopy 'aip.ps1'
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Destination $aipCopy
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'install.ps1') -Destination (Join-Path $pkgCopy 'install.ps1')
-        $pattern = [regex]::Escape("`$script:AipVersion = '0.2.0'")
-        $replacement = "`$script:AipVersion = '0.3.0'"
+        $pattern = [regex]::Escape("`$script:AipVersion = '$current'")
+        $replacement = "`$script:AipVersion = '$newer'"
         $content = (Get-Content -LiteralPath $aipCopy -Raw) -replace $pattern, $replacement
         Set-Content -LiteralPath $aipCopy -Value $content -Encoding utf8NoBOM
 
         $output = (& (Join-Path $pkgCopy 'install.ps1') 2>&1) | Out-String
         $LASTEXITCODE | Should -Be 0
-        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be '0.3.0'
-        $output | Should -Match 'Updated aip from 0\.2\.0 to 0\.3\.0\.'
+        (Get-Content -LiteralPath (Join-Path $installRoot 'VERSION') -Raw).Trim() | Should -Be $newer
+        $output | Should -Match ([regex]::Escape("Updated aip from $current to $newer."))
     }
     finally {
         $env:_AIP_INSTALL_ROOT = $null

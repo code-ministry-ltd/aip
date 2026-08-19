@@ -43,28 +43,32 @@ setup() {
 }
 
 @test "the POSIX installer stamps VERSION and reports install, update, and no-op" {
+  local current newer
+  current=$(sed -n "s/^_AIP_VERSION='\(.*\)'$/\1/p" "$BATS_TEST_DIRNAME/../../aip.sh" | head -n 1)
+  newer=$(printf '%s\n' "$current" | awk -F. '{ print $1 "." $2 "." ($3 + 1) }')
+
   run bash "$BATS_TEST_DIRNAME/../../install.sh"
   [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_INSTALL_ROOT/VERSION")" = '0.2.0' ]
-  [[ "$output" == *'Installed aip 0.2.0'* ]]
+  [ "$(cat "$_AIP_INSTALL_ROOT/VERSION")" = "$current" ]
+  [[ "$output" == *"Installed aip $current"* ]]
 
   # Reinstall the same version: a no-op report, no duplicate profile block.
   run bash "$BATS_TEST_DIRNAME/../../install.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" == *'aip 0.2.0 is already installed'* ]]
+  [[ "$output" == *"aip $current is already installed"* ]]
   [ "$(grep -c '^# >>> aip >>>$' "$_AIP_SHELL_PROFILE")" -eq 1 ]
 
   # Simulate a newer published version by running an installer copy whose
   # source_file points at a bumped aip.sh.
   local bumped="$BATS_TEST_TMPDIR/newer.sh"
   local wrapper="$BATS_TEST_TMPDIR/inst.sh"
-  sed "s/^_AIP_VERSION='0.2.0'$/_AIP_VERSION='0.3.0'/" "$BATS_TEST_DIRNAME/../../aip.sh" >"$bumped"
+  sed "s/^_AIP_VERSION='$current'$/_AIP_VERSION='$newer'/" "$BATS_TEST_DIRNAME/../../aip.sh" >"$bumped"
   sed "s|^source_file=.*$|source_file=$bumped|" "$BATS_TEST_DIRNAME/../../install.sh" >"$wrapper"
   chmod +x "$wrapper"
   run bash "$wrapper"
   [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_INSTALL_ROOT/VERSION")" = '0.3.0' ]
-  [[ "$output" == *'Updated aip from 0.2.0 to 0.3.0'* ]]
+  [ "$(cat "$_AIP_INSTALL_ROOT/VERSION")" = "$newer" ]
+  [[ "$output" == *"Updated aip from $current to $newer"* ]]
 }
 
 @test "the macOS Bash install preserves an existing effective login profile" {
