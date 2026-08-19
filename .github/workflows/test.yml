@@ -29,6 +29,10 @@ jobs:
           cache: npm
       - name: Install test dependencies
         run: npm ci
+      - name: Build the picker bundle
+        run: npm run build
+      - name: Run Node unit tests
+        run: npm run test:node
       - name: Run Bats suite
         run: |
           mkdir -p test-results

@@ -1,3 +1,4 @@
 node_modules/
 test-results/
 .DS_Store
+bin/aip-picker.js
