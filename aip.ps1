@@ -5,6 +5,9 @@ if ($PSVersionTable.PSVersion -lt [version]'7.3') { throw 'aip requires PowerShe
 if (-not (Get-Variable -Name AipProfileRoot -Scope Script -ErrorAction SilentlyContinue)) {
     $script:AipProfileRoot = Join-Path $HOME 'agent-profiles'
 }
+if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:AipImportHome = $HOME
+}
 $script:AipCommandStatus = 0
 $script:AipVersion = '0.3.0'
 $script:AipSpinnerPowerShell = $null
@@ -2200,7 +2203,346 @@ function Invoke-AipRemote {
     }
 }
 
-function Invoke-AipHelp {
+function Get-AipImportHarnessRoot {
+    param([Parameter(Mandatory)][string]$Harness)
+    switch ($Harness) {
+        'pi' { return Join-Path $script:AipImportHome '.pi/agent' }
+        'claude' { return Join-Path $script:AipImportHome '.claude' }
+        'codex' { return Join-Path $script:AipImportHome '.codex' }
+        'opencode' { return Join-Path $script:AipImportHome '.config/opencode' }
+        default { return $null }
+    }
+}
+
+function Write-AipImportUsage {
+    # Prints usage without clobbering AipLastError: the specific error (e.g.
+    # 'no profiles selected') is what tests and users need to see.
+    [Console]::Error.WriteLine('aip: usage: aip import HARNESS [FILE...] [--profile NAME[,NAME...]] [--all-profiles] [--force] [--skip-existing] [--dry-run]')
+    $script:AipCommandStatus = 2
+}
+
+function Test-AipImportRelPath {
+    param([AllowEmptyString()][string]$Rel)
+    if ([string]::IsNullOrEmpty($Rel)) { return $false }
+    if ($Rel.StartsWith('/') -or $Rel.StartsWith('\') -or $Rel.EndsWith('/') -or $Rel.EndsWith('\')) { return $false }
+    foreach ($part in $Rel.Split('/')) {
+        if ($part -eq '' -or $part -eq '.' -or $part -eq '..') { return $false }
+    }
+    return $true
+}
+
+function Test-AipImportProfile {
+    param([Parameter(Mandatory)][string]$Name)
+    if (-not (Test-AipProfileName $Name)) { Write-AipError "invalid profile name '$Name'"; $script:AipCommandStatus = 2; return $false }
+    $item = Get-Item -LiteralPath (Get-AipProfilePath $Name) -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item -isnot [IO.DirectoryInfo] -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        Write-AipError "profile '$Name' does not exist"
+        $script:AipCommandStatus = 2
+        return $false
+    }
+    return $true
+}
+
+function Test-AipImportManagedLink {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $null -eq $item.LinkType) { return $false }
+    if ($item.LinkType -ne 'SymbolicLink') { return $false }
+    $target = [string]$item.Target
+    return ($target -eq '../AGENTS.md') -or ($target -eq '../skills')
+}
+
+function Copy-AipImportFile {
+    # Sets $script:AipImportStatus: 0 copied, 3 skipped, 1 error, 2 abort.
+    # Sets $script:AipImportOverwrite on a/n. Writes dry-run lines via Write-Output.
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Dest,
+        [Parameter(Mandatory)][ValidateSet('ask', 'force', 'skip')][string]$Overwrite,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Rel,
+        [Parameter(Mandatory)][int]$DryRun
+    )
+    if ($DryRun -eq 1) {
+        if (Test-Path -LiteralPath $Dest) { Write-Output "copy $Rel -> $Name/$Rel (exists)" }
+        else { Write-Output "copy $Rel -> $Name/$Rel" }
+        $script:AipImportStatus = 0
+        return
+    }
+    $destItem = Get-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+    if ($null -ne $destItem) {
+        if (Test-AipImportManagedLink -LiteralPath $Dest) {
+            Write-AipError "refusing to overwrite the profile link $Name/$Rel"
+            $script:AipImportStatus = 1
+            return
+        }
+        $doOverwrite = $false
+        switch ($Overwrite) {
+            'force' { $doOverwrite = $true }
+            'skip' { $doOverwrite = $false }
+            default {
+                while ($true) {
+                    [Console]::Error.Write("aip: $Name/$Rel exists: [o]verwrite [s]kip [a]ll [n]one [q]uit: ")
+                    $line = [Console]::In.ReadLine()
+                    if ($null -eq $line) { break }
+                    $answer = $line.Trim()
+                    if ($answer -in @('o', 'O')) { $doOverwrite = $true; break }
+                    if ($answer -in @('s', 'S')) { $doOverwrite = $false; break }
+                    if ($answer -in @('a', 'A')) { $doOverwrite = $true; $script:AipImportOverwrite = 'force'; break }
+                    if ($answer -in @('n', 'N')) { $doOverwrite = $false; $script:AipImportOverwrite = 'skip'; break }
+                    if ($answer -in @('q', 'Q')) { $script:AipImportStatus = 2; return }
+                }
+            }
+        }
+        if (-not $doOverwrite) { $script:AipImportStatus = 3; return }
+    }
+    $parent = Split-Path -Parent $Dest
+    New-Item -ItemType Directory -Path $parent -Force -ErrorAction SilentlyContinue | Out-Null
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        Write-AipError "could not create $parent"
+        $script:AipImportStatus = 1
+        return
+    }
+    $destItem = Get-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+    if ($null -ne $destItem -and $null -ne $destItem.LinkType) {
+        Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+    }
+    try {
+        Copy-Item -LiteralPath $Source -Destination $Dest -Force -ErrorAction Stop
+        if (-not $IsWindows) {
+            $mode = [IO.File]::GetUnixFileMode($Source)
+            [IO.File]::SetUnixFileMode($Dest, $mode)
+        }
+    }
+    catch {
+        Write-AipError "could not copy ${Rel}: $($_.Exception.Message)"
+        $script:AipImportStatus = 1
+        return
+    }
+    $script:AipImportStatus = 0
+}
+
+function Invoke-AipImportCopy {
+    # Writes the summary (and dry-run lines) via Write-Output; sets $script:AipCommandStatus on error.
+    param(
+        [Parameter(Mandatory)][string]$Harness,
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][int]$DryRun,
+        [Parameter(Mandatory)][string[]]$FileList,
+        [Parameter(Mandatory)][string[]]$ProfileNames,
+        [Parameter(Mandatory)][int]$Force,
+        [Parameter(Mandatory)][int]$SkipExisting
+    )
+    if ($Force -eq 1) { $script:AipImportOverwrite = 'force' }
+    elseif ($SkipExisting -eq 1) { $script:AipImportOverwrite = 'skip' }
+    else { $script:AipImportOverwrite = 'ask' }
+    $copied = 0; $skipped = 0; $errors = 0; $aborted = $false
+    foreach ($name in $ProfileNames) {
+        $profilePath = Get-AipProfilePath $name
+        foreach ($rel in $FileList) {
+            $dest = Join-Path $profilePath (Join-Path $Harness $rel)
+            $overwrite = if ($script:AipImportOverwrite -eq 'ask') { 'ask' } else { $script:AipImportOverwrite }
+            Copy-AipImportFile -Source (Join-Path $SourceRoot $rel) -Dest $dest -Overwrite $overwrite -Name $name -Rel $rel -DryRun $DryRun
+            switch ($script:AipImportStatus) {
+                0 { $copied++ }
+                3 { $skipped++ }
+                1 { $errors = 1 }
+                2 { $aborted = $true }
+            }
+            if ($aborted) { break }
+        }
+        if ($aborted) { break }
+    }
+    if ($DryRun -eq 0) {
+        if ($aborted) {
+            Write-AipError "import cancelled; $copied file(s) copied so far"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if ($copied -gt 0) {
+            Write-Output "aip: imported $copied file(s) into $($ProfileNames.Count) profile(s)"
+            if ($skipped -gt 0) { Write-Output "aip: $skipped existing file(s) skipped" }
+        }
+        else { Write-Output 'aip: no files were copied' }
+    }
+    if ($errors -eq 1) { $script:AipCommandStatus = 1 }
+}
+
+function Test-AipImportTrackedWarning {
+    param(
+        [Parameter(Mandatory)][string]$Harness,
+        [Parameter(Mandatory)][string[]]$FileList,
+        [Parameter(Mandatory)][string[]]$ProfileNames
+    )
+    if (-not (Test-Path -LiteralPath (Join-Path $script:AipProfileRoot '.git') -PathType Container)) { return }
+    $first = $true
+    foreach ($name in $ProfileNames) {
+        foreach ($rel in $FileList) {
+            $repoRel = "$name/$Harness/$rel"
+            Invoke-AipGit -C $script:AipProfileRoot check-ignore -q -- $repoRel 2> $null
+            if ($global:LASTEXITCODE -ne 0) {
+                if ($first) {
+                    # Informational only: must not set AipCommandStatus (Write-AipError does).
+                    [Console]::Error.WriteLine('aip: the next sync checkpoint may track these imported files (not covered by the profile .gitignore):')
+                    $script:AipLastError = 'the next sync checkpoint may track these imported files (not covered by the profile .gitignore):'
+                    $first = $false
+                }
+                [Console]::Error.WriteLine("  $repoRel")
+            }
+        }
+    }
+}
+
+function Invoke-AipImportInteractive {
+    # Runs the bundled Node picker and fills the file/profile lists from its NUL records.
+    param(
+        [Parameter(Mandatory)][string]$Harness,
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string[]]$ProfileNames,
+        [AllowEmptyString()][string]$ProfilesOpt,
+        [Parameter(Mandatory)][int]$AllProfiles,
+        [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Files,
+        [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Profiles
+    )
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $node) { Write-AipError 'interactive import requires Node.js (node) on PATH'; return 1 }
+    $picker = $env:AIP_PICKER
+    if ([string]::IsNullOrEmpty($picker)) {
+        $picker = Join-Path $PSScriptRoot 'bin/aip-picker.js'
+        if (-not (Test-Path -LiteralPath $picker)) { $picker = Join-Path (Join-Path $HOME '.local/share/aip') 'bin/aip-picker.js' }
+    }
+    if (-not (Test-Path -LiteralPath $picker)) { Write-AipError "the interactive picker was not found at: $picker"; return 1 }
+    $pickerArgs = @()
+    if ($AllProfiles -eq 1) { $pickerArgs += '--all-profiles' }
+    elseif (-not [string]::IsNullOrEmpty($ProfilesOpt)) { $pickerArgs += '--profiles'; $pickerArgs += $ProfilesOpt }
+    $pickerArgs += $ProfileNames
+    # Run node with raw stdout capture: PowerShell's '1>' redirect re-encodes native
+    # output as text and strips the NUL bytes the picker uses as record separators.
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $node.Path
+    $psi.ArgumentList.Add($picker)
+    $psi.ArgumentList.Add($Harness)
+    $psi.ArgumentList.Add($SourceRoot)
+    foreach ($a in $pickerArgs) { $psi.ArgumentList.Add([string]$a) }
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    try {
+        $process = [System.Diagnostics.Process]::Start($psi)
+        $recordsText = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+        $status = $process.ExitCode
+    }
+    catch {
+        Write-AipError "could not start the interactive picker: $($_.Exception.Message)"
+        return 1
+    }
+    if ($status -ne 0) {
+        if ($status -eq 130) { Write-AipError 'import cancelled' } else { Write-AipError 'the interactive picker failed' }
+        return 1
+    }
+    $records = $recordsText.Split([char]0)
+    $Files.Clear(); $Profiles.Clear()
+    for ($i = 0; $i -lt $records.Length; $i++) {
+        if ($records[$i] -eq 'file' -and $i + 1 -lt $records.Length) {
+            $i++
+            $rel = $records[$i]
+            if ((Test-AipImportRelPath $rel) -and (Test-Path -LiteralPath (Join-Path $SourceRoot $rel) -PathType Leaf)) { $Files.Add($rel) }
+        }
+        elseif ($records[$i] -eq 'profile' -and $i + 1 -lt $records.Length) {
+            $i++
+            if (Test-AipImportProfile $records[$i]) { $Profiles.Add($records[$i]) } else { return 2 }
+        }
+    }
+    return 0
+}
+
+function Invoke-AipImport {
+    param([object[]]$Arguments)
+    $harness = $null
+    $profilesOpt = $null
+    $allProfiles = $false
+    $force = $false
+    $skipExisting = $false
+    $dryRun = $false
+    $fileList = [System.Collections.Generic.List[string]]::new()
+    $i = 0
+    while ($i -lt $Arguments.Count) {
+        $arg = [string]$Arguments[$i]
+        switch ($arg) {
+            '--profile' {
+                if ($i + 1 -ge $Arguments.Count -or $null -ne $profilesOpt) { Write-AipImportUsage; return }
+                # PowerShell parses 'work,suit' as an array argument; rejoin with the comma.
+                $profilesOpt = ($Arguments[$i + 1] -join ',')
+                $i++
+            }
+            '--all-profiles' { $allProfiles = $true }
+            '--force' { $force = $true }
+            '--skip-existing' { $skipExisting = $true }
+            '--dry-run' { $dryRun = $true }
+            '--' {
+                $i++
+                while ($i -lt $Arguments.Count) { $fileList.Add([string]$Arguments[$i]); $i++ }
+            }
+            default {
+                if ($arg.StartsWith('-') -and $arg -ne '-') {
+                    Write-AipError "unknown import option '$arg'"
+                    Write-AipImportUsage
+                    return
+                }
+                if ($null -eq $harness) { $harness = $arg } else { $fileList.Add($arg) }
+            }
+        }
+        $i++
+    }
+    if ($null -eq $harness) { Write-AipError 'no harness specified; expected pi, claude, codex, or opencode'; Write-AipImportUsage; return }
+    $sourceRoot = Get-AipImportHarnessRoot $harness
+    if ($null -eq $sourceRoot) {
+        Write-AipError "unknown harness '$harness'; expected pi, claude, codex, or opencode"
+        $script:AipCommandStatus = 2
+        return
+    }
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
+        Write-AipError "no $harness configuration found at: $sourceRoot"
+        return
+    }
+    if ($force -and $skipExisting) { Write-AipError '--force and --skip-existing conflict'; $script:AipCommandStatus = 2; return }
+    if ($allProfiles -and $null -ne $profilesOpt) { Write-AipError '--profile and --all-profiles conflict'; $script:AipCommandStatus = 2; return }
+    $profiles = [System.Collections.Generic.List[string]]::new()
+    if ($fileList.Count -eq 0) {
+        $interactive = (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
+        if ($interactive) {
+            $allNames = @(Get-AipProfileNames)
+            if ($null -ne $profilesOpt) { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return } } }
+            $pickerNames = if ($null -ne $profilesOpt) { @($profilesOpt.Split(',')) } else { $allNames }
+            if ($pickerNames.Count -eq 0) { Write-AipError 'no profiles found; create a profile with aip create first'; return }
+            $status = Invoke-AipImportInteractive -Harness $harness -SourceRoot $sourceRoot -ProfileNames $pickerNames -ProfilesOpt $profilesOpt -AllProfiles $allProfiles -Files $fileList -Profiles $profiles
+            if ($status -ne 0) { return }
+            if ($fileList.Count -eq 0) { Write-AipError 'no files selected; nothing to copy'; return }
+        }
+        else {
+            Write-AipError 'no files given and no terminal available; pass FILE... or run aip import in a terminal'
+            Write-AipImportUsage
+            return
+        }
+    }
+    else {
+        if (-not $allProfiles -and $null -eq $profilesOpt) {
+            Write-AipError 'no profiles selected; pass --profile NAME or --all-profiles'
+            Write-AipImportUsage
+            return
+        }
+        foreach ($rel in $fileList) {
+            if (-not (Test-AipImportRelPath $rel)) { Write-AipError "invalid file path: $rel"; return }
+            if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $rel) -PathType Leaf)) { Write-AipError "no such file in the $harness configuration: $rel"; return }
+        }
+        if ($allProfiles) { foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) } }
+        else { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return }; $profiles.Add($n) } }
+    }
+    if ($profiles.Count -eq 0) { Write-AipError 'no profiles selected; nothing to do'; return }
+    Invoke-AipImportCopy -Harness $harness -SourceRoot $sourceRoot -DryRun $dryRun -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() -Force $force -SkipExisting $skipExisting
+    if ($script:AipCommandStatus -ne 0) { return }
+    if (-not $dryRun) { Test-AipImportTrackedWarning -Harness $harness -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() }
+}function Invoke-AipHelp {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip help'; $script:AipCommandStatus = 2; return }
     @'
@@ -2225,6 +2567,7 @@ Commands:
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
+  aip import HARNESS [FILE...]      Copy config/skills from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Update the aip npm package
@@ -2274,6 +2617,7 @@ function aip {
             '--help' { Invoke-AipHelp @() }
             '-h' { Invoke-AipHelp @() }
             'remote' { Invoke-AipWithoutGitRouting { Invoke-AipRemote $rest } }
+            'import' { Invoke-AipWithoutGitRouting { Invoke-AipImport $rest } }
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSyncCommand $rest }
             'use' { Invoke-AipUse $rest }
