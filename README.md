@@ -180,6 +180,8 @@ aip checkpoints before every harness launch and after every harness exit, and al
 - if the remote is unreachable, it **warns and still launches** from your committed local profile — the next invocation retries;
 - if the remote contains a conflict, aip **blocks the launch** and tells you exactly which profile and paths conflict. It never auto-resolves.
 
+While a sync is talking to the remote, a small spinner (`|`, `/`, `-`, `\`) animates on terminals so you can see it working; it is cleared before the result line. The spinner only runs on a terminal — set `AIP_ANIMATION=always` to force it when output is redirected, or `AIP_ANIMATION=off` to disable it entirely.
+
 Because all profiles share one repository, `aip sync` has no profile argument — it syncs everything. (Passing a profile name is a hard error with a hint, so a muscle-memory `aip sync work` fails loudly.)
 
 To resolve a blocked conflict, work in the profiles repository directly:

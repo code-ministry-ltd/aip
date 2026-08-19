@@ -4,6 +4,7 @@
 _AIP_VERSION='0.3.0'
 
 _aip_error() {
+  _aip_spinner_stop
   printf 'aip: %s\n' "$*" >&2
 }
 
@@ -1572,6 +1573,7 @@ _aip_release_lock() {
 }
 
 _aip_sync_cleanup() {
+  _aip_spinner_stop
   if [ -n "${_AIP_TEMP_PATHS-}" ] && [ -f "$_AIP_TEMP_PATHS" ]; then command rm -f "$_AIP_TEMP_PATHS"; fi
   if [ -n "${_AIP_GIT_OUTPUT-}" ] && [ -f "$_AIP_GIT_OUTPUT" ]; then command rm -f "$_AIP_GIT_OUTPUT"; fi
   _aip_release_lock
@@ -1788,6 +1790,35 @@ _aip_require_rebase_preserves_untracked() {
   command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
 }
 
+_aip_spinner_start() {
+  _AIP_SPIN_PID=
+  case ${AIP_ANIMATION-} in
+    off) return 0 ;;
+    always) ;;
+    *) [ -t 1 ] || return 0 ;;
+  esac
+  (
+    while :; do
+      printf '\r| syncing '; sleep 0.1
+      printf '\r/ syncing '; sleep 0.1
+      printf '\r- syncing '; sleep 0.1
+      printf '\r\\ syncing '; sleep 0.1
+    done
+  ) &
+  _AIP_SPIN_PID=$!
+  if [ -n "${_AIP_SPIN_PIDFILE-}" ]; then printf '%s\n' "$_AIP_SPIN_PID" >"$_AIP_SPIN_PIDFILE" || :; fi
+}
+
+_aip_spinner_stop() {
+  if [ -n "${_AIP_SPIN_PID-}" ]; then
+    kill "$_AIP_SPIN_PID" 2>/dev/null || :
+    wait "$_AIP_SPIN_PID" 2>/dev/null || :
+    _AIP_SPIN_PID=
+    [ -t 1 ] && printf '\r\033[K'
+  fi
+  if [ -n "${_AIP_SPIN_PIDFILE-}" ] && [ -e "$_AIP_SPIN_PIDFILE" ]; then command rm -f "$_AIP_SPIN_PIDFILE"; fi
+}
+
 _aip_sync() (
   local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
@@ -1827,6 +1858,7 @@ _aip_sync() (
     _aip_error 'remote sync unavailable because the configured SSH variant cannot be made non-interactive; using the committed local profiles'
     return 0
   fi
+  _aip_spinner_start
   if [ "$mode" = before ] || [ "$mode" = after ]; then
     # Staleness check for harness-triggered syncs: HEAD has not moved since
     # the pre-checkpoint SHA, it matches the last stored remote-tracking ref,
@@ -1840,6 +1872,7 @@ _aip_sync() (
       stored_sha=$(_aip_git -C "$root" rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>/dev/null) || stored_sha=
       remote_sha=$(GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" ls-remote "$remote" "$merge_ref" 2>/dev/null | command awk 'NR == 1 { print $1; exit }')
       if [ -n "$remote_sha" ] && [ "$remote_sha" = "$stored_sha" ] && [ "$cur_sha" = "$stored_sha" ]; then
+        _aip_spinner_stop
         printf 'Profiles up to date with %s.\n' "$upstream"
         return 0
       fi
@@ -1873,6 +1906,7 @@ _aip_sync() (
     _aip_error 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
     return 0
   fi
+  _aip_spinner_stop
   printf 'Profiles synced with %s.\n' "$upstream"
 )
 
