@@ -2072,7 +2072,7 @@ Describe 'import' {
         aip import pi AGENTS.md --all-profiles --force *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'refusing to overwrite the profile link work/AGENTS.md'
-        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/AGENTS.md')).Target | Should -Be '../AGENTS.md'
+        ((Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/AGENTS.md')).Target -replace '\\', '/') | Should -Be '../AGENTS.md'
     }
 
     It 'replaces a non-managed symlink destination instead of writing through' {
