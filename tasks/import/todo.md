@@ -1,6 +1,6 @@
 # Tasks — `aip import`: copy harness config/skills into profiles
 
-Status: **IN PROGRESS** — T1 done (4332224), T2 next
+Status: **COMPLETE** — T1 (4332224), T2 (36aaff8), T3 (55b4da3), T4 (aedd7ed). POSIX 169/169, Pester 129/129, node --test 6/6 green.
 Spec: `tasks/import/spec.md` (approved) · Plan: `tasks/import/plan.md` (approved)
 
 Definition of done (every task): the listed suite(s) green; `aip.sh` and `aip.ps1`
@@ -39,11 +39,13 @@ output), `bin/aip-picker.js` esbuild bundle; `package.json` gains esbuild devDep
 `node "$picker" ...`, parses NUL records, delegates to the T1 core; `$AIP_PICKER` override.
 `node --test` for the state machine; bats stub-contract test.
 
-- [ ] State machine actions (enter/up/toggle/done) covered by `node --test`
-- [ ] Bundle builds (`npm run build`); runs on a real TTY (manual smoke)
-- [ ] Shell parses stub-picker NUL output and copies exactly those files/profiles
-- [ ] `node --test` in CI; Bats suite green; `npm pack` includes the bundle
-- [ ] Full `npm run test:posix` green
+- [x] State machine actions (enter/up/toggle/done) covered by `node --test`
+- [x] Bundle builds (`npm run build`); runs on a real TTY (manual smoke)
+- [x] Shell parses stub-picker NUL output and copies exactly those files/profiles
+- [x] `node --test` in CI; Bats suite green; `npm pack` includes the bundle
+- [x] Full `npm run test:posix` green
+
+**DONE** (36aaff8; node 6/6, POSIX 169/169).
 
 Verify: `env -u PI_CODING_AGENT_DIR -u AIP_PROFILE npm run test:posix && node --test tests/node/`
 Depends: T1 · Files: `src/*.js`, `bin/aip-picker.js`, `package.json`, `package-lock.json`, `tests/node/picker-state.test.js` (new), `tests/posix/import.bats` · Size M
@@ -55,10 +57,12 @@ Depends: T1 · Files: `src/*.js`, `bin/aip-picker.js`, `package.json`, `package-
 refusal, `Copy-Item` with attributes, check-ignore warning) + interactive delegation to the
 same bundled picker (NUL-split output). Pester tests mirroring the T1 matrix.
 
-- [ ] Copy/all-profiles/subset/dry-run/force/skip/prompt matrix in Pester
-- [ ] Managed-link refusal; env-var decoy sources the default root
-- [ ] Interactive path invokes the picker and consumes NUL records (stub)
-- [ ] Full Pester suite green locally and on CI
+- [x] Copy/all-profiles/subset/dry-run/force/skip/prompt matrix in Pester
+- [x] Managed-link refusal; env-var decoy sources the default root
+- [x] Interactive path invokes the picker and consumes NUL records (stub)
+- [x] Full Pester suite green locally and on CI
+
+**DONE** (55b4da3; Pester 129/129).
 
 Verify: `pwsh -NoProfile -File tests/run-powershell.ps1` (local pwsh; unset leaking vars)
 Depends: T2 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size L
@@ -68,9 +72,11 @@ Depends: T2 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size L
 `install.sh`/`install.ps1` copy `bin/aip-picker.js` to `$install_root/bin/`; README
 "Importing existing config" section; `readme-review` pass; full suites + manual TTY smoke.
 
-- [ ] install scripts ship the picker; fresh install has a working `aip import pi`
-- [ ] README documents interactive + flag modes, source roots, security notes
-- [ ] Full Bats + Pester + `node --test` green
+- [x] install scripts ship the picker; fresh install has a working `aip import pi`
+- [x] README documents interactive + flag modes, source roots, security notes
+- [x] Full Bats + Pester + `node --test` green
+
+**DONE** (aedd7ed).
 
 Verify: full suites; manual install + import smoke
 Depends: T3 · Files: `install.sh`, `install.ps1`, `README.md`, `.github/workflows/*.yml` · Size S
