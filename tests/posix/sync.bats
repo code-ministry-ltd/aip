@@ -889,3 +889,53 @@ setup_git_logger() {
   if grep -q ' fetch ' "$GIT_LOG"; then return 1; fi
   if grep -q ' push ' "$GIT_LOG"; then return 1; fi
 }
+
+@test "sync output carries no animation when stdout is not a terminal" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+  unset AIP_ANIMATION _AIP_SPIN_PIDFILE
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  if printf '%s' "$output" | grep -q $'\r'; then return 1; fi
+  if printf '%s' "$output" | grep -q 'syncing'; then return 1; fi
+}
+
+@test "a forced sync animation stops cleanly after the sync" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+  export AIP_ANIMATION=always
+  export _AIP_SPIN_PIDFILE="$BATS_TEST_TMPDIR/spin.pid"
+  local pid
+
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Profiles synced"* ]]
+  [[ "$output" == *' syncing '* ]]
+  [ ! -e "$_AIP_SPIN_PIDFILE" ]
+  if [ -s "$_AIP_SPIN_PIDFILE" ]; then pid=$(cat "$_AIP_SPIN_PIDFILE"); fi
+  if [ -n "${pid-}" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+}
+
+@test "an error during a forced-animation sync stops the spinner" {
+  make_upstream
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  printf 'local edit\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+  export AIP_ANIMATION=always
+  export _AIP_SPIN_PIDFILE="$BATS_TEST_TMPDIR/spin.pid"
+  local pid
+
+  git -C "$_AIP_PROFILE_ROOT" remote set-url origin "$BATS_TEST_TMPDIR/missing.git"
+  run _aip_sync before
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"remote sync unavailable"* ]]
+  [ ! -e "$_AIP_SPIN_PIDFILE" ]
+  if [ -s "$_AIP_SPIN_PIDFILE" ]; then pid=$(cat "$_AIP_SPIN_PIDFILE"); fi
+  if [ -n "${pid-}" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+}
