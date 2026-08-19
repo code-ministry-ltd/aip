@@ -2,6 +2,12 @@
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
 _AIP_VERSION='0.3.0'
+# Directory containing aip.sh at dot-source time; used to locate the interactive
+# picker (bin/aip-picker.js) when it ships alongside the script.
+case ${ZSH_VERSION-} in
+  '') _AIP_PICKER_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) 2>/dev/null || _AIP_PICKER_DIR= ;;
+  *) _AIP_PICKER_DIR=${0:A:h} ;;
+esac
 
 _aip_error() {
   _aip_spinner_stop
@@ -1141,7 +1147,7 @@ _aip_is_command() {
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = remote ] ||
-    [ "${1-}" = run ] ||
+    [ "${1-}" = import ] || [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
 }
@@ -2036,6 +2042,314 @@ _aip_run() {
   _aip_run_harness "$explicit_supplied" "$explicit" "$harness" "$@"
 }
 
+_aip_import_harness_root() {
+  case ${1-} in
+    pi) printf '%s\n' "${HOME}/.pi/agent" ;;
+    claude) printf '%s\n' "${HOME}/.claude" ;;
+    codex) printf '%s\n' "${HOME}/.codex" ;;
+    opencode) printf '%s\n' "${HOME}/.config/opencode" ;;
+    *) return 1 ;;
+  esac
+}
+
+_aip_import_usage() {
+  _aip_error 'usage: aip import HARNESS [FILE...] [--profile NAME[,NAME...]] [--all-profiles] [--force] [--skip-existing] [--dry-run]'
+}
+
+_aip_import_validate_rel() {
+  local rel=${1-}
+  [ -n "$rel" ] || return 1
+  case $rel in
+    /*|*'/'|.|..|*/..|../*|*/../*) return 1 ;;
+  esac
+  return 0
+}
+
+_aip_import_require_profile() {
+  local name=$1 profile_path
+  _aip_validate_name "$name" || { _aip_error "invalid profile name '$name'"; return 2; }
+  profile_path=$(_aip_profile_path "$name")
+  [ -d "$profile_path" ] && [ ! -L "$profile_path" ] || {
+    _aip_error "profile '$name' does not exist"
+    return 2
+  }
+}
+
+_aip_import_write_profiles() {
+  local list=$1 file=$2 name remaining
+  remaining=$list
+  while [ -n "$remaining" ]; do
+    name=${remaining%%,*}
+    case $remaining in
+      *',' ) remaining='' ;;
+      *','*) remaining=${remaining#*,} ;;
+      *) remaining='' ;;
+    esac
+    _aip_import_require_profile "$name" || return 2
+    printf '%s\n' "$name" >>"$file"
+  done
+}
+
+_aip_import_is_managed_link() {
+  local target
+  [ -L "$1" ] || return 1
+  target=$(command readlink "$1" 2>/dev/null) || return 1
+  [ "$target" = ../AGENTS.md ] || [ "$target" = ../skills ] || return 1
+  return 0
+}
+
+_aip_import_copy_one() {
+  # $1 source file, $2 dest, $3 overwrite (ask|force|skip), $4 profile, $5 rel, $6 dry-run
+  # sets _AIP_IMPORT_OVERWRITE on 'a'/'n'; returns 0 copied, 3 skipped, 1 error, 2 abort
+  local source=$1 dest=$2 overwrite=$3 name=$4 rel=$5 dry_run=$6
+  local overwrite_this=0 answer parent
+  if [ "$dry_run" -eq 1 ]; then
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+      printf 'copy %s -> %s/%s (exists)\n' "$rel" "$name" "$rel"
+    else
+      printf 'copy %s -> %s/%s\n' "$rel" "$name" "$rel"
+    fi
+    return 0
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    if _aip_import_is_managed_link "$dest"; then
+      _aip_error "refusing to overwrite the profile link $name/$rel"
+      return 1
+    fi
+    case $overwrite in
+      force) overwrite_this=1 ;;
+      skip) overwrite_this=0 ;;
+      ask)
+        while :; do
+          printf 'aip: %s/%s exists: [o]verwrite [s]kip [a]ll [n]one [q]uit: ' "$name" "$rel" >&2
+          IFS= read -r answer <&3 || { overwrite_this=0; break; }
+          case $answer in
+            o|O) overwrite_this=1; break ;;
+            s|S) overwrite_this=0; break ;;
+            a|A) overwrite_this=1; _AIP_IMPORT_OVERWRITE=force; break ;;
+            n|N) overwrite_this=0; _AIP_IMPORT_OVERWRITE=skip; break ;;
+            q|Q) return 2 ;;
+          esac
+        done
+        ;;
+    esac
+    [ "$overwrite_this" -eq 1 ] || return 3
+  fi
+  parent=${dest%/*}
+  command mkdir -p "$parent" || return 1
+  [ ! -L "$dest" ] || command rm -f "$dest"
+  command cp -p "$source" "$dest" || return 1
+  return 0
+}
+
+_aip_import_run_copy() {
+  # $1 harness, $2 source_root, $3 dry-run, $4 filelist (NUL), $5 profilesfile (newline)
+  # $6 force (0|1), $7 skip_existing (0|1)
+  local harness=$1 source_root=$2 dry_run=$3 filelist=$4 profilesfile=$5 force=$6 skip_existing=$7
+  local name profile_path rel dest overwrite=ask
+  local copied=0 skipped=0 errors=0 aborted=0 profile_count=0
+  if [ "$force" -eq 1 ]; then _AIP_IMPORT_OVERWRITE=force
+  elif [ "$skip_existing" -eq 1 ]; then _AIP_IMPORT_OVERWRITE=skip
+  else _AIP_IMPORT_OVERWRITE=ask
+  fi
+  exec 3<&0 || return 1
+  while IFS= read -r name || [ -n "$name" ]; do
+    [ -n "$name" ] || continue
+    profile_count=$((profile_count + 1))
+    profile_path=$(_aip_profile_path "$name")
+    while IFS= read -r -d '' rel; do
+      [ -n "$rel" ] || continue
+      dest=$profile_path/$harness/$rel
+      case $_AIP_IMPORT_OVERWRITE in
+        force) overwrite=force ;;
+        skip) overwrite=skip ;;
+        *) overwrite=ask ;;
+      esac
+      _aip_import_copy_one "$source_root/$rel" "$dest" "$overwrite" "$name" "$rel" "$dry_run"
+      case $? in
+        0) copied=$((copied + 1)) ;;
+        3) skipped=$((skipped + 1)) ;;
+        1) errors=1 ;;
+        2) aborted=1; break 2 ;;
+      esac
+    done <"$filelist"
+  done <"$profilesfile"
+  if [ "$dry_run" -eq 0 ]; then
+    if [ "$aborted" -eq 1 ]; then
+      _aip_error "import cancelled; $copied file(s) copied so far"
+      return 1
+    fi
+    if [ "$copied" -gt 0 ]; then
+      printf 'aip: imported %s file(s) into %s profile(s)\n' "$copied" "$profile_count"
+      [ "$skipped" -eq 0 ] || printf 'aip: %s existing file(s) skipped\n' "$skipped"
+    else
+      printf 'aip: no files were copied\n'
+    fi
+  fi
+  [ "$errors" -eq 0 ] || return 1
+  return 0
+}
+
+_aip_import_warn_tracked() {
+  local harness=$1 filelist=$2 profilesfile=$3 name rel dest first=1
+  [ -d "$_AIP_PROFILE_ROOT/.git" ] || return 0
+  while IFS= read -r name || [ -n "$name" ]; do
+    [ -n "$name" ] || continue
+    while IFS= read -r -d '' rel; do
+      [ -n "$rel" ] || continue
+      dest=$name/$harness/$rel
+      if _aip_git -C "$_AIP_PROFILE_ROOT" check-ignore -q -- "$dest"; then :; else
+        if [ "$first" -eq 1 ]; then
+          _aip_error 'the next sync checkpoint may track these imported files (not covered by the profile .gitignore):'
+          first=0
+        fi
+        printf '  %s\n' "$dest" >&2
+      fi
+    done <"$filelist"
+  done <"$profilesfile"
+  return 0
+}
+
+_aip_import_interactive() {
+  # $1 harness, $2 source_root, $3 filelist (NUL), $4 profilesfile (newline)
+  # $5 profiles_opt (--profile list), $6 all_profiles (0|1)
+  local harness=$1 source_root=$2 filelist=$3 profilesfile=$4 profiles_opt=$5 all_profiles=$6
+  local node picker output status rel name record args
+  node=$(command -v node) || { _aip_error 'interactive import requires Node.js (node) on PATH'; return 1; }
+  picker=${AIP_PICKER:-}
+  if [ -z "$picker" ]; then
+    if [ -n "$_AIP_PICKER_DIR" ]; then picker=$_AIP_PICKER_DIR/bin/aip-picker.js
+    else picker=${XDG_DATA_HOME:-$HOME/.local/share}/aip/bin/aip-picker.js
+    fi
+  fi
+  [ -f "$picker" ] || { _aip_error "the interactive picker was not found at: $picker"; return 1; }
+  if [ "$all_profiles" -eq 1 ]; then
+    args="--all-profiles $(tr '\n' ' ' <"$profilesfile")"
+  elif [ -n "$profiles_opt" ]; then
+    args="--profiles $profiles_opt"
+  else
+    args=$(tr '\n' ' ' <"$profilesfile")
+  fi
+  output=$(command mktemp "${TMPDIR:-/tmp}/aip-picker.XXXXXX") || return 1
+  # shellcheck disable=SC2086
+  node "$picker" "$harness" "$source_root" $args >"$output" 2>/dev/null
+  status=$?
+  [ "$status" -eq 0 ] || {
+    [ "$status" -eq 130 ] && _aip_error 'import cancelled' || _aip_error 'the interactive picker failed'
+    command rm -f "$output"
+    return 1
+  }
+  : >|"$filelist"
+  : >|"$profilesfile"
+  while IFS= read -r -d '' record; do
+    case $record in
+      file)
+        IFS= read -r -d '' rel || break
+        if _aip_import_validate_rel "$rel" && [ -f "$source_root/$rel" ]; then
+          printf '%s\0' "$rel" >>"$filelist"
+        fi
+        ;;
+      profile)
+        IFS= read -r -d '' name || break
+        if _aip_import_require_profile "$name"; then
+          printf '%s\n' "$name" >>"$profilesfile"
+        else
+          command rm -f "$output"
+          return 2
+        fi
+        ;;
+    esac
+  done <"$output"
+  command rm -f "$output"
+  return 0
+}
+
+_aip_import() (
+  _aip_clear_git_routing
+  local harness='' profiles_opt='' all_profiles=0 force=0 skip_existing=0 dry_run=0
+  local arg filelist profilesfile source_root valid rel
+  filelist=$(command mktemp "${TMPDIR:-/tmp}/aip-import-files.XXXXXX") || return 1
+  profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-import-profiles.XXXXXX") || { command rm -f "$filelist"; return 1; }
+  trap 'command rm -f "$filelist" "$profilesfile"' EXIT
+  while [ "$#" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+      --profile)
+        [ "$#" -gt 0 ] && [ -z "$profiles_opt" ] || { _aip_import_usage; return 2; }
+        profiles_opt=$1
+        shift
+        ;;
+      --all-profiles) all_profiles=1 ;;
+      --force) force=1 ;;
+      --skip-existing) skip_existing=1 ;;
+      --dry-run) dry_run=1 ;;
+      --)
+        while [ "$#" -gt 0 ]; do
+          printf '%s\0' "$1" >>"$filelist"
+          shift
+        done
+        ;;
+      -*)
+        _aip_error "unknown import option '$arg'"
+        _aip_import_usage
+        return 2
+        ;;
+      *)
+        if [ -z "$harness" ]; then harness=$arg
+        else printf '%s\0' "$arg" >>"$filelist"
+        fi
+        ;;
+    esac
+  done
+  [ -n "$harness" ] || { _aip_import_usage; return 2; }
+  source_root=$(_aip_import_harness_root "$harness") || {
+    _aip_error "unknown harness '$harness'; expected pi, claude, codex, or opencode"
+    return 2
+  }
+  [ -d "$source_root" ] || { _aip_error "no $harness configuration found at: $source_root"; return 1; }
+  { [ "$force" -eq 1 ] && [ "$skip_existing" -eq 1 ]; } && { _aip_error '--force and --skip-existing conflict'; return 2; }
+  { [ "$all_profiles" -eq 1 ] && [ -n "$profiles_opt" ]; } && { _aip_error '--profile and --all-profiles conflict'; return 2; }
+  if [ ! -s "$filelist" ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+      if [ "$all_profiles" -eq 1 ]; then
+        _aip_list_profile_names >|"$profilesfile"
+      elif [ -n "$profiles_opt" ]; then
+        _aip_import_write_profiles "$profiles_opt" "$profilesfile" || return
+      fi
+      [ -s "$profilesfile" ] || { _aip_error 'no profiles found; create a profile with aip create first'; return 1; }
+      _aip_import_interactive "$harness" "$source_root" "$filelist" "$profilesfile" "$profiles_opt" "$all_profiles" || return
+      [ -s "$filelist" ] || { _aip_error 'no files selected; nothing to copy'; return 1; }
+    else
+      _aip_error 'no files given and no terminal available; pass FILE... or run aip import in a terminal'
+      _aip_import_usage
+      return 2
+    fi
+  else
+    if [ "$all_profiles" -eq 0 ] && [ -z "$profiles_opt" ]; then
+      _aip_error 'no profiles selected; pass --profile NAME or --all-profiles'
+      _aip_import_usage
+      return 2
+    fi
+    valid=1
+    while IFS= read -r -d '' rel; do
+      [ -n "$rel" ] || continue
+      _aip_import_validate_rel "$rel" || { _aip_error "invalid file path: $rel"; valid=0; break; }
+      [ -f "$source_root/$rel" ] || { _aip_error "no such file in the $harness configuration: $rel"; valid=0; break; }
+    done <"$filelist"
+    [ "$valid" -eq 1 ] || return 1
+    if [ "$all_profiles" -eq 1 ]; then
+      _aip_list_profile_names >|"$profilesfile"
+    else
+      _aip_import_write_profiles "$profiles_opt" "$profilesfile" || return
+    fi
+  fi
+  [ -s "$profilesfile" ] || { _aip_error 'no profiles selected; nothing to do'; return 1; }
+  _aip_import_run_copy "$harness" "$source_root" "$dry_run" "$filelist" "$profilesfile" "$force" "$skip_existing" || return
+  [ "$dry_run" -eq 1 ] || _aip_import_warn_tracked "$harness" "$filelist" "$profilesfile"
+  return 0
+)
+
 _aip_help() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip help'; return 2; }
   cat <<'EOF'
@@ -2060,6 +2374,7 @@ Commands:
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
+  aip import HARNESS [FILE...]      Copy config/skills from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Update the aip npm package
@@ -2243,6 +2558,7 @@ aip() {
     --help) _aip_help ;;
     -h) _aip_help ;;
     remote) _aip_remote "$@" ;;
+    import) _aip_import "$@" ;;
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;
