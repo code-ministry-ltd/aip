@@ -14,16 +14,22 @@
     "aip.ps1",
     "install.sh",
     "install.ps1",
-    "README.md"
+    "README.md",
+    "bin/aip-picker.js"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "test:posix": "bats tests/posix"
+    "test:posix": "bats tests/posix",
+    "build": "esbuild src/picker.mjs --bundle --platform=node --format=cjs --outfile=bin/aip-picker.js",
+    "prepack": "npm run build",
+    "test:node": "node --test \"tests/node/*.test.mjs\""
   },
   "devDependencies": {
-    "bats": "1.13.0"
+    "@clack/prompts": "^1.7.0",
+    "bats": "1.13.0",
+    "esbuild": "^0.28.2"
   },
   "publishConfig": {
     "access": "public"
