@@ -40,6 +40,11 @@ printf 'aip will update:  %s\n' "$shell_profile"
 mkdir -p "$install_root" "$(dirname -- "$shell_profile")"
 cp "$source_file" "$installed_file"
 chmod 0644 "$installed_file"
+if [ -f "$script_directory/bin/aip-picker.js" ]; then
+  mkdir -p "$install_root/bin"
+  cp "$script_directory/bin/aip-picker.js" "$install_root/bin/aip-picker.js"
+  chmod 0644 "$install_root/bin/aip-picker.js"
+fi
 touch "$shell_profile"
 
 escaped_source=${installed_file//\'/\'\\\'\'}

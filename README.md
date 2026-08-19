@@ -197,6 +197,43 @@ git -C ~/agent-profiles rebase --abort
 
 Then run `aip sync` (or relaunch the harness) to verify it's clean.
 
+## Importing existing config and skills
+
+To seed a new profile with settings you already have — for example your Pi agent
+config (`~/.pi/agent/auth.json`, `~/.pi/agent/models.json`, skills) — copy them from
+the harness's config directory into one, several, or all profiles:
+
+```sh
+aip import pi               # interactive: browse ~/.pi/agent, pick files, pick profiles
+# non-interactive:
+aip import pi auth.json models.json --all-profiles
+# or target specific profiles:
+aip import pi auth.json --profile work,suit
+```
+
+Each harness has a fixed source directory — the same config directory aip points the
+harness at when launching it (`pi` → `~/.pi/agent`, `claude` → `~/.claude`, `codex` →
+`~/.codex`, `opencode` → `~/.config/opencode`, Windows equivalents under `$HOME`).
+Files are mirrored into the matching profile subdirectory, so
+`~/.pi/agent/auth.json` lands at `<profile>/pi/auth.json`. The harness environment
+variables are deliberately **not** used to find the source: aip itself sets them to a
+profile when launching a harness, so they cannot name your pre-aip global config.
+
+In a terminal, `aip import pi` opens an interactive picker (arrow keys move, spacebar
+toggles files, enter confirms) that lets you navigate subdirectories and select files,
+then choose which profiles to copy into. Import never commits anything: files land on
+disk, and the next `aip sync` checkpoint handles Git as usual. When a destination
+already exists you are prompted per file (`o` overwrite, `s` skip, `a` all overwrite,
+`n` none skip, `q` quit); `--force` and `--skip-existing` skip the prompts, and
+`--dry-run` shows what would be copied. Destinations that are aip-managed profile
+links (`pi/AGENTS.md`, `skills`, and equivalents) are never overwritten. After the
+copy, aip warns about destinations the next checkpoint would track (i.e. not covered
+by the profile `.gitignore`) — credential files like `pi/auth.json` are already
+ignored by the profile scaffold and stay off the remote.
+
+The interactive picker requires Node.js (already present if you installed via npm);
+the non-interactive form works with just Git.
+
 ## What aip tracks
 
 aip automatically tracks its own metadata and instruction links, common instructions, all new files under each profile's `skills/`, and changes or deletions to files you deliberately tracked with Git. It does **not** automatically add unknown native harness files.
@@ -232,6 +269,7 @@ aip sync                           checkpoint and sync every profile
 aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
 aip remote remove                  disconnect the remote
+aip import HARNESS [FILE...]       copy config/skills from a harness into profiles
 aip doctor [NAME]                  diagnose the repository and profiles
 aip run [NAME] HARNESS [ARGS...]   launch a harness with a profile
 aip update                         update the aip npm package
@@ -242,6 +280,9 @@ aip help                           show help (--help and -h work too)
 `aip clone SOURCE TARGET` copies the source profile's committed tree (instructions, skills, harness settings) into a new profile in the same repository — useful for starting a client profile from your work profile. It does not copy remotes or history (there is only one of each anyway).
 
 `aip delete` never infers a target. It refuses the active session profile and requires confirmation unless `--force` is explicit.
+
+`aip import HARNESS [FILE...]` copies files from a harness's config directory into
+profiles (see [Importing existing config and skills](#importing-existing-config-and-skills)).
 
 ## Troubleshooting
 
