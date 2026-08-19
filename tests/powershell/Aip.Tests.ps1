@@ -1829,3 +1829,253 @@ It 'returns a nonzero process status when installation fails' {
     }
 }
 }
+
+Describe 'import' {
+    BeforeAll {
+        function Invoke-AipImportInChild {
+            # Run aip import in a fresh pwsh with the test HOME, feeding $Input to stdin
+            # (the only way to drive the [Console]::In overwrite prompt deterministically).
+            param([string]$AnswerText, [string[]]$ImportArgs)
+            $pwsh = (Get-Process -Id $PID).Path
+            $savedHome = $env:HOME
+            $env:HOME = $script:ImportRoot
+            try {
+                $escapedArgs = ($ImportArgs | ForEach-Object { "'$_'" }) -join ' '
+                $command = ". '$($script:RepositoryRoot)/aip.ps1'; aip import $escapedArgs; exit `$global:LASTEXITCODE"
+                $psi = [System.Diagnostics.ProcessStartInfo]::new()
+                $psi.FileName = $pwsh
+                $psi.Arguments = "-NoProfile -Command `"$($command.Replace('"', '\"'))`""
+                $psi.RedirectStandardInput = $true
+                $psi.RedirectStandardOutput = $true
+                $psi.RedirectStandardError = $true
+                $psi.UseShellExecute = $false
+                $process = [System.Diagnostics.Process]::Start($psi)
+                $process.StandardInput.Write($AnswerText)
+                $process.StandardInput.Close()
+                $stdout = $process.StandardOutput.ReadToEnd()
+                $stderr = $process.StandardError.ReadToEnd()
+                $process.WaitForExit()
+                return @{ Exit = $process.ExitCode; Output = ($stdout + $stderr) }
+            }
+            finally { $env:HOME = $savedHome }
+        }
+    }
+
+    BeforeEach {
+        # Fresh, unique root per test: Pester 5.9 reuses one TestDrive path for the
+        # whole run and the other Describes share script-scope state, so a fixed
+        # TestDrive-relative root would leak profiles between tests.
+        $script:ImportRoot = Join-Path $TestDrive ('import-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:ImportRoot -Force | Out-Null
+        $script:AipImportHome = $script:ImportRoot
+        $script:AipProfileRoot = Join-Path $script:ImportRoot 'agent-profiles'
+        $script:FakeBin = Join-Path $script:ImportRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:ImportRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:ImportRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        $env:AIP_ANIMATION = 'off'
+        New-Item -ItemType Directory -Path $script:FakeBin -Force | Out-Null
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        New-TestProfile work
+        New-TestProfile suit
+        $script:Pidir = Join-Path $script:ImportRoot '.pi/agent'
+        New-Item -ItemType Directory -Path (Join-Path $script:Pidir 'skills/reviewer') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value '{"token":"secret"}' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value '{"models":[]}' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'skills/reviewer/SKILL.md') -Value '# Reviewer' -Encoding utf8NoBOM -NoNewline
+    }
+
+    AfterEach {
+        $env:AIP_ANIMATION = $null
+        $env:AIP_PICKER = $null
+        $env:FAKE_CAPTURE = $null
+        $env:FAKE_EXIT_STATUS = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
+    It 'copies the given files into every profile without committing' {
+        aip import pi auth.json models.json --all-profiles --force
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'suit/pi/models.json') -Raw) | Should -Be '{"models":[]}'
+        (& git -C $script:AipProfileRoot ls-files -- work/pi/auth.json suit/pi/models.json) | Should -BeNullOrEmpty
+    }
+
+    It 'copies files into subdirectories through the harness link' {
+        aip import pi skills/reviewer/SKILL.md --all-profiles --force
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/reviewer/SKILL.md') -Raw) | Should -Be '# Reviewer'
+    }
+
+    It '--profile targets exactly those profiles' {
+        aip import pi auth.json --profile work --force
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'suit/pi/auth.json') | Should -BeFalse
+
+        aip import pi auth.json --profile work,suit --force
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'suit/pi/auth.json') | Should -BeTrue
+    }
+
+    It 'requires profile selection outside a terminal' {
+        aip import pi auth.json *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'no profiles selected'
+    }
+
+    It 'without files and without a terminal is a usage error' {
+        aip import pi *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'no files given'
+    }
+
+    It 'rejects unknown profiles, harnesses, and conflicting flags' {
+        aip import pi auth.json --profile nope *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "profile 'nope' does not exist"
+
+        aip import foo auth.json --all-profiles *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "unknown harness 'foo'"
+
+        aip import pi auth.json --all-profiles --force --skip-existing *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match '--force and --skip-existing conflict'
+
+        aip import pi auth.json --profile work --all-profiles *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match '--profile and --all-profiles conflict'
+    }
+
+    It 'errors when the harness configuration root is missing' {
+        Remove-Item -LiteralPath (Join-Path $script:ImportRoot '.pi') -Recurse -Force
+        aip import pi auth.json --all-profiles *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'no pi configuration found'
+    }
+
+    It 'rejects a path that escapes the source root' {
+        aip import pi ../secret.json --all-profiles *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid file path: ../secret.json'
+    }
+
+    It 'overwrite prompt: o overwrites, s skips, a and n persist' {
+        aip import pi auth.json models.json --all-profiles --force *> $null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value 'modified-a' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value 'modified-m' -Encoding utf8NoBOM -NoNewline
+
+        $result = Invoke-AipImportInChild -AnswerText "o`ns" -ImportArgs @('pi', 'auth.json', 'models.json', '--profile', 'work')
+        $result.Exit | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be 'modified-a'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be '{"models":[]}'
+
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value 'new-m' -Encoding utf8NoBOM -NoNewline
+        $result = Invoke-AipImportInChild -AnswerText 'a' -ImportArgs @('pi', 'auth.json', 'models.json', '--profile', 'work')
+        $result.Exit | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be 'new-m'
+
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value 'new-a' -Encoding utf8NoBOM -NoNewline
+        $result = Invoke-AipImportInChild -AnswerText 'n' -ImportArgs @('pi', 'auth.json', 'models.json', '--profile', 'work')
+        $result.Exit | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be 'modified-a'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be 'new-m'
+    }
+
+    It 'overwrite prompt: q aborts the import' {
+        aip import pi auth.json models.json --all-profiles --force *> $null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value 'new' -Encoding utf8NoBOM -NoNewline
+        $result = Invoke-AipImportInChild -AnswerText 'q' -ImportArgs @('pi', 'auth.json', '--profile', 'work')
+        $result.Exit | Should -Be 1
+        $result.Output | Should -Match 'import cancelled'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
+    }
+
+    It '--force and --skip-existing set the overwrite decision' {
+        aip import pi auth.json --all-profiles --force *> $null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value 'new' -Encoding utf8NoBOM -NoNewline
+
+        aip import pi auth.json --all-profiles --skip-existing *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
+
+        aip import pi auth.json --all-profiles --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be 'new'
+    }
+
+    It '--dry-run reports without writing' {
+        $output = aip import pi auth.json models.json --all-profiles --dry-run | Out-String
+        $global:LASTEXITCODE | Should -Be 0
+        # Get-AipProfileNames sorts; suit precedes work.
+        $output | Should -Match 'copy auth.json -> suit/auth.json'
+        $output | Should -Match 'copy models.json -> work/models.json'
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'suit/pi/models.json') | Should -BeFalse
+    }
+
+    It 'refuses to overwrite the scaffold profile links' {
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'AGENTS.md') -Value '# Pi' -Encoding utf8NoBOM -NoNewline
+        aip import pi AGENTS.md --all-profiles --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'refusing to overwrite the profile link work/AGENTS.md'
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/AGENTS.md')).Target | Should -Be '../AGENTS.md'
+    }
+
+    It 'replaces a non-managed symlink destination instead of writing through' {
+        Set-Content -LiteralPath (Join-Path $TestDrive 'target.txt') -Value 'elsewhere' -Encoding utf8NoBOM -NoNewline
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Target (Join-Path $TestDrive 'target.txt') -ErrorAction SilentlyContinue | Out-Null
+        aip import pi models.json --profile work --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')).LinkType | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be '{"models":[]}'
+    }
+
+    It 'warns when a destination is not covered by the profile gitignore' {
+        aip import pi models.json --all-profiles --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $script:AipLastError | Should -Match 'may track'
+
+        aip import pi auth.json --all-profiles --force *> $null
+        $script:AipLastError | Should -Not -Match 'may track'
+    }
+
+    It 'sources the static default root even when the harness env var is redirected' {
+        $decoy = Join-Path $TestDrive 'decoy'
+        New-Item -ItemType Directory -Path $decoy -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $decoy 'auth.json') -Value '{"decoy":true}' -Encoding utf8NoBOM
+        $env:PI_CODING_AGENT_DIR = $decoy
+        try {
+            aip import pi auth.json --all-profiles --force
+            $global:LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
+        }
+        finally { $env:PI_CODING_AGENT_DIR = $null }
+    }
+
+    It 'interactive: the picker contract drives the copies' {
+        $stub = Join-Path $script:FakeBin 'picker-stub.js'
+        "process.stdout.write('file`0auth.json`0file`0skills/reviewer/SKILL.md`0profile`0work`0profile`0suit`0', () => process.exit(0));" | Set-Content -LiteralPath $stub -Encoding utf8NoBOM
+        $env:AIP_PICKER = $stub
+        $files = [System.Collections.Generic.List[string]]::new()
+        $profiles = [System.Collections.Generic.List[string]]::new()
+        $status = Invoke-AipImportInteractive -Harness pi -SourceRoot $script:Pidir -ProfileNames @('work', 'suit') -ProfilesOpt '' -AllProfiles 0 -Files $files -Profiles $profiles
+        $status | Should -Be 0
+        @($files) | Should -Be @('auth.json', 'skills/reviewer/SKILL.md')
+        @($profiles) | Should -Be @('work', 'suit')
+
+        Invoke-AipImportCopy -Harness pi -SourceRoot $script:Pidir -DryRun 0 -FileList $files.ToArray() -ProfileNames $profiles.ToArray() -Force 0 -SkipExisting 0
+        $script:AipCommandStatus | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'suit/skills/reviewer/SKILL.md') -Raw) | Should -Be '# Reviewer'
+    }
+
+    It 'appears in help' {
+        aip help | Out-String | Should -Match 'aip import HARNESS'
+    }
+}
