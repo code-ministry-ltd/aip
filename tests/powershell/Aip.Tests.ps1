@@ -79,6 +79,9 @@ BeforeEach {
     New-Item -ItemType Directory -Path $script:AipProfileRoot, $script:FakeBin -Force | Out-Null
     & git config --global user.name 'Aip Tests'
     & git config --global user.email 'aip@example.test'
+    # CI git can kick off background auto-maintenance that races the sync lock.
+    & git config --global maintenance.auto false
+    & git config --global gc.auto 0
     foreach ($harness in 'claude', 'codex', 'pi', 'opencode') { New-FakeHarness $harness }
     $script:AipRealPath = $script:FakeBin
     Remove-Variable -Name AipLockAttempts -Scope Script -ErrorAction SilentlyContinue
@@ -1838,7 +1841,11 @@ Describe 'import' {
             param([string]$AnswerText, [string[]]$ImportArgs)
             $pwsh = (Get-Process -Id $PID).Path
             $savedHome = $env:HOME
+            $savedUserProfile = $env:USERPROFILE
+            # pwsh derives $HOME from USERPROFILE on Windows and from HOME elsewhere;
+            # set both so the child resolves the same profile root on either OS.
             $env:HOME = $script:ImportRoot
+            $env:USERPROFILE = $script:ImportRoot
             try {
                 $escapedArgs = ($ImportArgs | ForEach-Object { "'$_'" }) -join ' '
                 $command = ". '$($script:RepositoryRoot)/aip.ps1'; aip import $escapedArgs; exit `$global:LASTEXITCODE"
@@ -1857,7 +1864,10 @@ Describe 'import' {
                 $process.WaitForExit()
                 return @{ Exit = $process.ExitCode; Output = ($stdout + $stderr) }
             }
-            finally { $env:HOME = $savedHome }
+            finally {
+                $env:HOME = $savedHome
+                $env:USERPROFILE = $savedUserProfile
+            }
         }
     }
 
@@ -1879,6 +1889,8 @@ Describe 'import' {
         New-Item -ItemType Directory -Path $script:FakeBin -Force | Out-Null
         & git config --global user.name 'Aip Tests'
         & git config --global user.email 'aip@example.test'
+        & git config --global maintenance.auto false
+        & git config --global gc.auto 0
         New-TestProfile work
         New-TestProfile suit
         $script:Pidir = Join-Path $script:ImportRoot '.pi/agent'

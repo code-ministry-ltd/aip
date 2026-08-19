@@ -2186,12 +2186,29 @@ function Test-AipImportProfile {
 }
 
 function Test-AipImportManagedLink {
+    # The aip-managed profile links: <profile>/<harness>/AGENTS.md -> ../AGENTS.md and
+    # .../skills -> ../skills. On Windows without symlink privileges git materializes
+    # symlinks as ordinary files containing the target text, so both representations
+    # must be recognised (refusing is the safe direction either way).
     param([Parameter(Mandatory)][string]$LiteralPath)
     $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item -or $null -eq $item.LinkType) { return $false }
-    if ($item.LinkType -ne 'SymbolicLink') { return $false }
-    $target = [string]$item.Target
-    return ($target -eq '../AGENTS.md') -or ($target -eq '../skills')
+    if ($null -eq $item) { return $false }
+    if ($null -ne $item.LinkType) {
+        if ($item.LinkType -ne 'SymbolicLink') { return $false }
+        $raw = [string]$item.Target
+        if ($raw -eq '../AGENTS.md' -or $raw -eq '../skills') { return $true }
+        $resolved = $item.ResolveLinkTarget($true)
+        if ($null -ne $resolved -and ($resolved.Name -eq 'AGENTS.md' -or $resolved.Name -eq 'skills')) { return $true }
+        return $false
+    }
+    if ($item -is [IO.FileInfo]) {
+        try {
+            $content = [IO.File]::ReadAllText($LiteralPath).Trim()
+            return ($content -eq '../AGENTS.md') -or ($content -eq '../skills')
+        }
+        catch { return $false }
+    }
+    return $false
 }
 
 function Copy-AipImportFile {

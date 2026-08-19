@@ -10,6 +10,9 @@ setup_aip_test() {
   mkdir -p "$HOME" "$_AIP_PROFILE_ROOT" "$FAKE_BIN"
   git config --global user.name "Aip Tests"
   git config --global user.email "aip@example.test"
+  # CI git can kick off background auto-maintenance that races the sync lock.
+  git config --global maintenance.auto false
+  git config --global gc.auto 0
 
   local harness
   for harness in claude codex pi opencode; do
