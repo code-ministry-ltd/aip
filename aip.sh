@@ -443,6 +443,7 @@ _aip_require_profile() {
 
 _aip_resolve_profile() {
   local explicit_supplied=0 explicit='' name
+  _AIP_RESOLVE_REASON=
   if [ "$#" -gt 0 ]; then explicit_supplied=1; explicit=$1; fi
 
   if [ "$explicit_supplied" -eq 1 ]; then
@@ -484,7 +485,8 @@ _aip_resolve_profile() {
     return 0
   fi
 
-  _aip_error "no profile selected; run 'aip create NAME' then 'aip use NAME'"
+  _AIP_RESOLVE_REASON=no-selection
+  [ "${_AIP_RESOLVE_QUIET-}" = 1 ] || _aip_error "no profile selected; run 'aip create NAME' then 'aip use NAME'"
   return 2
 }
 
@@ -1123,8 +1125,21 @@ _aip_git_summary() {
 
 _aip_status() (
   _aip_clear_git_routing
-  _aip_resolve_profile || return
   local profile_path outfit harness availability
+  _AIP_RESOLVE_REASON=
+  if ! _AIP_RESOLVE_QUIET=1 _aip_resolve_profile; then
+    if [ "${_AIP_RESOLVE_REASON-}" = no-selection ]; then
+      if [ -n "$(_aip_list_profile_names)" ]; then
+        printf 'No profile selected. Available profiles:\n'
+        _aip_list
+        printf "Select one with 'aip use NAME' (this shell) or 'aip default NAME' (persistent).\n"
+        return 0
+      fi
+      _aip_error "no profile selected; run 'aip create NAME' then 'aip use NAME'"
+      return 2
+    fi
+    return 2
+  fi
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
   outfit=$(_aip_read_outfit "$profile_path/.aip/outfit") || outfit='invalid outfit'
   printf '🐵 %s — %s\n' "$_AIP_RESOLVED_NAME" "$outfit"

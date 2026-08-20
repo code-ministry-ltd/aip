@@ -37,6 +37,45 @@ setup() {
   [ -z "$(find .aip-profile -mindepth 1 -print -quit)" ]
 }
 
+@test "status selection: lists profiles when none is selected" {
+  unset AIP_PROFILE
+  cd "$BATS_TEST_TMPDIR"
+  run aip
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No profile selected. Available profiles:"* ]]
+  [[ "$output" == *"work"* ]]
+  [[ "$output" == *"Select one with 'aip use NAME'"* ]]
+}
+
+@test "status selection: shows the create hint when no profiles exist" {
+  unset AIP_PROFILE
+  rm -rf "$_AIP_PROFILE_ROOT"
+  cd "$BATS_TEST_TMPDIR"
+  run aip
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no profile selected; run 'aip create NAME'"* ]]
+}
+
+@test "status selection: surfaces an invalid project marker" {
+  unset AIP_PROFILE
+  cd "$BATS_TEST_TMPDIR"
+  printf 'Not A Name\n' >.aip-profile
+  run aip
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"invalid project marker"* ]]
+  rm -f .aip-profile
+}
+
+@test "status selection: shows the resolved profile normally" {
+  unset AIP_PROFILE
+  aip default work >/dev/null
+  cd "$BATS_TEST_TMPDIR"
+  run aip
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"🐵 work"* ]]
+  [[ "$output" == *"Selected by: default"* ]]
+}
+
 @test "local writes and removes only the current directory marker" {
   mkdir -p "$BATS_TEST_TMPDIR/project/child"
   cd "$BATS_TEST_TMPDIR/project"
