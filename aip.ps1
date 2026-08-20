@@ -12,6 +12,8 @@ $script:AipCommandStatus = 0
 $script:AipVersion = '0.3.0'
 $script:AipSpinnerPowerShell = $null
 $script:AipSpinnerRunspace = $null
+$script:AipResolveReason = ''
+$script:AipResolveQuiet = $false
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -449,6 +451,7 @@ function Find-AipProjectMarker {
 function Resolve-AipProfile {
     param([AllowEmptyString()][string]$ExplicitName = '', [bool]$ExplicitNameSupplied = $false)
 
+    $script:AipResolveReason = ''
     if ($ExplicitNameSupplied) {
         if (-not (Test-AipProfileExists $ExplicitName)) { return $null }
         return [pscustomobject]@{ Name = $ExplicitName; Source = 'explicit'; Path = (Get-AipProfilePath $ExplicitName) }
@@ -478,8 +481,11 @@ function Resolve-AipProfile {
         if (-not (Test-AipProfileExists $name)) { return $null }
         return [pscustomobject]@{ Name = $name; Source = 'default'; Path = (Get-AipProfilePath $name) }
     }
-    Write-AipError "no profile selected; run 'aip create NAME' then 'aip use NAME'"
-    $script:AipCommandStatus = 2
+    $script:AipResolveReason = 'no-selection'
+    if (-not $script:AipResolveQuiet) {
+        Write-AipError "no profile selected; run 'aip create NAME' then 'aip use NAME'"
+        $script:AipCommandStatus = 2
+    }
     return $null
 }
 
@@ -1941,8 +1947,22 @@ function Get-AipGitSummary {
 }
 
 function Invoke-AipStatus {
-    $profile = Resolve-AipProfile
-    if ($null -eq $profile) { return }
+    $script:AipResolveReason = ''
+    $script:AipResolveQuiet = $true
+    try { $profile = Resolve-AipProfile } finally { $script:AipResolveQuiet = $false }
+    if ($null -eq $profile) {
+        if ($script:AipResolveReason -eq 'no-selection') {
+            if ((Get-AipProfileNames).Count -gt 0) {
+                Write-Output 'No profile selected. Available profiles:'
+                Invoke-AipList -Arguments @()
+                Write-Output "Select one with 'aip use NAME' (this shell) or 'aip default NAME' (persistent)."
+                return
+            }
+            Write-AipError "no profile selected; run 'aip create NAME' then 'aip use NAME'"
+            $script:AipCommandStatus = 2
+        }
+        return
+    }
     Write-Output "🐵 $($profile.Name) — $(Get-AipOutfit $profile.Path)"
     Write-Output "Selected by: $($profile.Source)"
     Write-Output "Path: $($profile.Path)"

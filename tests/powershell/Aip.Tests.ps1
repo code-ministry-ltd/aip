@@ -323,6 +323,62 @@ Describe 'profile creation and selection' {
         finally { Pop-Location }
     }
 
+    It 'lists profiles from status when none is selected' {
+        New-TestProfile work suit
+        New-TestProfile personal hoodie
+        $env:AIP_PROFILE = $null
+        Push-Location $TestDrive
+        try {
+            $out = aip | Out-String
+            $global:LASTEXITCODE | Should -Be 0
+            $out | Should -Match 'No profile selected. Available profiles:'
+            $out | Should -Match 'work — suit'
+            $out | Should -Match "Select one with 'aip use NAME'"
+        }
+        finally { Pop-Location }
+    }
+
+    It 'shows the create hint from status when no profiles exist' {
+        $env:AIP_PROFILE = $null
+        Push-Location $TestDrive
+        try {
+            aip *> $null
+            $global:LASTEXITCODE | Should -Be 2
+            $script:AipLastError | Should -Match "no profile selected; run 'aip create NAME'"
+        }
+        finally { Pop-Location }
+    }
+
+    It 'surfaces an invalid project marker from status' {
+        New-TestProfile work
+        $env:AIP_PROFILE = $null
+        Push-Location $TestDrive
+        try {
+            'Not A Name' | Set-Content -LiteralPath (Join-Path $TestDrive '.aip-profile')
+            aip *> $null
+            $global:LASTEXITCODE | Should -Be 2
+            $script:AipLastError | Should -Match 'invalid project marker'
+        }
+        finally {
+            Pop-Location
+            Remove-Item -LiteralPath (Join-Path $TestDrive '.aip-profile') -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'shows the resolved profile from status normally' {
+        New-TestProfile work suit
+        aip default work *> $null
+        $env:AIP_PROFILE = $null
+        Push-Location $TestDrive
+        try {
+            $out = aip | Out-String
+            $global:LASTEXITCODE | Should -Be 0
+            $out | Should -Match '🐵 work — suit'
+            $out | Should -Match 'Selected by: default'
+        }
+        finally { Pop-Location }
+    }
+
     It 'distinguishes synced, pending push, pending pull, diverged, and conflict status' {
         New-TestProfile work
         $env:AIP_PROFILE = 'work'
