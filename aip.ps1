@@ -1952,7 +1952,7 @@ function Invoke-AipStatus {
     try { $profile = Resolve-AipProfile } finally { $script:AipResolveQuiet = $false }
     if ($null -eq $profile) {
         if ($script:AipResolveReason -eq 'no-selection') {
-            if ((Get-AipProfileNames).Count -gt 0) {
+            if (@(Get-AipProfileNames).Count -gt 0) {
                 Write-Output 'No profile selected. Available profiles:'
                 Invoke-AipList -Arguments @()
                 Write-Output "Select one with 'aip use NAME' (this shell) or 'aip default NAME' (persistent)."
