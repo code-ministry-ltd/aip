@@ -22,7 +22,7 @@ _aip_update() {
       _aip_error 'update requires Node.js (npx) on PATH'
       return 1
     fi
-    command npx --yes @code-ministry/aip update
+    command npx --yes @code-ministry/aip@latest update
   )
 }
 

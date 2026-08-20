@@ -62,7 +62,7 @@ setup() {
   [ "$status" -eq 0 ]
   grep -qx 'harness=npx' "$FAKE_CAPTURE"
   grep -qx 'arg=--yes' "$FAKE_CAPTURE"
-  grep -qx 'arg=@code-ministry/aip' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip@latest' "$FAKE_CAPTURE"
   grep -qx 'arg=update' "$FAKE_CAPTURE"
 }
 
