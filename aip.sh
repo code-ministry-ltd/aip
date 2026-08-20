@@ -2232,7 +2232,9 @@ _aip_import_interactive() {
   fi
   output=$(command mktemp "${TMPDIR:-/tmp}/aip-picker.XXXXXX") || return 1
   # shellcheck disable=SC2086
-  node "$picker" "$harness" "$source_root" $args >"$output" 2>/dev/null
+  # Records go to $output on stdout; the picker's UI and errors render on stderr,
+  # which must reach the terminal (the interactive path is TTY-gated by the caller).
+  node "$picker" "$harness" "$source_root" $args >"$output"
   status=$?
   [ "$status" -eq 0 ] || {
     [ "$status" -eq 130 ] && _aip_error 'import cancelled' || _aip_error 'the interactive picker failed'

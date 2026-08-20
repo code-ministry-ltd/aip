@@ -205,6 +205,23 @@ suit' ]
   command rm -f "$filelist" "$profilesfile"
 }
 
+@test "import interactive: the picker UI on stderr reaches the terminal" {
+  # The picker renders its UI to stderr and emits NUL records on stdout. The
+  # shell must capture only stdout; the UI must reach the terminal, not /dev/null.
+  cat >"$FAKE_BIN/picker-ui-stub.js" <<'EOF'
+process.stderr.write('PICKER_UI_VISIBLE\n');
+process.stdout.write('file\0auth.json\0profile\0work\0');
+EOF
+  filelist=$(command mktemp) || return 1
+  profilesfile=$(command mktemp) || return 1
+  AIP_PICKER="$FAKE_BIN/picker-ui-stub.js" run _aip_import_interactive pi "$HOME/.pi/agent" "$filelist" "$profilesfile" '' 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *PICKER_UI_VISIBLE* ]]
+  [ "$(tr '\0' '\n' <"$filelist")" = 'auth.json' ]
+  [ "$(cat "$profilesfile")" = 'work' ]
+  command rm -f "$filelist" "$profilesfile"
+}
+
 @test "import appears in help" {
   run aip help
   [[ "$output" == *"aip import HARNESS"* ]]
