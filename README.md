@@ -51,11 +51,11 @@ Re-runs the idempotent installer against the latest published version and report
 
 ### Without installing
 
-Every aip command also works one-shot through npx, always using the latest published version:
+Every aip command also works one-shot through npx. Pin `@latest` so npx never serves a stale cached copy:
 
 ```sh
-npx -y @code-ministry/aip list
-npx -y @code-ministry/aip doctor
+npx -y @code-ministry/aip@latest list
+npx -y @code-ministry/aip@latest doctor
 ```
 
 Only the installed shell functions provide the transparent `claude`, `codex`, `pi` and `opencode` wrappers.
@@ -318,8 +318,8 @@ The two implementations (`aip.sh`, `aip.ps1`) are required to be behaviourally i
 
 Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed directory:
 
-- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`)
-- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
+- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh`, `VERSION`, and `bin/aip-picker.js`)
+- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1`, `VERSION`, and `bin/aip-picker.js`)
 - PowerShell on macOS/Linux: `~/.local/share/aip/`
 
 The profiles repository in `~/agent-profiles` is yours — keep it, move it, or delete it.
