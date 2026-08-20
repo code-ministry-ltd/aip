@@ -484,6 +484,24 @@ _aip_normalize_path() {
   printf '/%s\n' "$out"
 }
 
+_aip_resolve_path() {
+  # Portable canonical resolution (macOS has no readlink -f): follows the final
+  # symlink chain (bounded, so loops cannot hang) then normalises lexically. Broken
+  # links resolve to their lexical target, which is exactly what the pass-through
+  # boundary needs to accept or reject them.
+  local path=$1 link depth=0
+  case $path in /*) ;; *) path=$PWD/$path ;; esac
+  while [ -L "$path" ] && [ "$depth" -lt 40 ]; do
+    link=$(command readlink "$path") || return 1
+    case $link in
+      /*) path=$link ;;
+      *) path=${path%/*}/$link ;;
+    esac
+    depth=$((depth + 1))
+  done
+  _aip_normalize_path "$path"
+}
+
 _aip_is_passthrough_link() {
   # $1 relative link path (e.g. pi/models.json), $2 profile path. Returns 0 when the
   # link is a pass-through link: allowlisted rel whose target is confined to the
@@ -492,7 +510,7 @@ _aip_is_passthrough_link() {
   # under the root, and when it cannot resolve (broken link) the raw target must stay
   # inside the root after lexical ..-normalisation (so crafted ../ escapes are
   # rejected even when the escape path does not exist).
-  local relative=$1 profile=$2 harness rel root expected raw canonical resolved_root norm_root norm_raw
+  local relative=$1 profile=$2 harness rel root expected raw canonical resolved_root
   harness=${relative%%/*}
   rel=${relative#*/}
   case $harness in pi|claude|codex|opencode) ;; *) return 1 ;; esac
@@ -500,18 +518,12 @@ _aip_is_passthrough_link() {
   _aip_passthrough_rels "$harness" | command grep -Fxq "$rel" || return 1
   root=$(_aip_import_harness_root "$harness") || return 1
   [ -n "$root" ] || return 1
-  resolved_root=$(command readlink -f "$root") || resolved_root=$root
-  norm_root=$(_aip_normalize_path "$root") || return 1
+  resolved_root=$(_aip_resolve_path "$root") || resolved_root=$root
   expected=$(_aip_relative_path "$profile/$harness" "$root/$rel")
   raw=$(command readlink "$profile/$relative" 2>/dev/null) || return 1
   [ "$raw" = "$expected" ] && return 0
-  canonical=$(command readlink -f "$profile/$relative" 2>/dev/null)
-  if [ -n "$canonical" ]; then
-    case $canonical in "$resolved_root"/*) return 0 ;; *) return 1 ;; esac
-  else
-    norm_raw=$(_aip_normalize_path "$raw") || return 1
-    case $norm_raw in "$norm_root"/*) return 0 ;; *) return 1 ;; esac
-  fi
+  canonical=$(_aip_resolve_path "$profile/$relative") || return 1
+  case $canonical in "$resolved_root"/*) return 0 ;; *) return 1 ;; esac
 }
 
 _AIP_PASSTHROUGH_BEGIN='# aip pass-through (machine-local, do not sync) BEGIN'

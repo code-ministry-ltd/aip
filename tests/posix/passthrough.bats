@@ -22,7 +22,10 @@ setup() {
   [ -L "$_AIP_PROFILE_ROOT/work/pi/models.json" ]
   [ -L "$_AIP_PROFILE_ROOT/work/pi/auth.json" ]
   [ -L "$_AIP_PROFILE_ROOT/work/pi/themes" ]
-  [ "$(readlink -f "$_AIP_PROFILE_ROOT/work/pi/models.json")" = "$HOME/.pi/agent/models.json" ]
+  # BSD readlink has no -f, so the link target is compared via the implementation's
+  # own relative-path computation (the link resolves to the machine-local file).
+  expected=$(_aip_relative_path "$_AIP_PROFILE_ROOT/work/pi" "$HOME/.pi/agent/models.json")
+  [ "$(readlink "$_AIP_PROFILE_ROOT/work/pi/models.json")" = "$expected" ]
   grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
   grep -Fx 'pi/auth.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
   grep -Fx 'pi/themes' "$_AIP_PROFILE_ROOT/work/.gitignore"
