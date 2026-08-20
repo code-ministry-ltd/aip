@@ -166,12 +166,12 @@ For the one harness × one profile, in order:
    block:
 
    ```
-   # aip pass-through (machine-local, do not sync) — BEGIN
+   # aip pass-through (machine-local, do not sync) BEGIN
    pi/models.json
    pi/auth.json
    pi/settings.json
    ...
-   # aip pass-through — END
+   # aip pass-through END
    ```
 
    Entries are added when a link is created (step 1), removed when a link is removed

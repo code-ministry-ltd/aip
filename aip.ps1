@@ -598,6 +598,7 @@ function Invoke-AipCreate {
         else { Write-AipError "could not create profile '$name': $($_.Exception.Message)" }
         return
     }
+    Invoke-AipPassthroughProfile $name
     Invoke-AipGit -C $script:AipProfileRoot add .gitignore $name
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
     Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
@@ -664,6 +665,7 @@ function Invoke-AipClone {
         return
     }
     Remove-Item -LiteralPath $tarball -Force -ErrorAction SilentlyContinue
+    Invoke-AipPassthroughProfile $targetName
     Invoke-AipGit -C $script:AipProfileRoot add $targetName
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
     # Executable bits do not survive tar extraction on platforms without file modes
@@ -776,7 +778,7 @@ function Test-AipProfileReparsePoints {
                 if ([IO.Path]::GetFullPath($item.FullName) -eq $gitPath) { continue }
                 $relative = [IO.Path]::GetRelativePath($ProfilePath, $item.FullName).Replace('\', '/')
                 if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-                    if ($item.LinkType -ne 'SymbolicLink' -or -not $required.Contains($relative)) {
+                    if ($item.LinkType -ne 'SymbolicLink' -or (-not $required.Contains($relative) -and -not (Test-AipPassthroughLink $relative $ProfilePath))) {
                         $script:AipProfileBoundaryError = "profile contains an unsupported symbolic link, junction, or mount that could escape its boundary: $relative"
                         return $false
                     }
@@ -988,7 +990,10 @@ function Invoke-AipDoctor {
         $layoutResult = @(Test-AipLayout $profilePath -Report)
         if ($layoutResult.Count -gt 1) { $layoutResult[0..($layoutResult.Count - 2)] | Write-Output }
         if (-not [bool]$layoutResult[-1]) { $errors++ }
-        else { Write-Output "OK: profile layout and links ($name)" }
+        else {
+            Write-AipDoctorPassthrough $profilePath $name
+            Write-Output "OK: profile layout and links ($name)"
+        }
     }
 
     if ($gitAvailable -and $repoReadable) {
@@ -1716,6 +1721,7 @@ function Invoke-AipHarness {
         $global:LASTEXITCODE = 127
         return
     }
+    Invoke-AipPassthrough $Harness $profile.Name
     Invoke-AipSync 'before'
     if ($script:AipCommandStatus -ne 0) { $global:LASTEXITCODE = $script:AipCommandStatus; return }
 
@@ -2234,6 +2240,266 @@ function Get-AipImportHarnessRoot {
     }
 }
 
+$script:AipPassthroughBegin = '# aip pass-through (machine-local, do not sync) BEGIN'
+$script:AipPassthroughEnd = '# aip pass-through END'
+
+function Get-AipPassthroughRel {
+    # The per-harness pass-through allowlist: machine-local configuration inputs that
+    # every profile falls back to unless it defines the path itself. Only these paths
+    # may ever be linked by pass-through maintenance.
+    param([Parameter(Mandatory)][string]$Harness)
+    switch ($Harness) {
+        'pi' { return @('models.json', 'auth.json', 'settings.json', 'themes', 'prompts', 'extensions') }
+        'claude' { return @('settings.json', 'settings.local.json', '.credentials.json', 'agents', 'commands', 'context-mode', 'output-styles', 'workflows', 'keybindings.json', 'plugins') }
+        'codex' { return @('config.toml', 'auth.json', 'plugins') }
+        'opencode' { return @('opencode.json', 'auth.json', 'tui.json', 'agent', 'command', 'plugins') }
+        default { return @() }
+    }
+}
+
+function ConvertTo-AipRelativePath {
+    # $From (absolute directory), $To (absolute path); prints the relative path from
+    # $From to $To (forward slashes), e.g. ../../../.pi/agent/models.json.
+    param([Parameter(Mandatory)][string]$From, [Parameter(Mandatory)][string]$To)
+    $rel = [IO.Path]::GetRelativePath([IO.Path]::GetFullPath($From), [IO.Path]::GetFullPath($To))
+    return $rel.Replace('\', '/')
+}
+
+function Test-AipPathComparison {
+    # Case-insensitive on Windows (where paths are case-insensitive), ordinal elsewhere.
+    if ($IsWindows) { return [StringComparison]::OrdinalIgnoreCase }
+    return [StringComparison]::Ordinal
+}
+
+function Test-AipPassthroughLink {
+    # $Relative (e.g. pi/models.json), $ProfilePath. Returns $true when the link is a
+    # pass-through link: allowlisted rel whose target is confined to the harness
+    # default root. Accepts broken links whose raw target is exactly the expected
+    # relative path; for absolute targets the canonical target must resolve under the
+    # root, and when it cannot resolve (broken link) the raw target must stay inside
+    # the root after lexical ..-normalisation (so crafted ../ escapes are rejected
+    # even when the escape path does not exist).
+    param([Parameter(Mandatory)][string]$Relative, [Parameter(Mandatory)][string]$ProfilePath)
+    $slash = $Relative.IndexOf('/')
+    if ($slash -lt 0) { return $false }
+    $harness = $Relative.Substring(0, $slash)
+    $rel = $Relative.Substring($slash + 1)
+    if ($harness -notin 'pi', 'claude', 'codex', 'opencode') { return $false }
+    if ($rel -eq '' -or $rel.Contains('/')) { return $false }
+    if ((Get-AipPassthroughRel $harness) -cnotcontains $rel) { return $false }
+    $root = Get-AipImportHarnessRoot $harness
+    if (-not $root) { return $false }
+    $item = Get-Item -LiteralPath (Join-Path $ProfilePath $Relative) -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.LinkType -ne 'SymbolicLink') { return $false }
+    $raw = ([string]$item.Target).Replace('\', '/')
+    $expected = ConvertTo-AipRelativePath (Join-Path $ProfilePath $harness) (Join-Path $root $rel)
+    if ($raw -eq $expected) { return $true }
+    $comparison = Test-AipPathComparison
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $normRoot = [IO.Path]::GetFullPath($root).TrimEnd($sep) + $sep
+    $canonical = $null
+    try {
+        $resolved = $item.ResolveLinkTarget($true)
+        if ($null -ne $resolved) { $canonical = $resolved.FullName }
+    }
+    catch {
+        # Broken link: ResolveLinkTarget cannot resolve; fall through to the
+        # lexical ..-normalisation check below.
+        $canonical = $null
+    }
+    if ($null -ne $canonical -and $canonical -ne '') {
+        $normCanonical = [IO.Path]::GetFullPath($canonical)
+        return $normCanonical.StartsWith($normRoot, $comparison)
+    }
+    # broken link: lexical resolution must stay under the root
+    $normRaw = [IO.Path]::GetFullPath($raw.Replace('/', $sep))
+    return $normRaw.StartsWith($normRoot, $comparison)
+}
+
+function Get-AipPassthroughGitIgnoreEntry {
+    param([Parameter(Mandatory)][string]$GitIgnorePath)
+    if (-not (Test-Path -LiteralPath $GitIgnorePath -PathType Leaf)) { return @() }
+    $entries = [System.Collections.Generic.List[string]]::new()
+    $inBlock = $false
+    foreach ($line in (Get-Content -LiteralPath $GitIgnorePath)) {
+        if ($line -eq $script:AipPassthroughBegin) { $inBlock = $true; continue }
+        if ($inBlock -and $line -eq $script:AipPassthroughEnd) { $inBlock = $false; continue }
+        if ($inBlock -and $line -ne '') { $entries.Add($line) }
+    }
+    return @($entries)
+}
+
+function Set-AipPassthroughGitIgnoreBlock {
+    # Rewrites only the marked block; every other line is preserved verbatim.
+    param([Parameter(Mandatory)][string]$GitIgnorePath, [string[]]$Entries)
+    $out = [System.Collections.Generic.List[string]]::new()
+    $inBlock = $false
+    foreach ($line in (Get-Content -LiteralPath $GitIgnorePath)) {
+        if ($line -eq $script:AipPassthroughBegin) { $inBlock = $true; continue }
+        if ($inBlock -and $line -eq $script:AipPassthroughEnd) { $inBlock = $false; continue }
+        if ($inBlock) { continue }
+        $out.Add($line)
+    }
+    if (@($Entries).Count -gt 0) {
+        $out.Add($script:AipPassthroughBegin)
+        foreach ($entry in (@($Entries) | Sort-Object -Unique)) { $out.Add($entry) }
+        $out.Add($script:AipPassthroughEnd)
+    }
+    Set-AipUtf8LfFile $GitIgnorePath @($out)
+}
+
+function Remove-AipPassthroughGitIgnoreEntry {
+    param([Parameter(Mandatory)][string]$GitIgnorePath, [Parameter(Mandatory)][string]$Entry)
+    $current = @(Get-AipPassthroughGitIgnoreEntry $GitIgnorePath | Where-Object { $_ -ne $Entry })
+    Set-AipPassthroughGitIgnoreBlock $GitIgnorePath $current
+}
+
+function Test-AipTrackedPath {
+    # Returns $true when the profile-relative path is tracked in the profiles repo.
+    param([Parameter(Mandatory)][string]$RepoRel)
+    Invoke-AipGit -C $script:AipProfileRoot ls-files --error-unmatch -- $RepoRel *> $null
+    return $global:LASTEXITCODE -eq 0
+}
+
+function Test-AipPathResolve {
+    # PowerShell's Test-Path reports $true for a broken symlink (the provider treats
+    # the link itself as a path entry), so link targets are resolved and checked:
+    # a link is "resolving" only when its final target exists.
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $item = Get-Item -LiteralPath $LiteralPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $false }
+    if ($null -ne $item.LinkType) {
+        try {
+            $resolved = $item.ResolveLinkTarget($true)
+            return $null -ne $resolved -and $resolved.Exists
+        }
+        catch { return $false }
+    }
+    return $true
+}
+
+function Invoke-AipPassthrough {
+    # $Harness, $Name. Ensures the profile's pass-through links for one harness match
+    # the machine-local default root: creates missing links (never overwriting an
+    # existing path, skipping paths already tracked in Git), removes broken links with
+    # a warning, and reconciles the .gitignore block. Never throws: problems warn.
+    param([Parameter(Mandatory)][string]$Harness, [Parameter(Mandatory)][string]$Name)
+    try {
+        $profilePath = Get-AipProfilePath $Name
+        $root = Get-AipImportHarnessRoot $Harness
+        if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { return }
+        $harnessDir = Join-Path $profilePath $Harness
+        if (-not (Test-Path -LiteralPath $harnessDir -PathType Container)) { return }
+        $gitIgnorePath = Join-Path $profilePath '.gitignore'
+        $relList = @(Get-AipPassthroughRel $Harness)
+        $removedThisRun = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+
+        # 1. Remove broken pass-through links (raw target is pass-through but the
+        #    machine-local file or directory is gone). Removing first lets a link be
+        #    re-created below when the default path comes back.
+        foreach ($rel in $relList) {
+            $dest = Join-Path $harnessDir $rel
+            $item = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            if ($null -ne $item -and $item.LinkType -eq 'SymbolicLink' -and (Test-AipPassthroughLink "$Harness/$rel" $profilePath) -and -not (Test-AipPathResolve $dest)) {
+                Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+                if (Test-AipPathResolve $dest) {
+                    Write-AipWarning "could not remove stale pass-through link $Name/$Harness/$rel"
+                }
+                else {
+                    Write-AipWarning "removed stale pass-through link $Name/$Harness/$rel (its machine-local target is gone)"
+                    [void]$removedThisRun.Add("$Harness/$rel")
+                }
+            }
+        }
+
+        # 2. Create missing links for allowlisted paths that exist in the default root
+        #    and are absent from the profile (or were just removed as broken). A real
+        #    file or directory shadows the link; a tracked path is exempt.
+        foreach ($rel in $relList) {
+            $dest = Join-Path $harnessDir $rel
+            if ($null -ne (Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue)) { continue }
+            $source = Join-Path $root $rel
+            if (-not (Test-Path -LiteralPath $source)) { continue }
+            if (Test-AipTrackedPath "$Name/$Harness/$rel") { continue }
+            $expected = ConvertTo-AipRelativePath $harnessDir $source
+            try {
+                New-Item -ItemType SymbolicLink -Path $dest -Target $expected -ErrorAction Stop | Out-Null
+            }
+            catch {
+                Write-AipWarning "could not create pass-through link $Name/$Harness/$rel -> $expected"
+            }
+        }
+
+        # 3. Reconcile the .gitignore block (harness-qualified entries, convergent
+        #    rule: an entry is added when a pass-through link exists and the path is
+        #    untracked; removed when the path exists but is not a pass-through link,
+        #    is tracked, or was just removed as broken; otherwise left exactly as it
+        #    is, and other harnesses' entries are preserved untouched).
+        $current = @(Get-AipPassthroughGitIgnoreEntry $gitIgnorePath)
+        $entries = [System.Collections.Generic.List[string]]::new()
+        foreach ($rel in $relList) {
+            $dest = Join-Path $harnessDir $rel
+            $item = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            $isLink = $null -ne $item -and $item.LinkType -eq 'SymbolicLink' -and (Test-AipPassthroughLink "$Harness/$rel" $profilePath)
+            if ($isLink -and (Test-AipPathResolve $dest)) {
+                if (-not (Test-AipTrackedPath "$Name/$Harness/$rel")) { $entries.Add("$Harness/$rel") }
+            }
+            elseif (Test-AipPathResolve $dest) {
+                # path exists but is not a pass-through link: no entry
+            }
+            elseif ($removedThisRun.Contains("$Harness/$rel")) {
+                # link removed as broken this run: no entry
+            }
+            elseif ($current -cnotcontains "$Harness/$rel") {
+                # path absent and no current entry: nothing to do
+            }
+            else {
+                # path absent but entry present (convergence): keep it
+                $entries.Add("$Harness/$rel")
+            }
+        }
+        foreach ($entry in $current) {
+            $slashIndex = $entry.IndexOf('/')
+            if ($slashIndex -lt 0) { continue }
+            $entryHarness = $entry.Substring(0, $slashIndex)
+            if ($entryHarness -notin 'pi', 'claude', 'codex', 'opencode') { continue }
+            if ($entryHarness -eq $Harness) { continue }
+            if ($removedThisRun.Contains($entry)) { continue }
+            $entries.Add($entry)
+        }
+        Set-AipPassthroughGitIgnoreBlock $gitIgnorePath @($entries)
+    }
+    catch {
+        Write-AipWarning "pass-through maintenance failed for $Name/${Harness}: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-AipPassthroughProfile {
+    param([Parameter(Mandatory)][string]$Name)
+    foreach ($harness in 'pi', 'claude', 'codex', 'opencode') { Invoke-AipPassthrough $harness $Name }
+}
+
+function Write-AipDoctorPassthrough {
+    # Reports pass-through links and warns (never fails) on broken ones.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Name)
+    foreach ($harness in 'pi', 'claude', 'codex', 'opencode') {
+        $root = Get-AipImportHarnessRoot $harness
+        if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+        foreach ($rel in @(Get-AipPassthroughRel $harness)) {
+            $dest = Join-Path $ProfilePath (Join-Path $harness $rel)
+            $item = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            if ($null -eq $item -or $item.LinkType -ne 'SymbolicLink') { continue }
+            if (-not (Test-AipPassthroughLink "$harness/$rel" $ProfilePath)) { continue }
+            if (Test-AipPathResolve $dest) {
+                Write-Output "OK: pass-through $Name/$harness/$rel -> $($item.Target)"
+            }
+            else {
+                Write-Output "WARN: pass-through $Name/$harness/$rel is broken (its machine-local target is missing)"
+            }
+        }
+    }
+}
+
 function Write-AipImportUsage {
     # Prints usage without clobbering AipLastError: the specific error (e.g.
     # 'no profiles selected') is what tests and users need to see.
@@ -2298,7 +2564,9 @@ function Copy-AipImportFile {
         [Parameter(Mandatory)][ValidateSet('ask', 'force', 'skip')][string]$Overwrite,
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$Rel,
-        [Parameter(Mandatory)][int]$DryRun
+        [Parameter(Mandatory)][int]$DryRun,
+        [Parameter(Mandatory)][string]$Harness,
+        [Parameter(Mandatory)][string]$ProfilePath
     )
     if ($DryRun -eq 1) {
         if (Test-Path -LiteralPath $Dest) { Write-Output "copy $Rel -> $Name/$Rel (exists)" }
@@ -2307,11 +2575,18 @@ function Copy-AipImportFile {
         return
     }
     $destItem = Get-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
+    $passthroughReplaced = $false
     if ($null -ne $destItem) {
         if (Test-AipImportManagedLink -LiteralPath $Dest) {
             Write-AipError "refusing to overwrite the profile link $Name/$Rel"
             $script:AipImportStatus = 1
             return
+        }
+        # A pass-through link is replaceable: the imported profile-owned copy becomes
+        # the profile's own version (and its .gitignore entry is dropped below so the
+        # copy can be tracked again).
+        if ($destItem.LinkType -eq 'SymbolicLink' -and (Test-AipPassthroughLink "$Harness/$Rel" $ProfilePath)) {
+            $passthroughReplaced = $true
         }
         $doOverwrite = $false
         switch ($Overwrite) {
@@ -2356,6 +2631,9 @@ function Copy-AipImportFile {
         $script:AipImportStatus = 1
         return
     }
+    if ($passthroughReplaced) {
+        Remove-AipPassthroughGitIgnoreEntry (Join-Path $ProfilePath '.gitignore') "$Harness/$Rel"
+    }
     $script:AipImportStatus = 0
 }
 
@@ -2379,7 +2657,7 @@ function Invoke-AipImportCopy {
         foreach ($rel in $FileList) {
             $dest = Join-Path $profilePath (Join-Path $Harness $rel)
             $overwrite = if ($script:AipImportOverwrite -eq 'ask') { 'ask' } else { $script:AipImportOverwrite }
-            Copy-AipImportFile -Source (Join-Path $SourceRoot $rel) -Dest $dest -Overwrite $overwrite -Name $name -Rel $rel -DryRun $DryRun
+            Copy-AipImportFile -Source (Join-Path $SourceRoot $rel) -Dest $dest -Overwrite $overwrite -Name $name -Rel $rel -DryRun $DryRun -Harness $Harness -ProfilePath $profilePath
             switch ($script:AipImportStatus) {
                 0 { $copied++ }
                 3 { $skipped++ }
