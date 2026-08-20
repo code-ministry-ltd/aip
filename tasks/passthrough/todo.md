@@ -3,7 +3,7 @@
 Spec: `tasks/passthrough/spec.md` (rev 3, approved). Plan: `tasks/passthrough/plan.md`.
 Checkpoint after every 2–3 tasks: full suite green, both shells.
 
-## T1 — POSIX pass-through core + boundary relaxation (aip.sh)
+## ~~T1~~ — POSIX pass-through core + boundary relaxation (aip.sh)
 
 One profile/harness maintenance core plus the security-check relaxation, all testable by
 direct calls after `source aip.sh`.
@@ -33,7 +33,7 @@ Acceptance:
 
 Verify: `npm run test:posix` after T4 (unit-level calls in T4's bats file).
 
-## T2 — POSIX hooks + doctor (aip.sh)
+## ~~T2~~ — POSIX hooks + doctor (aip.sh)
 
 - `_aip_passthrough_profile NAME` (loop four harnesses)
 - `_aip_run_harness`: call `_aip_passthrough "$harness" "$_AIP_RESOLVED_NAME"` after
@@ -51,7 +51,7 @@ Acceptance:
 
 Verify: bats additions in T4.
 
-## T3 — POSIX import interplay (aip.sh)
+## ~~T3~~ — POSIX import interplay (aip.sh)
 
 - `_aip_import_copy_one`: a destination that is a pass-through link is replaceable
   (`o`/`--force`) like any non-managed link; on replacement, remove the rel from the
@@ -65,7 +65,7 @@ Acceptance:
 
 Verify: bats additions in T4.
 
-## T4 — Bats suite (tests/posix/passthrough.bats + import.bats additions)
+## ~~T4~~ — Bats suite (tests/posix/passthrough.bats + import.bats additions)
 
 Fixture-driven (temp `HOME`), direct `_aip_passthrough` calls plus wrapper/create/clone
 paths. Covers T1–T3 acceptance plus: idempotency/empty checkpoint, precedence (file and
@@ -80,7 +80,7 @@ Acceptance:
 
 Verify: `npm run test:posix`.
 
-## T5 — PowerShell core + hooks + doctor (aip.ps1)
+## ~~T5~~ — PowerShell core + hooks + doctor (aip.ps1)
 
 Mirror T1+T2 in PowerShell: `Get-AipPassthroughRels`, `ConvertTo-AipRelativePath`,
 `Test-AipPassthroughLink`, `Get/Set-AipPassthroughGitIgnoreBlock`, `Invoke-AipPassthrough`,
@@ -94,7 +94,7 @@ Acceptance:
 
 Verify: Pester in T7.
 
-## T6 — PowerShell import interplay (aip.ps1)
+## ~~T6~~ — PowerShell import interplay (aip.ps1)
 
 Mirror T3: `Copy-AipImportFile` recognizes pass-through links; replaces them on
 `force`; removes the block entry.
@@ -104,7 +104,7 @@ Acceptance:
 
 Verify: Pester in T7.
 
-## T7 — Pester suite (tests/powershell/Aip.Tests.ps1 additions)
+## ~~T7~~ — Pester suite (tests/powershell/Aip.Tests.ps1 additions)
 
 Mirror T4 for PowerShell, using a settable `$script:AipImportHome`.
 
@@ -113,7 +113,7 @@ Acceptance:
 
 Verify: `pwsh -NoProfile -File tests/run-powershell.ps1`.
 
-## T8 — Consistency, verification, branch, PR
+## ~~T8~~ — Consistency, verification, branch, PR
 
 - Update the spec's `.gitignore` block example to the ASCII marker actually implemented
 - `shellcheck`/`PSScriptAnalyzer` clean; full bats + Pester green; `npm run test:node`
