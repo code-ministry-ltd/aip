@@ -69,6 +69,9 @@ BeforeEach {
     $script:AipProfileRoot = Join-Path $TestDrive 'profile root'
     $script:FakeBin = Join-Path $TestDrive 'fake bin'
     $script:FakeCapture = Join-Path $TestDrive 'capture'
+    # Isolate the harness default roots (pass-through + import sources) from the
+    # developer's real machine config, like the import Describe does for its own root.
+    $script:AipImportHome = Join-Path $TestDrive 'import-home'
     $env:FAKE_CAPTURE = $script:FakeCapture
     $env:FAKE_EXIT_STATUS = '0'
     $env:AIP_PROFILE = $null
@@ -77,7 +80,7 @@ BeforeEach {
     $env:GIT_CONFIG_NOSYSTEM = '1'
     if (Test-Path -LiteralPath $script:AipProfileRoot) { Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force }
     if (Test-Path -LiteralPath $script:FakeBin) { Remove-Item -LiteralPath $script:FakeBin -Recurse -Force }
-    New-Item -ItemType Directory -Path $script:AipProfileRoot, $script:FakeBin -Force | Out-Null
+    New-Item -ItemType Directory -Path $script:AipProfileRoot, $script:FakeBin, $script:AipImportHome -Force | Out-Null
     & git config --global user.name 'Aip Tests'
     & git config --global user.email 'aip@example.test'
     # CI git can kick off background auto-maintenance that races the sync lock.
@@ -2181,5 +2184,218 @@ Describe 'import' {
 
     It 'appears in help' {
         aip help | Out-String | Should -Match 'aip import HARNESS'
+    }
+}
+
+Describe 'pass-through' {
+    BeforeAll {
+        function Test-AipProfileLink {
+            param([Parameter(Mandatory)][string]$Profile, [Parameter(Mandatory)][string]$Relative)
+            $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path $Profile $Relative)) -Force -ErrorAction SilentlyContinue
+            return $null -ne $item -and $item.LinkType -eq 'SymbolicLink'
+        }
+
+        function Get-AipGitIgnoreText {
+            param([Parameter(Mandatory)][string]$Profile)
+            return Get-Content -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path $Profile '.gitignore')) -Raw
+        }
+    }
+
+    BeforeEach {
+        # Fresh, unique root per test (Pester 5.9 reuses one TestDrive path for the
+        # whole run), mirroring the import Describe. AipImportHome is isolated so the
+        # tests never read the developer's real machine config.
+        $script:PassRoot = Join-Path $TestDrive ('pass-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:PassRoot -Force | Out-Null
+        $script:AipImportHome = Join-Path $script:PassRoot 'home'
+        $script:AipProfileRoot = Join-Path $script:PassRoot 'agent-profiles'
+        $script:FakeBin = Join-Path $script:PassRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:PassRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:AIP_PROFILE = $null
+        $env:AIP_ANIMATION = 'off'
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:PassRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        New-Item -ItemType Directory -Path $script:AipImportHome, $script:FakeBin -Force | Out-Null
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        & git config --global maintenance.auto false
+        & git config --global gc.auto 0
+        foreach ($harness in 'claude', 'codex', 'pi', 'opencode') { New-FakeHarness $harness }
+        $script:AipRealPath = $script:FakeBin
+        # Fixtures are created BEFORE profile creation so that creation seeds the
+        # links (the behaviour under test).
+        $script:Pidir = Join-Path $script:AipImportHome '.pi/agent'
+        New-Item -ItemType Directory -Path (Join-Path $script:Pidir 'themes') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value '{"models":[]}' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value '{"token":"secret"}' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'themes/custom.json') -Value '{"name":"custom"}' -Encoding utf8NoBOM -NoNewline
+        New-TestProfile work
+        New-TestProfile suit
+        $env:AIP_PROFILE = 'work'
+    }
+
+    AfterEach {
+        $env:AIP_PROFILE = $null
+        $env:AIP_ANIMATION = $null
+        $env:FAKE_CAPTURE = $null
+        $env:FAKE_EXIT_STATUS = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
+    function Test-AipProfileLink {
+        param([Parameter(Mandatory)][string]$Profile, [Parameter(Mandatory)][string]$Relative)
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path $Profile $Relative)) -Force -ErrorAction SilentlyContinue
+        return $null -ne $item -and $item.LinkType -eq 'SymbolicLink'
+    }
+
+    function Get-AipGitIgnoreText {
+        param([Parameter(Mandatory)][string]$Profile)
+        return Get-Content -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path $Profile '.gitignore')) -Raw
+    }
+
+    It 'create seeds pass-through links and commits the gitignore entries' {
+        Test-AipProfileLink 'work' 'pi/models.json' | Should -BeTrue
+        Test-AipProfileLink 'work' 'pi/auth.json' | Should -BeTrue
+        Test-AipProfileLink 'work' 'pi/themes' | Should -BeTrue
+        $resolved = (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')).ResolveLinkTarget($true).FullName
+        $resolved | Should -Be (Join-Path $script:Pidir 'models.json')
+        $gitIgnore = Get-AipGitIgnoreText 'work'
+        $gitIgnore | Should -Match "(?m)^pi/models.json$"
+        $gitIgnore | Should -Match "(?m)^pi/auth.json$"
+        $gitIgnore | Should -Match "(?m)^pi/themes$"
+        & git -C $script:AipProfileRoot check-ignore -- work/pi/models.json work/pi/auth.json work/pi/themes *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot ls-files -- work/pi/models.json work/pi/auth.json work/pi/themes) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'create seeds nothing when the default root is absent' {
+        $script:AipImportHome = Join-Path $TestDrive ('empty-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AipImportHome -Force | Out-Null
+        aip create bare *> $null
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'bare/pi/models.json') | Should -BeFalse
+        (Get-AipGitIgnoreText 'bare') | Should -Not -Match 'aip pass-through'
+    }
+
+    It 'maintenance is idempotent: a second session changes nothing' {
+        $before = (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw)
+        & pi *> $null
+        & pi *> $null
+        $after = (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw)
+        $after | Should -Be $before
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'a wrapper session maintains links for the resolved profile' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        & pi *> $null
+        Test-AipProfileLink 'work' 'pi/models.json' | Should -BeTrue
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'profile precedence: a real file shadows the link and clears its entry' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Value '{"own":true}' -Encoding utf8NoBOM -NoNewline
+        & pi *> $null
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be '{"own":true}'
+        (Get-AipGitIgnoreText 'work') | Should -Not -Match "(?m)^pi/models.json$"
+    }
+
+    It 'a broken pass-through link is removed with a warning and its entry cleared' {
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'models.json') -Force
+        & pi *> $null
+        $script:AipLastWarning | Should -Match 'removed stale pass-through link work/pi/models.json'
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') | Should -BeFalse
+        (Get-AipGitIgnoreText 'work') | Should -Not -Match "(?m)^pi/models.json$"
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/auth.json$"
+    }
+
+    It 'restoring the default file brings the link and entry back' {
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'models.json') -Force
+        & pi *> $null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value '{"models":[]}' -Encoding utf8NoBOM -NoNewline
+        & pi *> $null
+        Test-AipProfileLink 'work' 'pi/models.json' | Should -BeTrue
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
+    }
+
+    It 'doctor reports pass-through links and warns on broken ones without failing' {
+        aip doctor work *> $null
+        $script:AipCommandStatus | Should -Be 0
+        $output = aip doctor work
+        $output | Out-String | Should -Match 'OK: pass-through work/pi/models.json'
+        # a hand-made broken pass-through link is a warning, not an error
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Target (Join-Path $script:Pidir 'settings.json') | Out-Null
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force -ErrorAction SilentlyContinue
+        aip doctor work *> $null
+        $script:AipCommandStatus | Should -Be 0
+        $output = aip doctor work
+        $output | Out-String | Should -Match 'WARN: pass-through work/pi/settings.json is broken'
+    }
+
+    It 'security: an off-allowlist symlink still fails doctor' {
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/evil.json') -Target (Join-Path $TestDrive 'outside') | Out-Null
+        aip doctor work *> $null
+        $script:AipCommandStatus | Should -Be 1
+        $script:AipLastError | Should -Be $null
+        (& { $output = aip doctor work 2>&1; $output | Out-String }) | Should -Match 'unsupported symbolic link'
+    }
+
+    It 'security: a crafted ../ escape under the default root is rejected' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Target (Join-Path $script:Pidir '../../models.json') | Out-Null
+        Test-AipProfileReparsePoints (Join-Path $script:AipProfileRoot 'work') | Should -BeFalse
+        $script:AipProfileBoundaryError | Should -Match 'unsupported symbolic link'
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+    }
+
+    It 'security: an absolute pass-through target under the default root is accepted' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Target (Join-Path $script:Pidir 'models.json') | Out-Null
+        Test-AipProfileReparsePoints (Join-Path $script:AipProfileRoot 'work') | Should -BeTrue
+    }
+
+    It 'clone seeds pass-through links into the new profile' {
+        aip clone work suit2 *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-AipProfileLink 'suit2' 'pi/models.json' | Should -BeTrue
+        (Get-AipGitIgnoreText 'suit2') | Should -Match "(?m)^pi/models.json$"
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'import --force over a pass-through link replaces it and clears the entry' {
+        aip import pi models.json --profile work --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        (Get-AipGitIgnoreText 'work') | Should -Not -Match "(?m)^pi/models.json$"
+        & git -C $script:AipProfileRoot add work/pi/models.json
+        $global:LASTEXITCODE | Should -Be 0
+        Test-AipProfileLink 'work' 'pi/auth.json' | Should -BeTrue
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/auth.json$"
+    }
+
+    It 'convergence: maintenance with no default root leaves the block untouched' {
+        $block = Get-AipGitIgnoreText 'work'
+        $script:AipImportHome = Join-Path $TestDrive ('other-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AipImportHome -Force | Out-Null
+        Invoke-AipPassthroughProfile 'work'
+        (Get-AipGitIgnoreText 'work') | Should -Be $block
+    }
+
+    It 'convergence: claude entries survive pi maintenance' {
+        $cldir = Join-Path $script:AipImportHome '.claude'
+        New-Item -ItemType Directory -Path $cldir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $cldir 'settings.json') -Value '{"permissions":{}}' -Encoding utf8NoBOM -NoNewline
+        Invoke-AipPassthrough 'claude' 'work'
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.json$"
+        Invoke-AipPassthrough 'pi' 'work'
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.json$"
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
     }
 }
