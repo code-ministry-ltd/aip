@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.3.0'
+_AIP_VERSION='0.4.0'
 # Directory containing aip.sh at dot-source time; used to locate the interactive
 # picker (bin/aip-picker.js) when it ships alongside the script.
 case ${ZSH_VERSION-} in

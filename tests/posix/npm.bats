@@ -15,15 +15,15 @@ setup() {
 
   run node "$SHIM" version
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.3.0' ]
+  [ "$output" = 'aip 0.4.0' ]
 
   run node "$SHIM" --version
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.3.0' ]
+  [ "$output" = 'aip 0.4.0' ]
 
   run node "$SHIM" -v
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.3.0' ]
+  [ "$output" = 'aip 0.4.0' ]
 }
 
 @test "the npm shim propagates aip usage errors" {
@@ -50,7 +50,7 @@ setup() {
 
   run bash -c 'source "$1"; aip version' _ "$_AIP_INSTALL_ROOT/aip.sh"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.3.0' ]
+  [ "$output" = 'aip 0.4.0' ]
 
   run node "$SHIM" update
   [ "$status" -eq 0 ]

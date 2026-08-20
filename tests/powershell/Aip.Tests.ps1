@@ -101,7 +101,7 @@ AfterEach {
 }
 
 It 'reports the embedded version and rejects extra arguments' {
-    aip version | Should -Be 'aip 0.3.0'
+    aip version | Should -Be 'aip 0.4.0'
     $global:LASTEXITCODE | Should -Be 0
     aip version extra *> $null
     $global:LASTEXITCODE | Should -Not -Be 0
