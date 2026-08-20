@@ -70,7 +70,9 @@ jobs:
         shell: pwsh
         run: |
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -AllowClobber
-          Invoke-ScriptAnalyzer -Path aip.ps1, install.ps1 -Severity Warning, Error | Format-Table -AutoSize
+          foreach ($file in @('aip.ps1', 'install.ps1')) {
+            Invoke-ScriptAnalyzer -Path $file -Severity Warning, Error | Format-Table -AutoSize
+          }
       - name: Run Pester suite
         shell: pwsh
         run: pwsh -NoProfile -File tests/run-powershell.ps1
