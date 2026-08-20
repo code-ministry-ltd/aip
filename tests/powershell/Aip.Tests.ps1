@@ -114,7 +114,7 @@ It 'update delegates to the npm package update command' {
         $lines = Get-Content -LiteralPath $script:FakeCapture
         $lines | Should -Contain 'harness=npx'
         $lines | Should -Contain 'arg=--yes'
-        $lines | Should -Contain 'arg=@code-ministry/aip'
+        $lines | Should -Contain 'arg=@code-ministry/aip@latest'
         $lines | Should -Contain 'arg=update'
     }
     finally { $env:PATH = $savedPath }

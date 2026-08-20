@@ -1794,7 +1794,7 @@ function Invoke-AipUpdate {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
-    & npx --yes '@code-ministry/aip' update
+    & npx --yes '@code-ministry/aip@latest' update
     $script:AipCommandStatus = $LASTEXITCODE
 }
 
