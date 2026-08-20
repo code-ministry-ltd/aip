@@ -14,6 +14,11 @@ _aip_error() {
   printf 'aip: %s\n' "$*" >&2
 }
 
+_aip_warn() {
+  _aip_spinner_stop
+  printf 'aip: warning: %s\n' "$*" >&2
+}
+
 _aip_update() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
   (
@@ -399,13 +404,274 @@ _aip_check_live_profile_links() {
   # shellcheck disable=SC2094
   while IFS= read -r -d '' link_path; do
     relative=${link_path#"$profile"/}
-    if ! _aip_is_required_profile_link "$relative"; then
+    if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
       command rm -f "$entries"
       _aip_error "profile contains an unsupported symbolic link that could escape its boundary: $relative"
       return 1
     fi
   done <"$entries"
   command rm -f "$entries"
+}
+
+_aip_passthrough_rels() {
+  # The per-harness pass-through allowlist: machine-local configuration inputs that
+  # every profile falls back to unless it defines the path itself. Names are matched
+  # without a trailing slash; each maps to the same relative path under the harness
+  # default root. Only these paths may ever be linked by pass-through maintenance.
+  case ${1-} in
+    pi) printf '%s\n' models.json auth.json settings.json themes prompts extensions ;;
+    claude) printf '%s\n' settings.json settings.local.json .credentials.json agents commands context-mode output-styles workflows keybindings.json plugins ;;
+    codex) printf '%s\n' config.toml auth.json plugins ;;
+    opencode) printf '%s\n' opencode.json auth.json tui.json agent command plugins ;;
+    *) return 1 ;;
+  esac
+}
+
+_aip_relative_path() {
+  # $1 from-directory, $2 target path (both absolute); prints the relative path from
+  # $1 to $2 (e.g. from ~/agent-profiles/work/pi to ~/.pi/agent/models.json prints
+  # ../../../.pi/agent/models.json). POSIX-only helper; no dependency on GNU realpath.
+  local from=$1 to=$2 from_rest to_rest result='' component
+  case $from in /*) ;; *) from=$PWD/$from ;; esac
+  case $to in /*) ;; *) to=$PWD/$to ;; esac
+  from=${from%/}
+  to=${to%/}
+  from_rest=${from#/}
+  to_rest=${to#/}
+  while [ -n "$from_rest" ] && [ -n "$to_rest" ]; do
+    [ "${from_rest%%/*}" = "${to_rest%%/*}" ] || break
+    case $from_rest in
+      */*) from_rest=${from_rest#*/} ;;
+      *) from_rest= ;;
+    esac
+    case $to_rest in
+      */*) to_rest=${to_rest#*/} ;;
+      *) to_rest= ;;
+    esac
+  done
+  result=$to_rest
+  while [ -n "$from_rest" ]; do
+    case $from_rest in
+      */*) component=${from_rest%%/*}; from_rest=${from_rest#*/} ;;
+      *) component=$from_rest; from_rest= ;;
+    esac
+    [ -n "$component" ] || break
+    result=../$result
+  done
+  [ -n "$result" ] || result=.
+  printf '%s\n' "$result"
+}
+
+_aip_normalize_path() {
+  # Prints $1 with '.' and '..' components resolved lexically (POSIX, no filesystem
+  # access). Requires an absolute path; root-level '..' is ignored.
+  local input=$1 out='' comp remaining
+  case $input in /*) ;; *) return 1 ;; esac
+  remaining=${input#/}
+  while [ -n "$remaining" ]; do
+    comp=${remaining%%/*}
+    case $remaining in */*) remaining=${remaining#*/} ;; *) remaining= ;; esac
+    if [ -z "$comp" ] || [ "$comp" = . ]; then continue
+    elif [ "$comp" = .. ]; then
+      case $out in
+        */*) out=${out%/*} ;;
+        *) out= ;;
+      esac
+    else
+      out=${out:+$out/}$comp
+    fi
+  done
+  printf '/%s\n' "$out"
+}
+
+_aip_is_passthrough_link() {
+  # $1 relative link path (e.g. pi/models.json), $2 profile path. Returns 0 when the
+  # link is a pass-through link: allowlisted rel whose target is confined to the
+  # harness default root. Accepts broken links whose raw target is exactly the
+  # expected relative path; for absolute targets the canonical target must resolve
+  # under the root, and when it cannot resolve (broken link) the raw target must stay
+  # inside the root after lexical ..-normalisation (so crafted ../ escapes are
+  # rejected even when the escape path does not exist).
+  local relative=$1 profile=$2 harness rel root expected raw canonical resolved_root norm_root norm_raw
+  harness=${relative%%/*}
+  rel=${relative#*/}
+  case $harness in pi|claude|codex|opencode) ;; *) return 1 ;; esac
+  case $rel in */*|'') return 1 ;; esac
+  _aip_passthrough_rels "$harness" | command grep -Fxq "$rel" || return 1
+  root=$(_aip_import_harness_root "$harness") || return 1
+  [ -n "$root" ] || return 1
+  resolved_root=$(command readlink -f "$root") || resolved_root=$root
+  norm_root=$(_aip_normalize_path "$root") || return 1
+  expected=$(_aip_relative_path "$profile/$harness" "$root/$rel")
+  raw=$(command readlink "$profile/$relative" 2>/dev/null) || return 1
+  [ "$raw" = "$expected" ] && return 0
+  canonical=$(command readlink -f "$profile/$relative" 2>/dev/null)
+  if [ -n "$canonical" ]; then
+    case $canonical in "$resolved_root"/*) return 0 ;; *) return 1 ;; esac
+  else
+    norm_raw=$(_aip_normalize_path "$raw") || return 1
+    case $norm_raw in "$norm_root"/*) return 0 ;; *) return 1 ;; esac
+  fi
+}
+
+_AIP_PASSTHROUGH_BEGIN='# aip pass-through (machine-local, do not sync) BEGIN'
+_AIP_PASSTHROUGH_END='# aip pass-through END'
+
+_aip_gitignore_passthrough_entries() {
+  # $1 = .gitignore path; prints the current pass-through entries, one per line.
+  local gitignore=$1
+  [ -f "$gitignore" ] || return 0
+  command awk -v begin="$_AIP_PASSTHROUGH_BEGIN" -v end="$_AIP_PASSTHROUGH_END" '
+    $0 == begin { in_block = 1; next }
+    in_block && $0 == end { in_block = 0; next }
+    in_block && $0 != "" { print }
+  ' "$gitignore"
+}
+
+_aip_gitignore_set_passthrough_block() {
+  # $1 = .gitignore path, $2 = entries file (newline-separated, may be absent/empty).
+  # Rewrites only the marked block in place; every other line is preserved verbatim.
+  local gitignore=$1 entries=$2 temporary has_entries=0
+  [ -f "$gitignore" ] || return 1
+  if [ -n "$entries" ] && [ -s "$entries" ]; then has_entries=1; fi
+  temporary=$(command mktemp "${gitignore}.XXXXXX") || return 1
+  command awk -v begin="$_AIP_PASSTHROUGH_BEGIN" -v end="$_AIP_PASSTHROUGH_END" -v entries="$entries" -v has="$has_entries" '
+    $0 == begin { in_block = 1; next }
+    in_block && $0 == end { in_block = 0; next }
+    in_block { next }
+    { print }
+    END {
+      if (!has) exit
+      print begin
+      while ((getline line < entries) > 0) print line
+      close(entries)
+      print end
+    }
+  ' "$gitignore" >"$temporary" || { command rm -f "$temporary"; return 1; }
+  command mv "$temporary" "$gitignore" || { command rm -f "$temporary"; return 1; }
+}
+
+_aip_gitignore_remove_passthrough_entry() {
+  # $1 = .gitignore path, $2 = harness-qualified entry (e.g. pi/models.json).
+  # Removes one entry from the pass-through block; leaves the block empty/removed
+  # when it held only that entry. Used by aip import when a profile-owned copy
+  # replaces a pass-through link.
+  local gitignore=$1 rel=$2 current entries
+  current=$(_aip_gitignore_passthrough_entries "$gitignore")
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-passthrough-entries.XXXXXX") || return 1
+  : >|"$entries"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    [ "$entry" = "$rel" ] || printf '%s\n' "$entry" >>"$entries"
+  done <<EOF
+$current
+EOF
+  _aip_gitignore_set_passthrough_block "$gitignore" "$entries" || { command rm -f "$entries"; return 1; }
+  command rm -f "$entries"
+}
+
+_aip_passthrough() {
+  # $1 harness, $2 profile name. Ensures the profile's pass-through links for one
+  # harness match the machine-local default root: creates missing links (never
+  # overwriting an existing path, skipping paths already tracked in Git), removes
+  # broken links with a warning, and reconciles the profile's .gitignore block.
+  # Never fails: problems warn and the caller proceeds (pass-through is a fallback).
+  local harness=$1 name=$2 profile_path root rel source dest expected
+  local current entries removed_this_run='' link_rel
+  profile_path=$(_aip_profile_path "$name")
+  root=$(_aip_import_harness_root "$harness") || return 0
+  [ -d "$root" ] || return 0
+  [ -d "$profile_path/$harness" ] || return 0
+
+  # 1. Remove broken pass-through links (their raw target is a pass-through target but
+  #    the machine-local file or directory is gone). Removing first lets a link be
+  #    re-created below when the default path comes back.
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    dest=$profile_path/$harness/$rel
+    if [ -L "$dest" ] && _aip_is_passthrough_link "$harness/$rel" "$profile_path" && [ ! -e "$dest" ]; then
+      if command rm -f "$dest" 2>/dev/null; then
+        _aip_warn "removed stale pass-through link $name/$harness/$rel (its machine-local target is gone)"
+        removed_this_run=${removed_this_run:+$removed_this_run }$harness/$rel
+      else
+        _aip_warn "could not remove stale pass-through link $name/$harness/$rel"
+      fi
+    fi
+  done < <(_aip_passthrough_rels "$harness")
+
+  # 2. Create missing links for allowlisted paths that exist in the default root and
+  #    are absent from the profile (or were just removed as broken). A real file or
+  #    directory in the profile shadows the link; a path already tracked in Git is
+  #    exempt (the profile owns it and keeps syncing it).
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    dest=$profile_path/$harness/$rel
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+      continue  # existing path shadows the link (profile precedence)
+    fi
+    [ -e "$root/$rel" ] || continue
+    if _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/$harness/$rel" >/dev/null 2>&1; then
+      continue
+    fi
+    expected=$(_aip_relative_path "$profile_path/$harness" "$root/$rel")
+    if ! command ln -s "$expected" "$dest" 2>/dev/null; then
+      _aip_warn "could not create pass-through link $name/$harness/$rel -> $expected"
+    fi
+  done < <(_aip_passthrough_rels "$harness")
+
+  # 3. Reconcile the .gitignore block. Entries are harness-qualified (pi/models.json,
+  #    codex/auth.json, …) so a name like auth.json never collides across harnesses.
+  #    Convergent rule: an entry is added when a pass-through link exists (and the
+  #    path is untracked); removed when the path exists but is not a pass-through
+  #    link (profile override), is tracked, or was just removed as broken; and
+  #    otherwise left exactly as it is (absent paths keep their entry state so
+  #    machines without the default file never fight machines that have it). Other
+  #    harnesses' entries are preserved untouched.
+  current=$(_aip_gitignore_passthrough_entries "$profile_path/.gitignore")
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-passthrough-entries.XXXXXX") || return 0
+  : >|"$entries"
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    dest=$profile_path/$harness/$rel
+    if [ -L "$dest" ] && _aip_is_passthrough_link "$harness/$rel" "$profile_path" && [ -e "$dest" ]; then
+      if ! _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/$harness/$rel" >/dev/null 2>&1; then
+        printf '%s\n' "$harness/$rel" >>"$entries"
+      fi
+    elif [ -e "$dest" ]; then
+      :  # path exists but is not a pass-through link: no entry
+    elif case " $removed_this_run " in *" $harness/$rel "*) true ;; *) false ;; esac; then
+      :  # link removed as broken this run: no entry
+    elif ! printf '%s\n' "$current" | command grep -Fxq "$harness/$rel"; then
+      :  # path absent and no current entry: nothing to do
+    else
+      :  # path absent but entry present (convergence): keep it
+      printf '%s\n' "$harness/$rel" >>"$entries"
+    fi
+  done < <(_aip_passthrough_rels "$harness")
+  # Preserve other harnesses' entries from the current block untouched (only
+  # harness-qualified entries are recognised; stray unqualified lines are dropped).
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    case $rel in pi/*|claude/*|codex/*|opencode/*) ;; *) continue ;; esac
+    case ${rel%%/*} in "$harness") continue ;; esac
+    case " $removed_this_run " in *" $rel "*) continue ;; esac
+    printf '%s\n' "$rel" >>"$entries"
+  done <<EOF
+$current
+EOF
+  if ! _aip_gitignore_set_passthrough_block "$profile_path/.gitignore" "$entries"; then
+    _aip_warn "could not update $name/.gitignore pass-through entries"
+  fi
+  command rm -f "$entries"
+  return 0
+}
+
+_aip_passthrough_profile() {
+  # $1 profile name: maintains pass-through links for every harness (create/clone).
+  local name=$1 harness
+  for harness in pi claude codex opencode; do
+    _aip_passthrough "$harness" "$name"
+  done
 }
 
 _aip_find_project_marker() {
@@ -591,6 +857,7 @@ _aip_create() (
     return 1
   fi
   command rmdir "$stage" || return
+  _aip_passthrough_profile "$name"
   _aip_git -C "$_AIP_PROFILE_ROOT" add .gitignore "$name" || {
     _aip_error "could not commit profile '$name'; check Git identity and hooks"
     return 1
@@ -754,6 +1021,7 @@ _aip_clone() (
   fi
   command rm -f "$tarball"
   command rmdir "$stage" || return
+  _aip_passthrough_profile "$target_name"
   _aip_git -C "$_AIP_PROFILE_ROOT" add "$target_name" || {
     _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
     return 1
@@ -906,6 +1174,26 @@ _aip_resolve_doctor_profile() {
   { [ -d "$profile_path" ] || [ -L "$profile_path" ]; } || { _aip_error "profile '$name' does not exist"; return 2; }
 }
 
+_aip_doctor_passthrough() {
+  # Reports pass-through links and warns (never fails) on broken ones.
+  local profile_path=$1 name=$2 harness root rel dest
+  for harness in pi claude codex opencode; do
+    root=$(_aip_import_harness_root "$harness") || continue
+    [ -d "$root" ] || continue
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      dest=$profile_path/$harness/$rel
+      if [ -L "$dest" ] && _aip_is_passthrough_link "$harness/$rel" "$profile_path"; then
+        if [ -e "$dest" ]; then
+          printf 'OK: pass-through %s/%s -> %s\n' "$name" "$harness/$rel" "$(command readlink "$dest")"
+        else
+          printf 'WARN: pass-through %s/%s is broken (its machine-local target is missing)\n' "$name" "$harness/$rel"
+        fi
+      fi
+    done < <(_aip_passthrough_rels "$harness")
+  done
+}
+
 _aip_doctor_profile_layout() {
   local profile_path=$1 name=$2 pair link expected directory
   for directory in .aip skills claude codex pi opencode; do
@@ -934,6 +1222,7 @@ _aip_doctor_profile_layout() {
     printf 'ERROR: %s content or layout validation failed; repair the diagnostic above\n' "$name"
     return 1
   fi
+  _aip_doctor_passthrough "$profile_path" "$name"
   printf 'OK: profile layout and links (%s)\n' "$name"
 }
 
@@ -1977,6 +2266,7 @@ _aip_run_harness() (
   else _aip_resolve_profile || return
   fi
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
+  _aip_passthrough "$harness" "$_AIP_RESOLVED_NAME"
   real=$(_aip_find_real_command "$harness") || {
     _aip_error "$harness executable was not found in PATH"
     return 127
@@ -2114,10 +2404,11 @@ _aip_import_is_managed_link() {
 }
 
 _aip_import_copy_one() {
-  # $1 source file, $2 dest, $3 overwrite (ask|force|skip), $4 profile, $5 rel, $6 dry-run
+  # $1 source file, $2 dest, $3 overwrite (ask|force|skip), $4 profile, $5 rel,
+  # $6 dry-run, $7 harness, $8 profile path
   # sets _AIP_IMPORT_OVERWRITE on 'a'/'n'; returns 0 copied, 3 skipped, 1 error, 2 abort
-  local source=$1 dest=$2 overwrite=$3 name=$4 rel=$5 dry_run=$6
-  local overwrite_this=0 answer parent
+  local source=$1 dest=$2 overwrite=$3 name=$4 rel=$5 dry_run=$6 harness=$7 profile_path=$8
+  local overwrite_this=0 answer parent passthrough_replaced=0
   if [ "$dry_run" -eq 1 ]; then
     if [ -e "$dest" ] || [ -L "$dest" ]; then
       printf 'copy %s -> %s/%s (exists)\n' "$rel" "$name" "$rel"
@@ -2130,6 +2421,12 @@ _aip_import_copy_one() {
     if _aip_import_is_managed_link "$dest"; then
       _aip_error "refusing to overwrite the profile link $name/$rel"
       return 1
+    fi
+    # A pass-through link is replaceable: the imported profile-owned copy becomes the
+    # profile's own version (and its .gitignore entry is dropped below so the copy
+    # can be tracked again).
+    if [ -L "$dest" ] && _aip_is_passthrough_link "$harness/$rel" "$profile_path"; then
+      passthrough_replaced=1
     fi
     case $overwrite in
       force) overwrite_this=1 ;;
@@ -2154,6 +2451,9 @@ _aip_import_copy_one() {
   command mkdir -p "$parent" || return 1
   [ ! -L "$dest" ] || command rm -f "$dest"
   command cp -p "$source" "$dest" || return 1
+  if [ "$passthrough_replaced" -eq 1 ]; then
+    _aip_gitignore_remove_passthrough_entry "$profile_path/.gitignore" "$harness/$rel" || return 1
+  fi
   return 0
 }
 
@@ -2180,7 +2480,7 @@ _aip_import_run_copy() {
         skip) overwrite=skip ;;
         *) overwrite=ask ;;
       esac
-      _aip_import_copy_one "$source_root/$rel" "$dest" "$overwrite" "$name" "$rel" "$dry_run"
+      _aip_import_copy_one "$source_root/$rel" "$dest" "$overwrite" "$name" "$rel" "$dry_run" "$harness" "$profile_path"
       case $? in
         0) copied=$((copied + 1)) ;;
         3) skipped=$((skipped + 1)) ;;
