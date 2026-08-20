@@ -27,6 +27,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Lint shell (advisory)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --severity=warning aip.sh install.sh
       - name: Install test dependencies
         run: npm ci
       - name: Build the picker bundle
@@ -58,6 +65,12 @@ jobs:
         run: |
           $version = (Get-Content tests/Pester.version -Raw).Trim()
           Install-Module Pester -RequiredVersion $version -Scope CurrentUser -Force -AllowClobber
+      - name: Lint PowerShell (advisory)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -AllowClobber
+          Invoke-ScriptAnalyzer -Path aip.ps1, install.ps1 -Severity Warning, Error | Format-Table -AutoSize
       - name: Run Pester suite
         shell: pwsh
         run: pwsh -NoProfile -File tests/run-powershell.ps1
