@@ -234,11 +234,75 @@ ignored by the profile scaffold and stay off the remote.
 The interactive picker requires Node.js (already present if you installed via npm);
 the non-interactive form works with just Git.
 
+## Pass-through of machine-local configuration
+
+Launching a harness through aip points it at the profile's harness directory, so
+configuration you keep in the harness's default location — for example
+`~/.pi/agent/models.json` and `~/.pi/agent/auth.json` — would otherwise be invisible
+to aip. This is handled automatically, with no setup: when a profile is created or
+cloned, and before every harness session, aip links the machine-local configuration
+into the profile, so the harness keeps reading exactly what it would read outside aip.
+Nothing is copied and nothing goes stale.
+
+Each profile gets a per-harness symbolic link to the machine-local file (for example
+`work/pi/models.json → ~/.pi/agent/models.json`). **If a profile defines the path
+itself** — a real file, or a directory of its own — **the profile's version wins**;
+delete the link and add your own file to override. If a machine-local file
+disappears, the next session warns and removes the stale link.
+
+Only the fixed set of configuration inputs below is ever linked. These are exactly the
+machine-local settings, credentials, and user-authored agents/themes/commands that
+make sense to share by default. Instruction files aip already manages (`AGENTS.md`,
+`CLAUDE.md`, `instructions.md`, `APPEND_SYSTEM.md`, every `skills/` path) and runtime
+state (sessions, logs, caches, databases, shell snapshots, Codex `packages/`) are
+never passed through — those stay per-profile, and anything off the list can be copied
+deliberately with `aip import`.
+
+| Harness | Default location | Passed through | What it is |
+|---|---|---|---|
+| Pi | `~/.pi/agent` | `models.json` | custom models & providers (gateways, proxies, Ollama/LM Studio, model overrides) |
+| | | `auth.json` | provider credentials (API keys, OAuth tokens) |
+| | | `settings.json` | global settings: model, keybindings, theme, session dir, trust policy |
+| | | `themes/` | custom themes |
+| | | `prompts/` | custom prompt templates |
+| | | `extensions/` | installed extensions (auto-discovered) |
+| Claude Code | `~/.claude` | `settings.json` | global settings: permissions, model, env, hooks |
+| | | `settings.local.json` | machine-local settings overrides (merged over `settings.json`) |
+| | | `.credentials.json` | OAuth credentials |
+| | | `agents/` | custom subagents |
+| | | `commands/` | custom slash commands |
+| | | `context-mode/` | custom context modes |
+| | | `output-styles/` | custom output styles |
+| | | `workflows/` | custom workflows |
+| | | `keybindings.json` | custom keybindings |
+| | | `plugins/` | installed plugins |
+| OpenAI Codex | `~/.codex` | `config.toml` | main configuration: model, approval policy, sandbox, MCP servers, hooks, plugins |
+| | | `auth.json` | API credentials |
+| | | `plugins/` | installed plugins |
+| OpenCode | `~/.config/opencode` | `opencode.json` | main configuration: providers, models, MCP, agents, permissions |
+| | | `auth.json` | provider credentials |
+| | | `tui.json` | TUI settings |
+| | | `agent/` | custom agents |
+| | | `command/` | custom commands |
+| | | `plugins/` | installed plugins |
+
+(Windows equivalents live under `%USERPROFILE%`, e.g. `%USERPROFILE%\.pi\agent`.)
+
+Pass-through links are **machine-local and never synced**: aip adds each linked path to
+the profile's `.gitignore`, so the profiles repository stays portable and no machine's
+local paths leak to the remote. A profile that deliberately tracks one of these paths
+in Git (say a synced `pi/models.json`) is left alone — the link and ignore entry are
+skipped. If a harness rewrites a passed-through file (Pi `/settings`, Claude `/config`,
+`codex login`), it writes through the link to the machine-local file, which all
+profiles then see — replace the link with your own file to give a profile a private
+copy, and the next session makes that file trackable again by removing the matching
+`# aip pass-through` entry from the profile's `.gitignore`.
+
 ## What aip tracks
 
 aip automatically tracks its own metadata and instruction links, common instructions, all new files under each profile's `skills/`, and changes or deletions to files you deliberately tracked with Git. It does **not** automatically add unknown native harness files.
 
-Tracked filenames must use printable ASCII and avoid Windows-reserved characters/names, trailing dots or spaces, `.git` components and case-only collisions, so the same repository can be checked out on every supported platform. File contents remain UTF-8 and may use Unicode. Git submodules are not supported in the profiles repository; commit shared skill files directly instead. The aip-created relative links are the only supported symbolic links: additional symlinks, junctions and other reparse points are rejected so native harness state cannot escape the profiles repository.
+Tracked filenames must use printable ASCII and avoid Windows-reserved characters/names, trailing dots or spaces, `.git` components and case-only collisions, so the same repository can be checked out on every supported platform. File contents remain UTF-8 and may use Unicode. Git submodules are not supported in the profiles repository; commit shared skill files directly instead. The aip-created relative links are the only supported symbolic links: additional symlinks, junctions and other reparse points are rejected so native harness state cannot escape the profiles repository. The one deliberate exception is a pass-through link ([Pass-through of machine-local configuration](#pass-through-of-machine-local-configuration)): a link from a profile's harness directory to a machine-local file under that harness's default config location, created only for the allowlisted paths above and confined to those roots.
 
 ## Secret boundary
 
@@ -283,6 +347,10 @@ aip help                           show help (--help and -h work too)
 
 `aip import HARNESS [FILE...]` copies files from a harness's config directory into
 profiles (see [Importing existing config and skills](#importing-existing-config-and-skills)).
+
+Machine-local config pass-through is automatic and needs no command: every profile
+links the harness's default config directory in unless it defines the path itself
+(see [Pass-through of machine-local configuration](#pass-through-of-machine-local-configuration)).
 
 ## Troubleshooting
 
