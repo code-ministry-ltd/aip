@@ -10,14 +10,11 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
 }
 $script:AipCommandStatus = 0
 $script:AipVersion = '0.4.0'
-$script:AipSpinnerPowerShell = $null
-$script:AipSpinnerRunspace = $null
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
-    Stop-AipSpinner
     [Console]::Error.WriteLine("aip: $Message")
     $script:AipLastError = $Message
     $script:AipCommandStatus = 1
@@ -25,7 +22,6 @@ function Write-AipError {
 
 function Write-AipWarning {
     param([Parameter(Mandatory)][string]$Message)
-    Stop-AipSpinner
     [Console]::Error.WriteLine("aip: warning: $Message")
     $script:AipLastWarning = $Message
 }
@@ -1523,55 +1519,6 @@ function Test-AipRebasePreservesUntracked {
     return $true
 }
 
-function Start-AipSpinner {
-    if ($null -ne $script:AipSpinnerPowerShell) { return }
-    switch ($env:AIP_ANIMATION) {
-        'off' { return }
-        'always' { }
-        default {
-            if ([Console]::IsOutputRedirected) { return }
-        }
-    }
-    try {
-        $script:AipSpinnerPowerShell = [powershell]::Create()
-        [void]$script:AipSpinnerPowerShell.AddScript({
-            $frames = @('|', '/', '-', '\')
-            $index = 0
-            while ($true) {
-                try {
-                    [Console]::Write("`r$($frames[$index % $frames.Count]) syncing ")
-                }
-                catch { }
-                $index++
-                Start-Sleep -Milliseconds 100
-            }
-        })
-        $script:AipSpinnerRunspace = [runspacefactory]::CreateRunspace()
-        $script:AipSpinnerPowerShell.Runspace = $script:AipSpinnerRunspace
-        $script:AipSpinnerRunspace.Open()
-        [void]$script:AipSpinnerPowerShell.BeginInvoke()
-    }
-    catch {
-        Stop-AipSpinner
-    }
-}
-
-function Stop-AipSpinner {
-    if ($null -ne $script:AipSpinnerPowerShell) {
-        try { $script:AipSpinnerPowerShell.Stop() } catch { }
-        try { $script:AipSpinnerPowerShell.Dispose() } catch { }
-        $script:AipSpinnerPowerShell = $null
-    }
-    if ($null -ne $script:AipSpinnerRunspace) {
-        try { $script:AipSpinnerRunspace.Dispose() } catch { }
-        $script:AipSpinnerRunspace = $null
-    }
-    try {
-        if (-not [Console]::IsOutputRedirected) { [Console]::Write("`r$([char]27)[K") }
-    }
-    catch { }
-}
-
 function Invoke-AipSyncCore {
     param([string]$Mode = 'manual')
     $script:AipCommandStatus = 0
@@ -1622,7 +1569,6 @@ function Invoke-AipSyncCore {
             $env:GCM_INTERACTIVE = 'never'
             $env:GIT_SSH_COMMAND = $transport.Command
             $env:GIT_SSH_VARIANT = $transport.Variant
-            Start-AipSpinner
             Invoke-AipGit -C $script:AipProfileRoot fetch --quiet $remote *> $null
             if ($LASTEXITCODE -ne 0) {
                 if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
@@ -1662,7 +1608,6 @@ function Invoke-AipSyncCore {
                 Write-AipWarning 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
                 return
             }
-            Stop-AipSpinner
             Write-Output "Profiles synced with $upstream."
         }
         finally {
@@ -1677,7 +1622,6 @@ function Invoke-AipSyncCore {
         }
     }
     finally {
-        Stop-AipSpinner
         Exit-AipSyncLock
     }
 }

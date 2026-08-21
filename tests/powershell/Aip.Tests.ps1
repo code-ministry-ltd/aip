@@ -75,7 +75,6 @@ BeforeEach {
     $env:FAKE_CAPTURE = $script:FakeCapture
     $env:FAKE_EXIT_STATUS = '0'
     $env:AIP_PROFILE = $null
-    $env:AIP_ANIMATION = 'off'
     $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'gitconfig'
     $env:GIT_CONFIG_NOSYSTEM = '1'
     if (Test-Path -LiteralPath $script:AipProfileRoot) { Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force }
@@ -93,7 +92,6 @@ BeforeEach {
 
 AfterEach {
     $env:AIP_PROFILE = $null
-    $env:AIP_ANIMATION = $null
     $env:FAKE_CAPTURE = $null
     $env:FAKE_EXIT_STATUS = $null
     $env:GIT_CONFIG_GLOBAL = $null
@@ -1809,37 +1807,16 @@ Describe 'remote' {
     }
 }
 
-Describe 'sync animation' {
-    It 'AIP_ANIMATION=off never starts the spinner' {
+Describe 'sync output' {
+    It 'a sync emits its result line and no spinner machinery exists' {
         New-TestProfile work
         Initialize-TestUpstream
-        $env:AIP_ANIMATION = 'off'
-        aip sync *> $null
-        $global:LASTEXITCODE | Should -Be 0
-        $script:AipSpinnerRunspace | Should -BeNullOrEmpty
-        $script:AipSpinnerPowerShell | Should -BeNullOrEmpty
-    }
-
-    It 'a forced sync animation stops cleanly after the sync' {
-        New-TestProfile work
-        Initialize-TestUpstream
-        $env:AIP_ANIMATION = 'always'
         aip sync | Out-String | Should -Match 'Profiles synced with origin/main.'
         $global:LASTEXITCODE | Should -Be 0
-        $script:AipSpinnerRunspace | Should -BeNullOrEmpty
-        $script:AipSpinnerPowerShell | Should -BeNullOrEmpty
-    }
-
-    It 'a forced-animation sync that warns still stops the spinner' {
-        New-TestProfile work
-        Initialize-TestUpstream
-        $env:AIP_ANIMATION = 'always'
-        & git -C $script:AipProfileRoot remote set-url origin (Join-Path $TestDrive 'missing.git')
-        aip sync *> $null
-        $global:LASTEXITCODE | Should -Be 0
-        $script:AipLastWarning | Should -Match 'remote sync unavailable'
-        $script:AipSpinnerRunspace | Should -BeNullOrEmpty
-        $script:AipSpinnerPowerShell | Should -BeNullOrEmpty
+        Get-Command Start-AipSpinner -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command Stop-AipSpinner -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Variable -Scope Script -Name AipSpinnerRunspace -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Variable -Scope Script -Name AipSpinnerPowerShell -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 }
 
@@ -1980,7 +1957,6 @@ Describe 'import' {
         $env:FAKE_EXIT_STATUS = '0'
         $env:GIT_CONFIG_GLOBAL = Join-Path $script:ImportRoot 'gitconfig'
         $env:GIT_CONFIG_NOSYSTEM = '1'
-        $env:AIP_ANIMATION = 'off'
         New-Item -ItemType Directory -Path $script:FakeBin -Force | Out-Null
         & git config --global user.name 'Aip Tests'
         & git config --global user.email 'aip@example.test'
@@ -1996,7 +1972,6 @@ Describe 'import' {
     }
 
     AfterEach {
-        $env:AIP_ANIMATION = $null
         $env:AIP_PICKER = $null
         $env:FAKE_CAPTURE = $null
         $env:FAKE_EXIT_STATUS = $null
@@ -2214,7 +2189,6 @@ Describe 'pass-through' {
         $env:FAKE_CAPTURE = $script:FakeCapture
         $env:FAKE_EXIT_STATUS = '0'
         $env:AIP_PROFILE = $null
-        $env:AIP_ANIMATION = 'off'
         $env:GIT_CONFIG_GLOBAL = Join-Path $script:PassRoot 'gitconfig'
         $env:GIT_CONFIG_NOSYSTEM = '1'
         New-Item -ItemType Directory -Path $script:AipImportHome, $script:FakeBin -Force | Out-Null
@@ -2238,7 +2212,6 @@ Describe 'pass-through' {
 
     AfterEach {
         $env:AIP_PROFILE = $null
-        $env:AIP_ANIMATION = $null
         $env:FAKE_CAPTURE = $null
         $env:FAKE_EXIT_STATUS = $null
         $env:GIT_CONFIG_GLOBAL = $null
