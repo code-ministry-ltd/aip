@@ -47,8 +47,8 @@ exit "${FAKE_EXIT_STATUS:-0}"
     }
 
     function New-TestProfile {
-        param([string]$Name, [string]$Outfit = 'plain')
-        aip create $Name --outfit $Outfit *> $null
+        param([string]$Name)
+        aip create $Name *> $null
         $global:LASTEXITCODE | Should -Be 0
     }
 
@@ -136,7 +136,7 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'create', 'list', 'which', 'default', 'use', 'local', 'outfit', 'clone', 'delete', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
+    foreach ($command in 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
     $helpOutput | Should -Match ([regex]::Escape('aip remote add URL'))
@@ -162,10 +162,11 @@ Describe 'profile creation and selection' {
         }
     }
 
-    It 'counts Unicode scalars for outfit length consistently' {
-        Test-AipOutfit ('🐵' * 40) | Should -BeTrue
-        Test-AipOutfit ('🐵' * 65) | Should -BeFalse
-        Test-AipOutfit "bad$([char]0x85)label" | Should -BeFalse
+    It 'exposes no outfit machinery' {
+        Get-Command Test-AipOutfit -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command ConvertFrom-AipOutfitText -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command Get-AipOutfit -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        Get-Command Invoke-AipOutfit -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 
     It 'allows TOML-compatible C1 characters in Codex instructions' {
@@ -181,11 +182,11 @@ Describe 'profile creation and selection' {
     }
 
     It 'creates the approved relative-link layout atomically in the profiles repository' {
-        aip create work --outfit suit
+        aip create work
         $global:LASTEXITCODE | Should -Be 0
         $root = $script:AipProfileRoot
         $profile = Join-Path $root 'work'
-        (Get-Content (Join-Path $profile '.aip/outfit') -Raw).Trim() | Should -Be 'suit'
+        Test-Path -LiteralPath (Join-Path $profile '.aip') | Should -BeFalse
         (Get-Item (Join-Path $profile 'codex/AGENTS.md')).LinkType | Should -Be 'SymbolicLink'
         # On Windows, .Target reports relative links with backslashes; normalize to the stored form.
         [string](Get-Item (Join-Path $profile 'codex/AGENTS.md')).Target -replace '\\', '/' | Should -Be '../AGENTS.md'
@@ -225,7 +226,7 @@ Describe 'profile creation and selection' {
         $output = aip list | Out-String
 
         $global:LASTEXITCODE | Should -Be 0
-        $output | Should -Match 'work —'
+        $output | Should -Match 'work'
     }
 
     It 'resolves session, nearest project marker, and default in order' {
@@ -306,24 +307,24 @@ Describe 'profile creation and selection' {
         finally { Pop-Location }
     }
 
-    It 'supports local markers, outfits, listing, and status details' {
-        New-TestProfile work suit
-        New-TestProfile personal hoodie
+    It 'supports local markers, listing, and status details' {
+        New-TestProfile work
+        New-TestProfile personal
         aip default work *> $null
         $project = Join-Path $TestDrive 'project'
         New-Item -ItemType Directory -Path $project | Out-Null
         Push-Location $project
         try {
             aip local personal *> $null
-            aip outfit personal 'blue hoodie' *> $null
             $env:AIP_PROFILE = 'personal'
             $statusOutput = aip | Out-String
-            $statusOutput | Should -Match '🐵 personal — blue hoodie'
+            $statusOutput | Should -Match '🐵 personal'
+            $statusOutput | Should -Not -Match ' — '
             $statusOutput | Should -Match 'Selected by: session'
-            $statusOutput | Should -Match 'Git: changes, local only'
+            $statusOutput | Should -Match 'Git: clean, local only'
             $listOutput = aip list | Out-String
-            $listOutput | Should -Match 'personal — blue hoodie \[session\] \[project\]'
-            $listOutput | Should -Match 'work — suit \[default\]'
+            $listOutput | Should -Match 'personal \[session\] \[project\]'
+            $listOutput | Should -Match 'work \[default\]'
             aip local --remove *> $null
             Test-Path (Join-Path $project '.aip-profile') | Should -BeFalse
         }
@@ -331,15 +332,16 @@ Describe 'profile creation and selection' {
     }
 
     It 'lists profiles from status when none is selected' {
-        New-TestProfile work suit
-        New-TestProfile personal hoodie
+        New-TestProfile work
+        New-TestProfile personal
         $env:AIP_PROFILE = $null
         Push-Location $TestDrive
         try {
             $out = aip | Out-String
             $global:LASTEXITCODE | Should -Be 0
             $out | Should -Match 'No profile selected. Available profiles:'
-            $out | Should -Match 'work — suit'
+            $out | Should -Match 'work'
+            $out | Should -Not -Match ' — '
             $out | Should -Match "Select one with 'aip use NAME'"
         }
         finally { Pop-Location }
@@ -373,14 +375,15 @@ Describe 'profile creation and selection' {
     }
 
     It 'shows the resolved profile from status normally' {
-        New-TestProfile work suit
+        New-TestProfile work
         aip default work *> $null
         $env:AIP_PROFILE = $null
         Push-Location $TestDrive
         try {
             $out = aip | Out-String
             $global:LASTEXITCODE | Should -Be 0
-            $out | Should -Match '🐵 work — suit'
+            $out | Should -Match '🐵 work'
+            $out | Should -Not -Match ' — '
             $out | Should -Match 'Selected by: default'
         }
         finally { Pop-Location }
@@ -925,51 +928,10 @@ exit `$global:LASTEXITCODE
         $script:AipLastError | Should -Match 'must not be a symbolic link'
     }
 
-    It 'outfit refuses a linked metadata directory without changing its target' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $external = Join-Path $TestDrive 'external aip'
-        New-Item -ItemType Directory -Path $external | Out-Null
-        'outside' | Set-Content (Join-Path $external 'outfit')
-        Remove-Item -LiteralPath (Join-Path $profile '.aip') -Recurse -Force
-        New-Item -ItemType SymbolicLink -Path (Join-Path $profile '.aip') -Target $external | Out-Null
-
-        aip outfit work changed *> $null
-
-        $global:LASTEXITCODE | Should -Not -Be 0
-        (Get-Content (Join-Path $external 'outfit') -Raw).Trim() | Should -Be 'outside'
-        $listOutput = aip list | Out-String
-        $listOutput | Should -Match 'invalid outfit'
-        $listOutput | Should -Not -Match 'outside'
-    }
-
-    It 'replaces an outfit hard link without changing the external inode' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $external = Join-Path $TestDrive 'external outfit'
-        'outside' | Set-Content $external
-        $outfitPath = Join-Path $profile '.aip/outfit'
-        Remove-Item -LiteralPath $outfitPath
-        New-Item -ItemType HardLink -Path $outfitPath -Target $external | Out-Null
-
-        aip outfit work changed *> $null
-
-        $global:LASTEXITCODE | Should -Be 0
-        (Get-Content $external -Raw).Trim() | Should -Be 'outside'
-        (Get-Content $outfitPath -Raw).Trim() | Should -Be 'changed'
-    }
-
-    It 'repairs corrupt outfit content and rejects multiple stored lines' {
-        $profile = Join-Path $script:AipProfileRoot 'work'
-        $outfitPath = Join-Path $profile '.aip/outfit'
-        [IO.File]::WriteAllBytes($outfitPath, [byte[]](255))
-
-        aip outfit work repaired *> $null
-
-        $global:LASTEXITCODE | Should -Be 0
-        (Get-AipOutfit $profile) | Should -Be 'repaired'
-        [IO.File]::WriteAllText($outfitPath, "suit`n`n", [Text.UTF8Encoding]::new($false))
-        (Get-AipOutfit $profile) | Should -Be 'invalid outfit'
-        aip doctor work *> $null
-        $global:LASTEXITCODE | Should -Not -Be 0
+    It 'rejects the removed outfit command' {
+        aip outfit work jacket *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "unknown command 'outfit'"
     }
 
     It 'doctor reports forbidden tracked content and a stale lock without deleting the lock' {
@@ -1563,22 +1525,22 @@ exit 1
         (& git -C $root rev-parse HEAD) | Should -Be $before
     }
 
-    It 'rejects invalid remote outfit framing before rebase' {
+    It 'treats a stranded .aip/outfit file from an older aip as inert' {
         Initialize-TestUpstream
-        $root = $script:AipProfileRoot
-        $other = Join-Path $TestDrive 'bad outfit'
-        & git clone -q $script:TestRemote $other
-        [IO.File]::WriteAllText((Join-Path $other 'work/.aip/outfit'), "suit`n`n", [Text.UTF8Encoding]::new($false))
-        & git -C $other add work/.aip/outfit
-        & git -C $other commit -q -m invalid-outfit
-        & git -C $other push -q
-        $before = & git -C $root rev-parse HEAD
+        $stranded = Join-Path $script:AipProfileRoot 'work/.aip/outfit'
+        [void][IO.Directory]::CreateDirectory((Split-Path $stranded -Parent))
+        [IO.File]::WriteAllText($stranded, "old label`n", [Text.UTF8Encoding]::new($false))
+        & git -C $script:AipProfileRoot add work/.aip/outfit
+        & git -C $script:AipProfileRoot commit -q -m 'simulated older aip'
+
+        aip doctor work *> $null
+        $global:LASTEXITCODE | Should -Be 0
+
+        @(aip list) | Out-String | Should -Match 'work'
 
         aip sync *> $null
-
-        $global:LASTEXITCODE | Should -Not -Be 0
-        $script:AipLastError | Should -Match 'invalid outfit'
-        (& git -C $root rev-parse HEAD) | Should -Be $before
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath $stranded | Should -BeTrue
     }
 
     It 'rejects NUL bytes in remote required text before rebase' {
@@ -1704,7 +1666,7 @@ Describe 'remote' {
     }
 
     It 'sets origin on an existing repository and publishes an empty remote' {
-        New-TestProfile work suit
+        New-TestProfile work
         aip remote add $script:TestRemote | Out-String | Should -Match 'Profiles published to origin/main.'
         $global:LASTEXITCODE | Should -Be 0
         (& git -C $script:AipProfileRoot remote get-url origin) | Should -Be $script:TestRemote
@@ -1736,8 +1698,8 @@ Describe 'remote' {
     }
 
     It 'clones the repository on a fresh machine and lists every profile' {
-        New-TestProfile work suit
-        New-TestProfile personal hoodie
+        New-TestProfile work
+        New-TestProfile personal
         aip remote add $script:TestRemote *> $null
         $global:LASTEXITCODE | Should -Be 0
 
@@ -1747,9 +1709,9 @@ Describe 'remote' {
         aip remote add $script:TestRemote | Out-String | Should -Match "Cloned profiles from $([regex]::Escape($script:TestRemote))."
         $global:LASTEXITCODE | Should -Be 0
         Test-Path (Join-Path $freshRoot '.git') | Should -BeTrue
-        $listOutput = aip list | Out-String
-        $listOutput | Should -Match 'work — suit'
-        $listOutput | Should -Match 'personal — hoodie'
+        $listOutput = @(aip list)
+        $listOutput | Should -Contain 'work'
+        $listOutput | Should -Contain 'personal'
         aip which work | Should -Be (Join-Path $freshRoot 'work')
         (Get-Item (Join-Path $freshRoot 'work/codex/AGENTS.md')).LinkType | Should -Be 'SymbolicLink'
         (& git -C $freshRoot config --bool core.symlinks) | Should -Be 'true'

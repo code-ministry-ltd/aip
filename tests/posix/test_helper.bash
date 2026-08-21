@@ -46,5 +46,5 @@ make_fake_harness() {
 }
 
 create_profile() {
-  aip create "$1" ${2:+--outfit "$2"} >/dev/null
+  aip create "$1" >/dev/null
 }

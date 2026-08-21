@@ -21,16 +21,18 @@ print directly. Remove any bats/Pester cases that assert animation.
 **Depends.** —
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/sync.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T2 — Remove the outfit feature (both shells) — M
+## T2 — Remove the outfit feature (both shells) — M ✅
 **Desc.** Drop `--outfit` from `create`, the `aip outfit` command, `.aip/outfit`
 writing/reading, the `list` column, the `--outfit` usage line, and `.aip/outfit` from
 the required-layout walk and doctor (`aip.sh:1227` region). `_aip_write_profile_files`
 loses its outfit parameter. Update the bats helper + assertions and Pester to the
-outfit-free behavior.
+outfit-free behavior. Profile-detection heuristics (name-list, list, linked-profile
+guards, remote-tree walk) now key on `.gitignore` instead of `.aip/outfit`; the `.aip`
+directory leaves the required layout (it existed only to hold the outfit).
 **Acceptance.**
-- [ ] `aip create NAME` succeeds with no outfit file written; `aip outfit NAME X` → `unknown command` (exit 2).
-- [ ] `aip list` prints `name [tags]` without a label column; a fixture profile with a stranded `.aip/outfit` passes `aip doctor` and `aip sync` unchanged.
-- [ ] `grep -in 'outfit' aip.sh aip.ps1` → zero matches; full suite green.
+- [x] `aip create NAME` succeeds with no outfit file written; `aip outfit NAME X` → `unknown command` (exit 2).
+- [x] `aip list` prints `name [tags]` without a label column; a fixture profile with a stranded `.aip/outfit` passes `aip doctor` and `aip sync` unchanged.
+- [x] `grep -in 'outfit' aip.sh aip.ps1` → zero matches; full suite green.
 **Verify.** `npm run test:posix`; `pwsh -NoProfile -File tests/run-powershell.ps1` (CI)
 **Depends.** T1
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/test_helper.bash`, `tests/posix/{profile,selection,smoke,sync}.bats`, `tests/powershell/Aip.Tests.ps1`

@@ -218,25 +218,6 @@ function Test-AipProfileName {
     return $Name -notmatch '^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$'
 }
 
-function Test-AipOutfit {
-    param([AllowEmptyString()][string]$Outfit)
-    if ([string]::IsNullOrEmpty($Outfit)) { return $false }
-    $scalarCount = 0
-    $characters = $Outfit.ToCharArray()
-    for ($index = 0; $index -lt $characters.Length; $index++) {
-        $character = $characters[$index]
-        if ([char]::IsHighSurrogate($character)) {
-            if ($index + 1 -ge $characters.Length -or -not [char]::IsLowSurrogate($characters[$index + 1])) { return $false }
-            $index++
-        }
-        elseif ([char]::IsLowSurrogate($character)) { return $false }
-        $scalarCount++
-        if ($scalarCount -gt 64) { return $false }
-        if ([char]::IsControl($character)) { return $false }
-    }
-    return $true
-}
-
 function Test-AipUtf8TextFile {
     param([Parameter(Mandatory)][string]$LiteralPath)
     try {
@@ -256,16 +237,6 @@ function Get-AipUtf8TextFile {
     param([Parameter(Mandatory)][string]$LiteralPath)
     $bytes = [IO.File]::ReadAllBytes($LiteralPath)
     return [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
-}
-
-function ConvertFrom-AipOutfitText {
-    param([AllowEmptyString()][string]$Text)
-    if ($Text.EndsWith("`n")) {
-        $Text = $Text.Substring(0, $Text.Length - 1)
-        if ($Text.EndsWith("`r")) { $Text = $Text.Substring(0, $Text.Length - 1) }
-    }
-    if ($Text.Contains("`n") -or $Text.Contains("`r")) { return $null }
-    return $Text
 }
 
 function Export-AipGitBlob {
@@ -360,7 +331,7 @@ function Get-AipProfileNames {
     return @(Get-ChildItem -LiteralPath $rootItem.FullName -Force -ErrorAction SilentlyContinue | Where-Object {
         $_.PSIsContainer -and $null -eq $_.LinkType -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
             (Test-AipProfileName $_.Name) -and
-            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.aip/outfit') -Force -ErrorAction SilentlyContinue))
+            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.gitignore') -Force -ErrorAction SilentlyContinue))
     } | Sort-Object Name | ForEach-Object { $_.Name })
 }
 
@@ -498,12 +469,11 @@ function Get-AipGitIgnoreLines {
 }
 
 function New-AipProfileFiles {
-    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Outfit)
+    param([Parameter(Mandatory)][string]$ProfilePath)
 
-    foreach ($directory in '.aip', 'skills', 'claude', 'codex', 'pi', 'opencode') {
+    foreach ($directory in 'skills', 'claude', 'codex', 'pi', 'opencode') {
         New-Item -ItemType Directory -Path (Join-Path $ProfilePath $directory) -Force -ErrorAction Stop | Out-Null
     }
-    Set-AipUtf8LfFile (Join-Path $ProfilePath '.aip/outfit') @($Outfit)
     New-Item -ItemType File -Path (Join-Path $ProfilePath 'skills/.gitkeep') -ErrorAction Stop | Out-Null
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'AGENTS.md') @('# Common profile instructions')
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'claude/CLAUDE.md') @('@../AGENTS.md', '', '# Claude Code instructions')
@@ -551,26 +521,14 @@ function Test-AipPathEntry {
 
 function Invoke-AipCreate {
     param([object[]]$Arguments)
-    if ($Arguments.Count -lt 1) {
-        Write-AipError 'usage: aip create NAME [--outfit OUTFIT]'
+    if ($Arguments.Count -ne 1) {
+        Write-AipError 'usage: aip create NAME'
         $script:AipCommandStatus = 2
         return
     }
     $name = [string]$Arguments[0]
-    $outfit = 'plain'
-    if ($Arguments.Count -eq 3 -and [string]$Arguments[1] -eq '--outfit') { $outfit = [string]$Arguments[2] }
-    elseif ($Arguments.Count -ne 1) {
-        Write-AipError 'usage: aip create NAME [--outfit OUTFIT]'
-        $script:AipCommandStatus = 2
-        return
-    }
     if (-not (Test-AipProfileName $name)) {
         Write-AipError "invalid profile name '$name'"
-        $script:AipCommandStatus = 2
-        return
-    }
-    if (-not (Test-AipOutfit $outfit)) {
-        Write-AipError 'outfit must be one printable, non-empty line of at most 64 characters'
         $script:AipCommandStatus = 2
         return
     }
@@ -582,7 +540,7 @@ function Invoke-AipCreate {
     $temporary = $null
     try {
         $temporary = New-AipOwnedTemporaryDirectory $name
-        New-AipProfileFiles $temporary $outfit
+        New-AipProfileFiles $temporary
         [IO.Directory]::Move($temporary, $destination)
         $temporary = $null
     }
@@ -792,7 +750,7 @@ function Test-AipProfileReparsePoints {
 }
 
 function Test-AipLayout {
-    param([Parameter(Mandatory)][string]$ProfilePath, [switch]$Report, [switch]$IgnoreOutfitContent)
+    param([Parameter(Mandatory)][string]$ProfilePath, [switch]$Report)
     $valid = $true
     $links = [ordered]@{
         'claude/skills' = '../skills'
@@ -824,22 +782,21 @@ function Test-AipLayout {
         if ($Report) { Write-Output 'ERROR: profile path must be an ordinary directory' }
         $valid = $false
     }
-    foreach ($directory in '.aip', 'skills', 'claude', 'codex', 'pi', 'opencode') {
+    foreach ($directory in 'skills', 'claude', 'codex', 'pi', 'opencode') {
         $item = Get-Item -LiteralPath (Join-Path $ProfilePath $directory) -Force -ErrorAction SilentlyContinue
         if ($null -eq $item -or -not $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
             if ($Report) { Write-Output "ERROR: required directory is missing or linked: $directory" }
             $valid = $false
         }
     }
-    foreach ($file in '.aip/outfit', '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md') {
+    foreach ($file in '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md') {
         $item = Get-Item -LiteralPath (Join-Path $ProfilePath $file) -Force -ErrorAction SilentlyContinue
         if ($null -eq $item -or $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
             if ($Report) { Write-Output "ERROR: required file is missing or linked: $file" }
             $valid = $false
         }
     }
-    foreach ($file in '.aip/outfit', '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md') {
-        if ($IgnoreOutfitContent -and $file -eq '.aip/outfit') { continue }
+    foreach ($file in '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md') {
         if (-not (Test-AipUtf8TextFile (Join-Path $ProfilePath $file))) {
             if ($Report) { Write-Output "ERROR: required profile text is not valid NUL-free UTF-8: $file" }
             $valid = $false
@@ -849,16 +806,6 @@ function Test-AipLayout {
     if ((Get-Item -LiteralPath $placeholderPath -Force -ErrorAction SilentlyContinue).Length -ne 0) {
         if ($Report) { Write-Output 'ERROR: skills/.gitkeep placeholder must be empty' }
         $valid = $false
-    }
-    if (-not $IgnoreOutfitContent) {
-        $outfit = if (Test-AipUtf8TextFile (Join-Path $ProfilePath '.aip/outfit')) {
-            ConvertFrom-AipOutfitText (Get-AipUtf8TextFile (Join-Path $ProfilePath '.aip/outfit'))
-        }
-        else { $null }
-        if (-not (Test-AipOutfit $outfit)) {
-            if ($Report) { Write-Output 'ERROR: profile outfit is empty, invalid, or longer than 64 characters' }
-            $valid = $false
-        }
     }
     $claudeInstructions = Join-Path $ProfilePath 'claude/CLAUDE.md'
     if ((Get-Content -LiteralPath $claudeInstructions -TotalCount 1 -ErrorAction SilentlyContinue) -ne '@../AGENTS.md') {
@@ -1167,7 +1114,7 @@ function Get-AipTrackedProfilePrefixes {
     foreach ($relative in $Paths) {
         if ([string]::IsNullOrEmpty($relative)) { continue }
         $normalized = [string]$relative.Replace('\', '/')
-        if ($normalized -like '*/.aip/outfit') { [void]$prefixes.Add($normalized.Split('/')[0]) }
+        if ($normalized -like '*/.gitignore') { [void]$prefixes.Add($normalized.Split('/')[0]) }
     }
     return @($prefixes)
 }
@@ -1265,7 +1212,7 @@ function Test-AipLinkedProfiles {
         $targetIsProfile = $false
         try {
             $resolved = $item.ResolveLinkTarget($true)
-            if ($null -ne $resolved -and (Test-Path -LiteralPath (Join-Path $resolved.FullName '.aip/outfit'))) { $targetIsProfile = $true }
+            if ($null -ne $resolved -and (Test-Path -LiteralPath (Join-Path $resolved.FullName '.gitignore'))) { $targetIsProfile = $true }
         }
         catch { $targetIsProfile = $false }
         if ($targetIsProfile) {
@@ -1307,7 +1254,7 @@ function Test-AipGitTree {
     }
     $prefixes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($line in @($remoteTree -split "`n")) {
-        if ([string]$line -match '^100644 \S+ \S+\t(.+)$' -and ([string]$Matches[1]).Replace('\', '/') -like '*/.aip/outfit') {
+        if ([string]$line -match '^100644 \S+ \S+\t(.+)$' -and ([string]$Matches[1]).Replace('\', '/') -like '*/.gitignore') {
             [void]$prefixes.Add(([string]$Matches[1]).Replace('\', '/').Split('/')[0])
         }
     }
@@ -1345,7 +1292,7 @@ function Test-AipGitTree {
         'opencode/AGENTS.md' = '../AGENTS.md'
         'opencode/skills' = '../skills'
     }
-    $requiredFiles = @('.aip/outfit', '.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md')
+    $requiredFiles = @('.gitignore', 'AGENTS.md', 'skills/.gitkeep', 'claude/CLAUDE.md', 'codex/instructions.md', 'pi/APPEND_SYSTEM.md')
     foreach ($prefix in $profilePrefixList) {
         foreach ($link in $links.GetEnumerator()) {
             $entry = Invoke-AipGit -C $Root ls-tree $Tree -- "$($prefix)/$($link.Key)"
@@ -1374,14 +1321,7 @@ function Test-AipGitTree {
                     Write-AipError 'remote profile skills/.gitkeep placeholder must be empty'
                     return $false
                 }
-                elseif ($file -eq '.aip/outfit') {
-                    $outfit = ConvertFrom-AipOutfitText $text
-                    if (-not (Test-AipOutfit $outfit)) {
-                        Write-AipError 'remote profile contains an invalid outfit'
-                        return $false
-                    }
-                }
-                elseif ($file -eq 'claude/CLAUDE.md') {
+                if ($file -eq 'claude/CLAUDE.md') {
                     $firstLine = ($text -split "`n", 2)[0].TrimEnd("`r")
                     if ($firstLine -cne '@../AGENTS.md') {
                         Write-AipError 'remote profile has an invalid Claude import; claude/CLAUDE.md must begin with @../AGENTS.md'
@@ -1473,7 +1413,7 @@ function Add-AipCheckpoint {
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage tracked profile changes'; return $false }
     Invoke-AipGit -C $Root add .gitignore
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage the root Git exclusions'; return $false }
-    $owned = @('.aip/outfit', '.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    $owned = @('.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
     foreach ($name in (Get-AipProfileNames)) {
         Invoke-AipGit -C $Root add -- @($owned | ForEach-Object { "$($name)/$_" })
         if ($LASTEXITCODE -ne 0) { Write-AipError 'could not stage aip-owned profile files'; return $false }
@@ -1830,43 +1770,6 @@ function Invoke-AipLocal {
     if ($script:AipCommandStatus -eq 0) { Write-Output "This directory now uses profile '$value'" }
 }
 
-function Get-AipOutfit {
-    param([Parameter(Mandatory)][string]$ProfilePath)
-    $outfitPath = Join-Path $ProfilePath '.aip/outfit'
-    $outfitDirectory = Get-Item -LiteralPath (Join-Path $ProfilePath '.aip') -Force -ErrorAction SilentlyContinue
-    $outfitItem = Get-Item -LiteralPath $outfitPath -Force -ErrorAction SilentlyContinue
-    if ($null -eq $outfitDirectory -or -not $outfitDirectory.PSIsContainer -or $outfitDirectory.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or
-        $null -eq $outfitItem -or $outfitItem.PSIsContainer -or $outfitItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { return 'invalid outfit' }
-    if (-not (Test-AipUtf8TextFile $outfitPath)) { return 'invalid outfit' }
-    $outfit = ConvertFrom-AipOutfitText (Get-AipUtf8TextFile $outfitPath)
-    if (-not (Test-AipOutfit $outfit)) { return 'invalid outfit' }
-    return $outfit
-}
-
-function Invoke-AipOutfit {
-    param([object[]]$Arguments)
-    if ($Arguments.Count -ne 2) { Write-AipError 'usage: aip outfit NAME OUTFIT'; $script:AipCommandStatus = 2; return }
-    $name = [string]$Arguments[0]
-    $outfit = [string]$Arguments[1]
-    if (-not (Test-AipProfileExists $name)) { return }
-    $profilePath = Get-AipProfilePath $name
-    $layoutResult = @(Test-AipLayout $profilePath -IgnoreOutfitContent)
-    if (-not [bool]$layoutResult[-1]) { Write-AipError "profile '$name' has an invalid layout; run 'aip doctor $name'"; return }
-    if (-not (Test-AipOutfit $outfit)) { Write-AipError 'outfit must be one printable, non-empty line of at most 64 characters'; $script:AipCommandStatus = 2; return }
-    $outfitPath = Join-Path $profilePath '.aip/outfit'
-    $temporary = "$outfitPath.$([IO.Path]::GetRandomFileName())"
-    try {
-        Set-AipUtf8LfFile $temporary @($outfit)
-        [IO.File]::Move($temporary, $outfitPath, $true)
-    }
-    catch {
-        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
-        Write-AipError "could not update outfit for profile '$name': $($_.Exception.Message)"
-        return
-    }
-    Write-Output "Profile '$name' now wears $outfit"
-}
-
 function Get-AipGitSummary {
     if (-not (Test-AipGitContainment $script:AipProfileRoot)) { return 'unreadable; run aip doctor' }
     $changes = Invoke-AipGit -C $script:AipProfileRoot status --porcelain 2>$null
@@ -1913,7 +1816,7 @@ function Invoke-AipStatus {
         }
         return
     }
-    Write-Output "🐵 $($profile.Name) — $(Get-AipOutfit $profile.Path)"
+    Write-Output "🐵 $($profile.Name)"
     Write-Output "Selected by: $($profile.Source)"
     Write-Output "Path: $($profile.Path)"
     Write-Output "Git: $(Get-AipGitSummary)"
@@ -1936,7 +1839,7 @@ function Invoke-AipList {
     }
     $profiles = @(Get-ChildItem -LiteralPath $rootItem.FullName -Directory -ErrorAction SilentlyContinue | Where-Object {
         (Test-AipProfileName $_.Name) -and $null -eq $_.LinkType -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
-            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.aip/outfit') -Force -ErrorAction SilentlyContinue))
+            ($null -ne (Get-Item -LiteralPath (Join-Path $_.FullName '.gitignore') -Force -ErrorAction SilentlyContinue))
     } | Sort-Object Name)
     if ($profiles.Count -eq 0) { Write-Output 'No profiles. Create one with: aip create NAME'; return }
     foreach ($profile in $profiles) {
@@ -1945,7 +1848,7 @@ function Invoke-AipList {
         if ($null -ne $project -and $project.Name -eq $profile.Name) { $tags += '[project]' }
         if ($defaultName -eq $profile.Name) { $tags += '[default]' }
         $suffix = if ($tags.Count) { ' ' + ($tags -join ' ') } else { '' }
-        Write-Output "$($profile.Name) — $(Get-AipOutfit $profile.FullName)$suffix"
+        Write-Output "$($profile.Name)$suffix"
     }
 }
 
@@ -2813,13 +2716,12 @@ per-harness launch settings. Every profile lives in a single Git repository
 all of your profiles in sync across all of your machines.
 
 Commands:
-  aip create NAME [--outfit OUTFIT]  Create a new profile
-  aip list                           List profiles, outfits, and selection
+  aip create NAME                    Create a new profile
+  aip list                           List profiles and selection
   aip which [NAME]                   Show the profile that would be selected
   aip default [NAME]                 Show or set the default profile
   aip use NAME                       Select NAME for this shell only
   aip local [NAME | --remove]        Set or clear the per-directory marker
-  aip outfit NAME OUTFIT             Set a profile's outfit (label)
   aip clone SOURCE TARGET            Copy a profile into a new profile
   aip delete NAME [--force]          Delete a profile
   aip sync                           Checkpoint and sync every profile
@@ -2841,7 +2743,7 @@ Harness wrappers:
   it is resolved.
 
 Quick start:
-  aip create work --outfit suit   create your first profile
+  aip create work                 create your first profile
   aip remote add <git-url>        connect a shared remote (empty remote ok)
   aip default work                choose your everyday profile
   cd my-project && claude         work with your profile
@@ -2871,7 +2773,6 @@ function aip {
             'doctor' { Invoke-AipWithoutGitRouting { Invoke-AipDoctor $rest } }
             'list' { Invoke-AipWithoutGitRouting { Invoke-AipList $rest } }
             'local' { Invoke-AipLocal $rest }
-            'outfit' { Invoke-AipOutfit $rest }
             'help' { Invoke-AipHelp $rest }
             '--help' { Invoke-AipHelp @() }
             '-h' { Invoke-AipHelp @() }

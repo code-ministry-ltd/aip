@@ -4,8 +4,8 @@ load test_helper
 
 setup() {
   setup_aip_test
-  create_profile work suit
-  create_profile personal hoodie
+  create_profile work
+  create_profile personal
 }
 
 @test "default sets and shows the fallback profile" {
@@ -153,79 +153,10 @@ setup() {
   [ "$(cat "$BATS_TEST_TMPDIR/external-marker")" = personal ]
 }
 
-@test "outfit changes the visible label without interpreting its content" {
-  run aip outfit work 'blue hoodie'
-  [ "$status" -eq 0 ]
-
-  AIP_PROFILE=work
-  run aip
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'🐵 work — blue hoodie'* ]]
-
-  run aip outfit work $'bad\nlabel'
-  [ "$status" -ne 0 ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = 'blue hoodie' ]
-}
-
-@test "outfit repairs invalid stored content and rejects multiple stored lines" {
-  printf '\377' >"$_AIP_PROFILE_ROOT/work/.aip/outfit"
-  run aip outfit work repaired
-  [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = repaired ]
-
-  printf 'suit\n\n' >"$_AIP_PROFILE_ROOT/work/.aip/outfit"
-  export AIP_PROFILE=work
-  run aip
-  [ "$status" -eq 0 ]
-  [[ "$output" == *'invalid outfit'* ]]
-  run aip doctor work
-  [ "$status" -ne 0 ]
-  [[ "$output" == *'profile outfit is empty, invalid'* ]]
-}
-
-@test "outfit length counts Unicode scalars consistently" {
-  local forty='' index=0
-  while [ "$index" -lt 40 ]; do forty="${forty}🐵"; index=$((index + 1)); done
-  export TEST_OUTFIT="$forty"
-
-  run bash -c 'export LC_ALL=C; source "$AIP_SOURCE"; aip outfit work "$TEST_OUTFIT"'
-
-  [ "$status" -eq 0 ]
-
-  # Build U+0085 via printf: $'\uXXXX' requires bash >= 4.2 and macOS's /bin/bash is 3.2.
-  export TEST_OUTFIT="bad$(printf '\xc2\x85')label"
-  run bash -c 'export LC_ALL=C; source "$AIP_SOURCE"; aip outfit work "$TEST_OUTFIT"'
-
-  [ "$status" -ne 0 ]
-}
-
-@test "outfit refuses a linked metadata directory without changing its target" {
-  local external="$BATS_TEST_TMPDIR/external aip"
-  mkdir -p "$external"
-  printf 'outside\n' >"$external/outfit"
-  rm -rf "$_AIP_PROFILE_ROOT/work/.aip"
-  ln -s "$external" "$_AIP_PROFILE_ROOT/work/.aip"
-
-  run aip outfit work changed
-
-  [ "$status" -ne 0 ]
-  [ "$(cat "$external/outfit")" = outside ]
-  run aip list
-  [[ "$output" == *'invalid outfit'* ]]
-  [[ "$output" != *'outside'* ]]
-}
-
-@test "outfit replaces a hard link without changing the external inode" {
-  local external="$BATS_TEST_TMPDIR/external-outfit"
-  printf 'outside\n' >"$external"
-  rm "$_AIP_PROFILE_ROOT/work/.aip/outfit"
-  ln "$external" "$_AIP_PROFILE_ROOT/work/.aip/outfit"
-
-  run aip outfit work changed
-
-  [ "$status" -eq 0 ]
-  [ "$(cat "$external")" = outside ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = changed ]
+@test "the outfit command no longer exists" {
+  run aip outfit work jacket
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown command 'outfit'"* ]]
 }
 
 @test "local remove refuses an ordinary directory marker" {
@@ -240,17 +171,15 @@ setup() {
   [ -d .aip-profile ]
 }
 
-@test "caller noclobber does not break marker, outfit, or sync temp files" {
+@test "caller noclobber does not break marker or sync temp files" {
   export AIP_PROFILE=work
-  run bash -c 'set -o noclobber; source "$AIP_SOURCE"; aip default work && aip outfit work jacket && aip sync'
+  run bash -c 'set -o noclobber; source "$AIP_SOURCE"; aip default work && aip sync'
   [ "$status" -eq 0 ]
   [ "$(cat "$_AIP_PROFILE_ROOT/.default")" = work ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = jacket ]
 
   if command -v zsh >/dev/null; then
-    run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip outfit work coat && aip sync'
+    run zsh -c 'set -o noclobber; source "$AIP_SOURCE"; aip sync'
     [ "$status" -eq 0 ]
-    [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = coat ]
   fi
 }
 
@@ -263,8 +192,8 @@ setup() {
   run aip list
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *'personal — hoodie [session] [project]'* ]]
-  [[ "$output" == *'work — suit [default]'* ]]
+  [[ "$output" == *'personal [session] [project]'* ]]
+  [[ "$output" == *'work [default]'* ]]
 }
 
 @test "list follows a profile root symlink without following linked profiles" {
@@ -275,7 +204,7 @@ setup() {
   run aip list
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *'work —'* ]]
+  [[ "$output" == *'work'* ]]
 }
 
 @test "status reports Git cleanliness and whether an upstream exists" {

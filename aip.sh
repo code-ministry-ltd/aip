@@ -257,7 +257,7 @@ _aip_list_profile_names() {
     [ ! -L "$profile_path" ] || continue
     name=${profile_path##*/}
     _aip_validate_name "$name" || continue
-    { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; } || continue
+    { [ -e "$profile_path/.gitignore" ] || [ -L "$profile_path/.gitignore" ]; } || continue
     printf '%s\n' "$name"
   done <"$entries"
   command rm -f "$entries"
@@ -313,40 +313,6 @@ _aip_find_utf8_locale() {
   return 1
 }
 
-_aip_utf8_length() (
-  local value=${1-} utf8_locale
-  utf8_locale=$(_aip_find_utf8_locale) || return
-  LC_ALL=$utf8_locale
-  export LC_ALL
-  printf '%s' "$value" | command iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
-  # Reject C0/C1 controls and DEL by codepoint. The locale's [[:cntrl:]] class is
-  # not portable (e.g. macOS en_US.UTF-8 does not classify U+0085 as control),
-  # so walk the UTF-8 bytes explicitly; iconv above guarantees they are valid.
-  printf '%s' "$value" | command od -A n -t u1 -v | command awk '
-    { for (i = 1; i <= NF; i++) byte[n++] = $i + 0 }
-    END {
-      i = 0
-      while (i < n) {
-        c = byte[i]
-        if (c >= 128 && c < 192) { i++; continue }
-        if (c < 128) { cp = c; len = 1 }
-        else if (c < 224) { cp = c - 192; len = 2 }
-        else if (c < 240) { cp = c - 224; len = 3 }
-        else { cp = c - 240; len = 4 }
-        for (j = 1; j < len; j++) cp = cp * 64 + (byte[i + j] - 128)
-        i += len
-        if (cp < 32 || cp == 127 || (cp >= 128 && cp <= 159)) exit 1
-      }
-    }' || return 1
-  printf '%s\n' "${#value}"
-)
-
-_aip_validate_outfit() {
-  local length
-  [ -n "${1-}" ] || return 1
-  length=$(_aip_utf8_length "$1") || return 1
-  [ "$length" -le 64 ] || return 1
-}
 
 _aip_validate_utf8_text_file() {
   local file=$1
@@ -374,18 +340,6 @@ _aip_read_name_file() {
   printf '%s\n' "$first"
 }
 
-_aip_read_outfit() {
-  local outfit extra parent=${1%/*}
-  { [ -d "$parent" ] && [ ! -L "$parent" ] && [ -f "$1" ] && [ ! -L "$1" ]; } || return 1
-  _aip_validate_utf8_text_file "$1" || return 1
-  {
-    IFS= read -r outfit || [ -n "$outfit" ] || return 1
-    if IFS= read -r extra || [ -n "$extra" ]; then return 1; fi
-  } <"$1"
-  outfit=${outfit%"$(printf '\r')"}
-  _aip_validate_outfit "$outfit" || return 1
-  printf '%s\n' "$outfit"
-}
 
 _aip_is_required_profile_link() {
   case ${1-} in
@@ -767,10 +721,9 @@ _aip_resolve_profile() {
 }
 
 _aip_write_profile_files() {
-  local profile_path=$1 outfit=$2
-  command mkdir -p "$profile_path/.aip" "$profile_path/skills" "$profile_path/claude" "$profile_path/codex" "$profile_path/pi" "$profile_path/opencode" || return
+  local profile_path=$1
+  command mkdir -p "$profile_path/skills" "$profile_path/claude" "$profile_path/codex" "$profile_path/pi" "$profile_path/opencode" || return
   command chmod 700 "$profile_path" || return
-  printf '%s\n' "$outfit" >"$profile_path/.aip/outfit" || return
   : >"$profile_path/skills/.gitkeep" || return
   printf '%s\n' '# Common profile instructions' >"$profile_path/AGENTS.md" || return
   printf '%s\n' '@../AGENTS.md' '' '# Claude Code instructions' >"$profile_path/claude/CLAUDE.md" || return
@@ -820,26 +773,18 @@ _aip_publish_profile_directory() (
 
 _aip_create() (
   _aip_clear_git_routing
-  local name=${1-} outfit=plain destination stage temporary
+  local name=${1-} destination stage temporary
   [ -n "$name" ] || {
-    _aip_error 'usage: aip create NAME [--outfit OUTFIT]'
+    _aip_error 'usage: aip create NAME'
     return 2
   }
   shift
-  if [ "${1-}" = --outfit ] && [ "$#" -eq 2 ]; then
-    outfit=$2
-    shift 2
-  fi
   [ "$#" -eq 0 ] || {
-    _aip_error 'usage: aip create NAME [--outfit OUTFIT]'
+    _aip_error 'usage: aip create NAME'
     return 2
   }
   _aip_validate_name "$name" || {
     _aip_error "invalid profile name '$name'"
-    return 2
-  }
-  _aip_validate_outfit "$outfit" || {
-    _aip_error 'outfit must be one non-empty line of at most 64 characters'
     return 2
   }
   _aip_git --version >/dev/null 2>&1 || {
@@ -860,7 +805,7 @@ _aip_create() (
   stage=$(command mktemp -d "$_AIP_PROFILE_ROOT/.aip-stage.XXXXXX") || return
   temporary=$stage/$name
   if ! command mkdir "$temporary" ||
-     ! _aip_write_profile_files "$temporary" "$outfit" ||
+     ! _aip_write_profile_files "$temporary" ||
      ! _aip_publish_profile_directory "$temporary" "$destination"; then
     command rm -rf "$stage"
     _aip_error "could not create profile '$name'"
@@ -961,26 +906,6 @@ _aip_local() {
   printf "This directory now uses profile '%s'\n" "$1"
 }
 
-_aip_outfit() {
-  [ "$#" -eq 2 ] || {
-    _aip_error 'usage: aip outfit NAME OUTFIT'
-    return 2
-  }
-  _aip_require_profile "$1" || return
-  _aip_validate_sync_layout "$(_aip_profile_path "$1")" allow-invalid-outfit || return
-  _aip_validate_outfit "$2" || {
-    _aip_error 'outfit must be one printable, non-empty line of at most 64 characters'
-    return 2
-  }
-  local outfit_path temporary
-  outfit_path=$(_aip_profile_path "$1")/.aip/outfit
-  temporary=$(command mktemp "${outfit_path}.XXXXXX") || return
-  if ! printf '%s\n' "$2" >|"$temporary" || ! command mv -f "$temporary" "$outfit_path"; then
-    command rm -f "$temporary"
-    return 1
-  fi
-  printf "Profile '%s' now wears %s\n" "$1" "$2"
-}
 
 _aip_clone() (
   _aip_clear_git_routing
@@ -1206,7 +1131,7 @@ _aip_doctor_passthrough() {
 
 _aip_doctor_profile_layout() {
   local profile_path=$1 name=$2 pair link expected directory
-  for directory in .aip skills claude codex pi opencode; do
+  for directory in skills claude codex pi opencode; do
     if [ ! -d "$profile_path/$directory" ] || [ -L "$profile_path/$directory" ]; then
       printf 'ERROR: required directory is missing or linked: %s/%s\n' "$name" "$directory"
       return 1
@@ -1222,7 +1147,7 @@ _aip_doctor_profile_layout() {
     fi
   done
   if ! _aip_check_live_profile_links "$profile_path"; then return 1; fi
-  for link in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+  for link in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
     if [ ! -f "$profile_path/$link" ] || [ -L "$profile_path/$link" ]; then
       printf 'ERROR: required file is missing or linked: %s/%s\n' "$name" "$link"
       return 1
@@ -1355,7 +1280,7 @@ _aip_list() (
     _aip_error 'usage: aip list'
     return 2
   }
-  local profile_path name outfit tags default_name='' project_name='' found=0 entries
+  local profile_path name tags default_name='' project_name='' found=0 entries
   default_name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default" 2>/dev/null) || default_name=
   if _aip_find_project_marker 2>/dev/null; then project_name=$_AIP_PROJECT_NAME; fi
   if [ ! -d "$_AIP_PROFILE_ROOT" ]; then
@@ -1368,13 +1293,12 @@ _aip_list() (
     [ ! -L "$profile_path" ] || continue
     name=${profile_path##*/}
     _aip_validate_name "$name" || continue
-    { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; } || continue
-    outfit=$(_aip_read_outfit "$profile_path/.aip/outfit") || outfit='invalid outfit'
+    { [ -e "$profile_path/.gitignore" ] || [ -L "$profile_path/.gitignore" ]; } || continue
     tags=
     [ "${AIP_PROFILE-}" = "$name" ] && tags="$tags [session]"
     [ "$project_name" = "$name" ] && tags="$tags [project]"
     [ "$default_name" = "$name" ] && tags="$tags [default]"
-    printf '%s — %s%s\n' "$name" "$outfit" "$tags"
+    printf '%s%s\n' "$name" "$tags"
     found=1
   done <"$entries"
   command rm -f "$entries"
@@ -1424,7 +1348,7 @@ _aip_git_summary() {
 
 _aip_status() (
   _aip_clear_git_routing
-  local profile_path outfit harness availability
+  local profile_path harness availability
   _AIP_RESOLVE_REASON=
   if ! _AIP_RESOLVE_QUIET=1 _aip_resolve_profile; then
     if [ "${_AIP_RESOLVE_REASON-}" = no-selection ]; then
@@ -1440,8 +1364,7 @@ _aip_status() (
     return 2
   fi
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
-  outfit=$(_aip_read_outfit "$profile_path/.aip/outfit") || outfit='invalid outfit'
-  printf '🐵 %s — %s\n' "$_AIP_RESOLVED_NAME" "$outfit"
+  printf '🐵 %s\n' "$_AIP_RESOLVED_NAME"
   printf 'Selected by: %s\nPath: %s\n' "$_AIP_RESOLVED_SOURCE" "$profile_path"
   printf 'Git: %s\n' "$(_aip_git_summary)"
   printf 'Harnesses:'
@@ -1460,7 +1383,7 @@ _aip_is_command() {
   [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
-    [ "${1-}" = local ] || [ "${1-}" = outfit ] || [ "${1-}" = remote ] ||
+    [ "${1-}" = local ] || [ "${1-}" = remote ] ||
     [ "${1-}" = import ] || [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
@@ -1599,12 +1522,12 @@ _aip_validate_portable_paths_file() {
 }
 
 _aip_validate_sync_layout() {
-  local profile_path=$1 outfit_mode=${2-} pair link expected file directory first_line
+  local profile_path=$1 pair link expected file directory first_line
   { [ -d "$profile_path" ] && [ ! -L "$profile_path" ]; } || {
     _aip_error 'profile path is missing or linked'
     return 1
   }
-  for directory in .aip skills claude codex pi opencode; do
+  for directory in skills claude codex pi opencode; do
     { [ -d "$profile_path/$directory" ] && [ ! -L "$profile_path/$directory" ]; } || {
       _aip_error "required profile directory is missing or linked: $directory"
       return 1
@@ -1619,14 +1542,13 @@ _aip_validate_sync_layout() {
     fi
   done
   _aip_check_live_profile_links "$profile_path" || return
-  for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+  for file in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
     { [ -f "$profile_path/$file" ] && [ ! -L "$profile_path/$file" ]; } || {
       _aip_error "required profile file or link is missing or invalid: $file"
       return 1
     }
   done
-  for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
-    [ "$file" != .aip/outfit ] || [ "$outfit_mode" != allow-invalid-outfit ] || continue
+  for file in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
     _aip_validate_utf8_text_file "$profile_path/$file" || {
       _aip_error "required profile text is not valid NUL-free UTF-8: $file"
       return 1
@@ -1636,12 +1558,6 @@ _aip_validate_sync_layout() {
     _aip_error 'skills/.gitkeep placeholder must be empty'
     return 1
   }
-  if [ "$outfit_mode" != allow-invalid-outfit ]; then
-    _aip_read_outfit "$profile_path/.aip/outfit" >/dev/null || {
-      _aip_error 'profile outfit is empty, invalid, or longer than 64 characters'
-      return 1
-    }
-  fi
   IFS= read -r first_line <"$profile_path/claude/CLAUDE.md" || first_line=
   first_line=${first_line%$'\r'}
   [ "$first_line" = '@../AGENTS.md' ] || {
@@ -1671,7 +1587,7 @@ _aip_profile_prefixes_from_names() {
   local relative
   while IFS= read -r -d '' relative; do
     case $relative in
-      */.aip/outfit) printf '%s\n' "${relative%%/*}" ;;
+      */.gitignore) printf '%s\n' "${relative%%/*}" ;;
     esac
   done <"$1"
 }
@@ -1686,7 +1602,7 @@ _aip_under_profile() {
 }
 
 _aip_validate_git_tree() {
-  local root=$1 tree=$2 relative rel pair link expected entry mode target file first_line text_temp outfit forbidden=0 profiles p
+  local root=$1 tree=$2 relative rel pair link expected entry mode target file first_line text_temp forbidden=0 profiles p
   profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return
   _AIP_TEMP_PATHS=$(command mktemp "${TMPDIR:-/tmp}/aip-tree.XXXXXX") || { command rm -f "$profiles"; return; }
   _aip_git -C "$root" ls-tree -r "$tree" >|"$_AIP_TEMP_PATHS" || {
@@ -1697,7 +1613,7 @@ _aip_validate_git_tree() {
   while IFS= read -r entry; do
     case ${entry%% *} in 100644) ;; *) continue ;; esac
     relative=${entry#*$'\t'}
-    case $relative in */.aip/outfit) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
+    case $relative in */.gitignore) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
   done <"$_AIP_TEMP_PATHS"
   if command grep -q '^160000 ' "$_AIP_TEMP_PATHS"; then
     command rm -f "$profiles"
@@ -1764,7 +1680,7 @@ _aip_validate_git_tree() {
         return 1
       fi
     done
-    for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+    for file in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
       entry=$(_aip_git -C "$root" ls-tree "$tree" -- "$p/$file") || {
         command rm -f "$profiles"
         return 1
@@ -1781,19 +1697,13 @@ _aip_validate_git_tree() {
       command rm -f "$profiles"
       return 1
     }
-    for file in .aip/outfit .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
+    for file in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
       if ! _aip_git -C "$root" show "$tree:$p/$file" >|"$text_temp" 2>/dev/null || ! _aip_validate_utf8_text_file "$text_temp"; then
         command rm -f "$text_temp" "$profiles"
         _aip_error "remote required profile text is not valid NUL-free UTF-8: $p/$file"
         return 1
       fi
     done
-    _aip_git -C "$root" show "$tree:$p/.aip/outfit" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp" "$profiles"; return 1; }
-    if ! outfit=$(_aip_read_outfit "$text_temp"); then
-      command rm -f "$text_temp" "$profiles"
-      _aip_error 'remote profile has an invalid outfit label'
-      return 1
-    fi
     _aip_git -C "$root" show "$tree:$p/skills/.gitkeep" >|"$text_temp" 2>/dev/null || { command rm -f "$text_temp" "$profiles"; return 1; }
     if [ -s "$text_temp" ]; then
       command rm -f "$text_temp" "$profiles"
@@ -1996,7 +1906,7 @@ _aip_check_tracked_links() {
   while IFS= read -r -d '' record; do
     case ${record%% *} in 100644) ;; *) continue ;; esac
     relative=${record#*$'\t'}
-    case $relative in */.aip/outfit) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
+    case $relative in */.gitignore) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
   done <"$entries"
   # Cleanup unlinks the name; the loop keeps its already-open descriptor.
   # shellcheck disable=SC2094
@@ -2023,7 +1933,7 @@ _aip_require_no_linked_profiles() {
   while IFS= read -r -d '' profile_path; do
     name=${profile_path##*/}
     _aip_validate_name "$name" || continue
-    { [ -d "$profile_path" ] && { [ -e "$profile_path/.aip/outfit" ] || [ -L "$profile_path/.aip/outfit" ]; }; } || continue
+    { [ -d "$profile_path" ] && { [ -e "$profile_path/.gitignore" ] || [ -L "$profile_path/.gitignore" ]; }; } || continue
     command rm -f "$entries"
     _aip_error "profile '$name' path must not be a symbolic link"
     return 1
@@ -2048,7 +1958,7 @@ _aip_stage_checkpoint() {
   _aip_git -C "$root" add .gitignore || return
   for name in $(_aip_list_profile_names); do
     _aip_git -C "$root" add \
-      "$name/.aip/outfit" "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
+      "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
       "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
       "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
       "$name/opencode/AGENTS.md" "$name/opencode/skills" || return
@@ -2655,13 +2565,12 @@ per-harness launch settings. Every profile lives in a single Git repository
 all of your profiles in sync across all of your machines.
 
 Commands:
-  aip create NAME [--outfit OUTFIT]  Create a new profile
-  aip list                           List profiles, outfits, and selection
+  aip create NAME                    Create a new profile
+  aip list                           List profiles and selection
   aip which [NAME]                   Show the profile that would be selected
   aip default [NAME]                 Show or set the default profile
   aip use NAME                       Select NAME for this shell only
   aip local [NAME | --remove]        Set or clear the per-directory marker
-  aip outfit NAME OUTFIT             Set a profile's outfit (label)
   aip clone SOURCE TARGET            Copy a profile into a new profile
   aip delete NAME [--force]          Delete a profile
   aip sync                           Checkpoint and sync every profile
@@ -2683,7 +2592,7 @@ Harness wrappers:
   it is resolved.
 
 Quick start:
-  aip create work --outfit suit   create your first profile
+  aip create work                 create your first profile
   aip remote add <git-url>        connect a shared remote (empty remote ok)
   aip default work                choose your everyday profile
   cd my-project && claude         work with your profile
@@ -2847,7 +2756,6 @@ aip() {
     doctor) _aip_doctor "$@" ;;
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
-    outfit) _aip_outfit "$@" ;;
     help) _aip_help "$@" ;;
     --help) _aip_help ;;
     -h) _aip_help ;;

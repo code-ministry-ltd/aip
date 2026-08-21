@@ -5,7 +5,7 @@ bats_require_minimum_version 1.5.0
 
 setup() {
   setup_aip_test
-  create_profile work suit
+  create_profile work
   AIP_PROFILE=work
   export AIP_PROFILE
 }
@@ -615,23 +615,6 @@ make_upstream() {
   [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
 }
 
-@test "sync rejects invalid remote outfit framing before rebase" {
-  make_upstream
-  git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
-  printf 'suit\n\n' >"$BATS_TEST_TMPDIR/other/work/.aip/outfit"
-  git -C "$BATS_TEST_TMPDIR/other" add work/.aip/outfit
-  git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'break outfit framing'
-  git -C "$BATS_TEST_TMPDIR/other" push -q
-  local before
-  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
-
-  run aip sync
-
-  [ "$status" -ne 0 ]
-  [[ "$output" == *'invalid outfit label'* ]]
-  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
-}
-
 @test "sync rejects NUL bytes in remote required text before rebase" {
   make_upstream
   git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
@@ -902,4 +885,23 @@ setup_git_logger() {
   [[ "$output" == *"Profiles synced"* ]]
   if printf '%s' "$output" | grep -q $'\r'; then return 1; fi
   if printf '%s' "$output" | grep -q 'syncing'; then return 1; fi
+}
+
+@test "a stranded .aip/outfit file from an older aip is inert across doctor, list, and sync" {
+  make_upstream
+  mkdir -p "$_AIP_PROFILE_ROOT/work/.aip"
+  printf 'old label\n' >"$_AIP_PROFILE_ROOT/work/.aip/outfit"
+  git -C "$_AIP_PROFILE_ROOT" add work/.aip/outfit
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'simulated older aip'
+
+  run aip doctor work
+  [ "$status" -eq 0 ]
+
+  run aip list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"work"* ]]
+
+  run aip sync
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/work/.aip/outfit" ]
 }

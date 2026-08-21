@@ -5,7 +5,7 @@ bats_require_minimum_version 1.5.0
 
 setup() {
   setup_aip_test
-  create_profile work suit
+  create_profile work
 }
 
 @test "clone checkpoints safe source changes, then creates a new profile from tracked HEAD" {

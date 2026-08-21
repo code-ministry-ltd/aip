@@ -19,7 +19,7 @@ make_upstream() {
 }
 
 @test "remote add on an existing repository sets origin and publishes an empty remote" {
-  create_profile work suit
+  create_profile work
   make_upstream
 
   run aip remote add "$TEST_REMOTE"
@@ -58,8 +58,8 @@ make_upstream() {
 
 @test "remote add on a fresh machine clones the repository and lists every profile" {
   # Machine A
-  create_profile work suit
-  create_profile personal hoodie
+  create_profile work
+  create_profile personal
   make_upstream
   aip remote add "$TEST_REMOTE" >/dev/null
   [ "$?" -eq 0 ]
@@ -78,8 +78,8 @@ make_upstream() {
   [ -d "$_AIP_PROFILE_ROOT/.git" ]
   run aip list
   [ "$status" -eq 0 ]
-  [[ "$output" == *"work — suit"* ]]
-  [[ "$output" == *"personal — hoodie"* ]]
+  printf '%s\n' "$output" | grep -Fxq 'work'
+  printf '%s\n' "$output" | grep -Fxq 'personal'
   run aip which work
   [ "$status" -eq 0 ]
   [ "$output" = "$_AIP_PROFILE_ROOT/work" ]

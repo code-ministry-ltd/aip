@@ -36,12 +36,12 @@ setup() {
 }
 
 @test "create builds the approved profile atomically with relative links and an initial commit" {
-  run aip create work --outfit suit
+  run aip create work
   [ "$status" -eq 0 ]
   [ -f "$_AIP_PROFILE_ROOT/work/AGENTS.md" ]
   [ -d "$_AIP_PROFILE_ROOT/work/skills" ]
   [ ! -e "$_AIP_PROFILE_ROOT/work/.git" ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/.aip/outfit")" = 'suit' ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/.aip" ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/claude/skills")" = '../skills' ]
   [ "$(head -n 1 "$_AIP_PROFILE_ROOT/work/claude/CLAUDE.md")" = '@../AGENTS.md' ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/AGENTS.md")" = '../AGENTS.md' ]
@@ -73,7 +73,7 @@ setup() {
 @test "stock Zsh can create a complete profile" {
   command -v zsh >/dev/null || skip 'Zsh is not installed'
 
-  run zsh -c 'source "$AIP_SOURCE"; aip create work --outfit suit'
+  run zsh -c 'source "$AIP_SOURCE"; aip create work'
 
   [ "$status" -eq 0 ]
   [ -d "$_AIP_PROFILE_ROOT/.git" ]
@@ -136,14 +136,15 @@ setup() {
   [[ "$output" == *"profile 'missing' does not exist"* ]]
 }
 
-@test "status identifies the active profile, selection source, outfit, and path" {
-  create_profile work suit
+@test "status identifies the active profile, selection source, and path" {
+  create_profile work
   AIP_PROFILE=work
 
   run aip
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *'🐵 work — suit'* ]]
+  [[ "$output" == *'🐵 work'* ]]
+  if printf '%s' "$output" | grep -q ' — '; then return 1; fi
   [[ "$output" == *'Selected by: session'* ]]
   [[ "$output" == *"Path: $_AIP_PROFILE_ROOT/work"* ]]
 }
