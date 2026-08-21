@@ -7,6 +7,9 @@ setup_aip_test() {
   export FAKE_BIN="$BATS_TEST_TMPDIR/fake bin"
   export FAKE_CAPTURE="$BATS_TEST_TMPDIR/capture"
   export AIP_SOURCE="$BATS_TEST_DIRNAME/../../aip.sh"
+  # A host session (e.g. running the suite from inside an agent) may export
+  # harness selector variables; unset them so wrapper assertions stay hermetic.
+  unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR OPENCODE_CONFIG_DIR AIP_PROFILE
   mkdir -p "$HOME" "$_AIP_PROFILE_ROOT" "$FAKE_BIN"
   git config --global user.name "Aip Tests"
   git config --global user.email "aip@example.test"

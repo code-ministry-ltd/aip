@@ -75,6 +75,12 @@ BeforeEach {
     $env:FAKE_CAPTURE = $script:FakeCapture
     $env:FAKE_EXIT_STATUS = '0'
     $env:AIP_PROFILE = $null
+    # A host session (e.g. running the suite from inside an agent) may export
+    # harness selector variables; null them so wrapper assertions stay hermetic.
+    $env:CLAUDE_CONFIG_DIR = $null
+    $env:CODEX_HOME = $null
+    $env:PI_CODING_AGENT_DIR = $null
+    $env:OPENCODE_CONFIG_DIR = $null
     $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'gitconfig'
     $env:GIT_CONFIG_NOSYSTEM = '1'
     if (Test-Path -LiteralPath $script:AipProfileRoot) { Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force }
