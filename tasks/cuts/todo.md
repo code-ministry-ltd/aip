@@ -37,16 +37,16 @@ directory leaves the required layout (it existed only to hold the outfit).
 **Depends.** T1
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/test_helper.bash`, `tests/posix/{profile,selection,smoke,sync}.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T3 — Remove the picker invocation path (both shells) — M
+## T3 — Remove the picker invocation path (both shells) — M ✅
 **Desc.** Delete `_aip_import_interactive`, the `[ -t 0 ] && [ -t 1 ]` branch in
 `_aip_import`, the `node=$(command -v node)` probe, and the `AIP_PICKER`/`_AIP_PICKER_DIR`
 references. `aip import` with no files is always a usage error. Remove the two
 interactive-picker bats cases; update the no-files message assertion. The artifacts
 (bin/src/tests-node) remain in place for now — unreferenced.
 **Acceptance.**
-- [ ] `aip import pi` (no files, no terminal) → usage error `no files given`, exit 2, with no node/PATH probe.
-- [ ] `grep -in 'picker' aip.sh aip.ps1` → zero matches; interactive bats cases removed; suite green.
-- [ ] `aip import pi auth.json --profile work --force` still copies (non-interactive core intact).
+- [x] `aip import pi` (no files, no terminal) → usage error `no files given`, exit 2, with no node/PATH probe.
+- [x] `grep -in 'picker' aip.sh aip.ps1` → zero matches; interactive bats cases removed; suite green.
+- [x] `aip import pi auth.json --profile work --force` still copies (non-interactive core intact).
 **Verify.** `npm run test:posix`; `pwsh -NoProfile -File tests/run-powershell.ps1` (CI)
 **Depends.** T2
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/import.bats`, `tests/powershell/Aip.Tests.ps1`

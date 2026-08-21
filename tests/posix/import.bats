@@ -52,10 +52,11 @@ setup() {
   [[ "$output" == *"usage: aip import"* ]]
 }
 
-@test "import without files and without a terminal is a usage error" {
+@test "import without files is a usage error" {
   run aip import pi
   [ "$status" -eq 2 ]
   [[ "$output" == *"no files given"* ]]
+  if printf '%s' "$output" | grep -q 'terminal'; then return 1; fi
 }
 
 @test "import rejects unknown profiles" {
@@ -185,41 +186,9 @@ setup() {
   [ "$(cat "$HOME/decoy-pi/auth.json")" = '{"decoy":true}' ]
 }
 
-@test "import interactive: the picker contract drives the copies" {
-  cat >"$FAKE_BIN/picker-stub.js" <<'EOF'
-process.stdout.write('file\0auth.json\0file\0skills/reviewer/SKILL.md\0profile\0work\0profile\0suit\0');
-EOF
-  filelist=$(command mktemp) || return 1
-  profilesfile=$(command mktemp) || return 1
-  AIP_PICKER="$FAKE_BIN/picker-stub.js" run _aip_import_interactive pi "$HOME/.pi/agent" "$filelist" "$profilesfile" '' 0
-  [ "$status" -eq 0 ]
-  [ "$(tr '\0' '\n' <"$filelist")" = 'auth.json
-skills/reviewer/SKILL.md' ]
-  [ "$(cat "$profilesfile")" = 'work
-suit' ]
-
-  run _aip_import_run_copy pi "$HOME/.pi/agent" 0 "$filelist" "$profilesfile" 0 0
-  [ "$status" -eq 0 ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/auth.json")" = '{"token":"secret"}' ]
-  [ "$(cat "$_AIP_PROFILE_ROOT/suit/skills/reviewer/SKILL.md")" = '# Reviewer' ]
-  command rm -f "$filelist" "$profilesfile"
-}
-
-@test "import interactive: the picker UI on stderr reaches the terminal" {
-  # The picker renders its UI to stderr and emits NUL records on stdout. The
-  # shell must capture only stdout; the UI must reach the terminal, not /dev/null.
-  cat >"$FAKE_BIN/picker-ui-stub.js" <<'EOF'
-process.stderr.write('PICKER_UI_VISIBLE\n');
-process.stdout.write('file\0auth.json\0profile\0work\0');
-EOF
-  filelist=$(command mktemp) || return 1
-  profilesfile=$(command mktemp) || return 1
-  AIP_PICKER="$FAKE_BIN/picker-ui-stub.js" run _aip_import_interactive pi "$HOME/.pi/agent" "$filelist" "$profilesfile" '' 0
-  [ "$status" -eq 0 ]
-  [[ "$output" == *PICKER_UI_VISIBLE* ]]
-  [ "$(tr '\0' '\n' <"$filelist")" = 'auth.json' ]
-  [ "$(cat "$profilesfile")" = 'work' ]
-  command rm -f "$filelist" "$profilesfile"
+@test "the interactive import path is gone" {
+  run type _aip_import_interactive
+  [ "$status" -ne 0 ]
 }
 
 @test "import appears in help" {

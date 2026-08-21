@@ -1940,7 +1940,6 @@ Describe 'import' {
     }
 
     AfterEach {
-        $env:AIP_PICKER = $null
         $env:FAKE_CAPTURE = $null
         $env:FAKE_EXIT_STATUS = $null
         $env:GIT_CONFIG_GLOBAL = $null
@@ -2108,21 +2107,11 @@ Describe 'import' {
         finally { $env:PI_CODING_AGENT_DIR = $null }
     }
 
-    It 'interactive: the picker contract drives the copies' {
-        $stub = Join-Path $script:FakeBin 'picker-stub.js'
-        "process.stdout.write('file`0auth.json`0file`0skills/reviewer/SKILL.md`0profile`0work`0profile`0suit`0', () => process.exit(0));" | Set-Content -LiteralPath $stub -Encoding utf8NoBOM
-        $env:AIP_PICKER = $stub
-        $files = [System.Collections.Generic.List[string]]::new()
-        $profiles = [System.Collections.Generic.List[string]]::new()
-        $status = Invoke-AipImportInteractive -Harness pi -SourceRoot $script:Pidir -ProfileNames @('work', 'suit') -ProfilesOpt '' -AllProfiles 0 -Files $files -Profiles $profiles
-        $status | Should -Be 0
-        @($files) | Should -Be @('auth.json', 'skills/reviewer/SKILL.md')
-        @($profiles) | Should -Be @('work', 'suit')
-
-        Invoke-AipImportCopy -Harness pi -SourceRoot $script:Pidir -DryRun 0 -FileList $files.ToArray() -ProfileNames $profiles.ToArray() -Force 0 -SkipExisting 0
-        $script:AipCommandStatus | Should -Be 0
-        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
-        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'suit/skills/reviewer/SKILL.md') -Raw) | Should -Be '# Reviewer'
+    It 'exposes no picker machinery and requires files' {
+        Get-Command Invoke-AipImportInteractive -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        aip import pi *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'no files given'
     }
 
     It 'appears in help' {

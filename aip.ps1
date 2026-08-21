@@ -2555,69 +2555,6 @@ function Test-AipImportTrackedWarning {
     }
 }
 
-function Invoke-AipImportInteractive {
-    # Runs the bundled Node picker and fills the file/profile lists from its NUL records.
-    param(
-        [Parameter(Mandatory)][string]$Harness,
-        [Parameter(Mandatory)][string]$SourceRoot,
-        [Parameter(Mandatory)][string[]]$ProfileNames,
-        [AllowEmptyString()][string]$ProfilesOpt,
-        [Parameter(Mandatory)][int]$AllProfiles,
-        [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Files,
-        [AllowEmptyCollection()][System.Collections.Generic.List[string]]$Profiles
-    )
-    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $node) { Write-AipError 'interactive import requires Node.js (node) on PATH'; return 1 }
-    $picker = $env:AIP_PICKER
-    if ([string]::IsNullOrEmpty($picker)) {
-        $picker = Join-Path $PSScriptRoot 'bin/aip-picker.js'
-        if (-not (Test-Path -LiteralPath $picker)) { $picker = Join-Path (Join-Path $HOME '.local/share/aip') 'bin/aip-picker.js' }
-    }
-    if (-not (Test-Path -LiteralPath $picker)) { Write-AipError "the interactive picker was not found at: $picker"; return 1 }
-    $pickerArgs = @()
-    if ($AllProfiles -eq 1) { $pickerArgs += '--all-profiles' }
-    elseif (-not [string]::IsNullOrEmpty($ProfilesOpt)) { $pickerArgs += '--profiles'; $pickerArgs += $ProfilesOpt }
-    $pickerArgs += $ProfileNames
-    # Run node with raw stdout capture: PowerShell's '1>' redirect re-encodes native
-    # output as text and strips the NUL bytes the picker uses as record separators.
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $node.Path
-    $psi.ArgumentList.Add($picker)
-    $psi.ArgumentList.Add($Harness)
-    $psi.ArgumentList.Add($SourceRoot)
-    foreach ($a in $pickerArgs) { $psi.ArgumentList.Add([string]$a) }
-    $psi.RedirectStandardOutput = $true
-    $psi.UseShellExecute = $false
-    try {
-        $process = [System.Diagnostics.Process]::Start($psi)
-        $recordsText = $process.StandardOutput.ReadToEnd()
-        $process.WaitForExit()
-        $status = $process.ExitCode
-    }
-    catch {
-        Write-AipError "could not start the interactive picker: $($_.Exception.Message)"
-        return 1
-    }
-    if ($status -ne 0) {
-        if ($status -eq 130) { Write-AipError 'import cancelled' } else { Write-AipError 'the interactive picker failed' }
-        return 1
-    }
-    $records = $recordsText.Split([char]0)
-    $Files.Clear(); $Profiles.Clear()
-    for ($i = 0; $i -lt $records.Length; $i++) {
-        if ($records[$i] -eq 'file' -and $i + 1 -lt $records.Length) {
-            $i++
-            $rel = $records[$i]
-            if ((Test-AipImportRelPath $rel) -and (Test-Path -LiteralPath (Join-Path $SourceRoot $rel) -PathType Leaf)) { $Files.Add($rel) }
-        }
-        elseif ($records[$i] -eq 'profile' -and $i + 1 -lt $records.Length) {
-            $i++
-            if (Test-AipImportProfile $records[$i]) { $Profiles.Add($records[$i]) } else { return 2 }
-        }
-    }
-    return 0
-}
-
 function Invoke-AipImport {
     param([object[]]$Arguments)
     $harness = $null
@@ -2671,35 +2608,22 @@ function Invoke-AipImport {
     if ($allProfiles -and $null -ne $profilesOpt) { Write-AipError '--profile and --all-profiles conflict'; $script:AipCommandStatus = 2; return }
     $profiles = [System.Collections.Generic.List[string]]::new()
     if ($fileList.Count -eq 0) {
-        $interactive = (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
-        if ($interactive) {
-            $allNames = @(Get-AipProfileNames)
-            if ($null -ne $profilesOpt) { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return } } }
-            $pickerNames = if ($null -ne $profilesOpt) { @($profilesOpt.Split(',')) } else { $allNames }
-            if ($pickerNames.Count -eq 0) { Write-AipError 'no profiles found; create a profile with aip create first'; return }
-            $status = Invoke-AipImportInteractive -Harness $harness -SourceRoot $sourceRoot -ProfileNames $pickerNames -ProfilesOpt $profilesOpt -AllProfiles $allProfiles -Files $fileList -Profiles $profiles
-            if ($status -ne 0) { return }
-            if ($fileList.Count -eq 0) { Write-AipError 'no files selected; nothing to copy'; return }
-        }
-        else {
-            Write-AipError 'no files given and no terminal available; pass FILE... or run aip import in a terminal'
-            Write-AipImportUsage
-            return
-        }
+        Write-AipError 'no files given'
+        Write-AipImportUsage
+        $script:AipCommandStatus = 2
+        return
     }
-    else {
-        if (-not $allProfiles -and $null -eq $profilesOpt) {
-            Write-AipError 'no profiles selected; pass --profile NAME or --all-profiles'
-            Write-AipImportUsage
-            return
-        }
-        foreach ($rel in $fileList) {
-            if (-not (Test-AipImportRelPath $rel)) { Write-AipError "invalid file path: $rel"; return }
-            if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $rel) -PathType Leaf)) { Write-AipError "no such file in the $harness configuration: $rel"; return }
-        }
-        if ($allProfiles) { foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) } }
-        else { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return }; $profiles.Add($n) } }
+    if (-not $allProfiles -and $null -eq $profilesOpt) {
+        Write-AipError 'no profiles selected; pass --profile NAME or --all-profiles'
+        Write-AipImportUsage
+        return
     }
+    foreach ($rel in $fileList) {
+        if (-not (Test-AipImportRelPath $rel)) { Write-AipError "invalid file path: $rel"; return }
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $rel) -PathType Leaf)) { Write-AipError "no such file in the $harness configuration: $rel"; return }
+    }
+    if ($allProfiles) { foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) } }
+    else { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return }; $profiles.Add($n) } }
     if ($profiles.Count -eq 0) { Write-AipError 'no profiles selected; nothing to do'; return }
     Invoke-AipImportCopy -Harness $harness -SourceRoot $sourceRoot -DryRun $dryRun -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() -Force $force -SkipExisting $skipExisting
     if ($script:AipCommandStatus -ne 0) { return }
