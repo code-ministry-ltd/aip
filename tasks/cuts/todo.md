@@ -51,15 +51,15 @@ interactive-picker bats cases; update the no-files message assertion. The artifa
 **Depends.** T2
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/import.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T4 — Remove picker artifacts + toolchain — S
+## T4 — Remove picker artifacts + toolchain — S ✅
 **Desc.** Delete `src/picker.mjs`, `src/picker-state.mjs`, `bin/aip-picker.js`,
 `tests/node/`; remove `build`/`prepack` scripts and the esbuild + @clack/prompts
 devDependencies from `package.json`; drop `bin/aip-picker.js` from `files`; remove the
 CI build + node-test steps; remove the picker copy blocks in `install.sh`/`install.ps1`.
 **Acceptance.**
-- [ ] `package.json` has no `bin/aip-picker.js`, `build`, `prepack`, esbuild, or @clack/prompts; `files` list matches the shipped set.
-- [ ] `.github/workflows/test.yml` has no build/node step; a fresh install creates no `bin/` under the install root.
-- [ ] Full suite green (bats + Pester; `npm run test:node` no longer exists).
+- [x] `package.json` has no `bin/aip-picker.js`, `build`, `prepack`, esbuild, or @clack/prompts; `files` list matches the shipped set.
+- [x] `.github/workflows/test.yml` has no build/node step; a fresh install creates no `bin/` under the install root.
+- [x] Full suite green (bats + Pester; `npm run test:node` no longer exists).
 **Verify.** `npm run test:posix`; `pwsh -NoProfile -File tests/run-powershell.ps1` (CI); `grep -rn 'picker' package.json .github src bin install.sh install.ps1 2>/dev/null` → empty
 **Depends.** T3
 **Files.** `src/picker.mjs`, `src/picker-state.mjs`, `bin/aip-picker.js`, `tests/node/picker-state.test.mjs`, `package.json`, `.github/workflows/test.yml`, `install.sh`, `install.ps1`
