@@ -3042,3 +3042,96 @@ Describe 'pass-through' {
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
     }
 }
+
+Describe 'skills update' {
+    BeforeAll {
+        function Get-AddFileUrl {
+            param([Parameter(Mandatory)][string]$Path)
+            $p = $Path.Replace('\', '/')
+            if ($p -match '^[A-Za-z]:/') { return "file:///$p" }
+            return "file://$p"
+        }
+    }
+
+    BeforeEach {
+        $script:AddRoot = Join-Path $TestDrive ('upd-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AddRoot -Force | Out-Null
+        $script:AipProfileRoot = Join-Path $script:AddRoot 'profile root'
+        $script:FakeBin = Join-Path $script:AddRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:AddRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:AIP_PROFILE = $null
+        $env:CLAUDE_CONFIG_DIR = $null
+        $env:CODEX_HOME = $null
+        $env:PI_CODING_AGENT_DIR = $null
+        $env:OPENCODE_CONFIG_DIR = $null
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:AddRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        New-TestProfile work
+        $script:AddSrc = Join-Path $script:AddRoot 'source'
+        & git init -q $script:AddSrc
+        $null = New-Item -ItemType Directory -Path (Join-Path $script:AddSrc 'alpha') -Force
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/helper.sh') -Value 'helper' -Encoding utf8NoBOM
+        & git -C $script:AddSrc add -A
+        & git -C $script:AddSrc commit -q -m 'source'
+    }
+
+    AfterEach {
+        $env:AIP_PROFILE = $null
+        $env:FAKE_CAPTURE = $null
+        $env:FAKE_EXIT_STATUS = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
+    It 'refreshes a named skill from its sidecar without committing' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha v2`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc commit -q -am 'v2'
+        $before = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
+        $sidecar = Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source'
+        $lines = Get-Content -LiteralPath $sidecar
+        $lines | Should -Contain ("source=$(Get-AddFileUrl $script:AddSrc)#alpha")
+        $lines | Should -Contain ("url=" + (Get-AddFileUrl $script:AddSrc))
+        $lines | Should -Contain 'path=alpha'
+        $after = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
+        $after | Should -Be $before
+    }
+
+    It 'leaves dest unchanged when the sidecar is missing' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source') -Force
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Value 'keep' -Encoding utf8NoBOM
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw).Trim() | Should -Be 'keep'
+    }
+
+    It 'errors on an unknown name' {
+        aip skills update work nosuch *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/nosuch') | Should -BeFalse
+    }
+
+    It 'is a usage error without a name and without --all' {
+        aip skills update work *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip skills update'
+    }
+
+    It 'never prints sidecar URL userinfo' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source') -Value "source=kept`nurl=https://user:s3cret@example.test/repo.git`npath=`n" -Encoding utf8NoBOM
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Not -Match 's3cret'
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
+    }
+}

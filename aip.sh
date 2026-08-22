@@ -2605,6 +2605,7 @@ _aip_skills() {
   [ "$#" -gt 0 ] && shift
   case $sub in
     add) _aip_add "$@" ;;
+    update) _aip_skills_update "$@" ;;
     *) _aip_skills_usage; return 2 ;;
   esac
 }
@@ -2621,6 +2622,134 @@ _aip_write_skill_source() {
     return 1
   }
 }
+
+_aip_read_skill_source() {
+  # $1 dest skill dir. Sets _AIP_SKILL_SOURCE, _AIP_SKILL_URL, _AIP_SKILL_PATH.
+  local file=$1/.aip-source source_line url_line path_line extra
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  source_line=$(command sed -n '1p' "$file") || return 1
+  url_line=$(command sed -n '2p' "$file") || return 1
+  path_line=$(command sed -n '3p' "$file") || return 1
+  extra=$(command sed -n '4p' "$file") || return 1
+  [ -z "$extra" ] || return 1
+  case $source_line in source=*) ;; *) return 1 ;; esac
+  case $url_line in url=*) ;; *) return 1 ;; esac
+  case $path_line in path=*) ;; *) return 1 ;; esac
+  _AIP_SKILL_SOURCE=${source_line#source=}
+  _AIP_SKILL_URL=${url_line#url=}
+  _AIP_SKILL_PATH=${path_line#path=}
+  [ -n "$_AIP_SKILL_URL" ] || return 1
+}
+
+_aip_skills_update_usage() {
+  _aip_error 'usage: aip skills update PROFILE NAME... | aip skills update --all-profiles NAME... | aip skills update PROFILE --all | aip skills update --all-profiles --all'
+}
+
+_aip_skills_update_one() {
+  # $1 profile, $2 name. Sidecar-keyed: missing dest or sidecar is an error.
+  local pname=$1 name=$2 dest url path source dir skill_dir
+  dest=$(_aip_profile_path "$pname")/skills/$name
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+    _aip_error "skill '$name' is not installed in profile $pname"
+    return 1
+  fi
+  if ! _aip_read_skill_source "$dest"; then
+    _aip_error "skill '$name' in profile $pname has no recorded source; reinstall it with aip skills add"
+    return 1
+  fi
+  source=$_AIP_SKILL_SOURCE
+  url=$_AIP_SKILL_URL
+  path=$_AIP_SKILL_PATH
+  dir=$(command mktemp "${TMPDIR:-/tmp}/aip-add.XXXXXX") || { _aip_error 'could not create a temporary directory'; return 1; }
+  command rm -f -- "$dir"
+  if ! _aip_add_clone "$url" "$dir"; then
+    command rm -rf -- "$dir"
+    return 1
+  fi
+  if ! _aip_add_resolve_skill "$dir" "$path"; then
+    command rm -rf -- "$dir"
+    return 1
+  fi
+  skill_dir=$_AIP_ADD_SKILL_DIR
+  if ! command rm -rf -- "$dest"; then
+    command rm -rf -- "$dir"
+    _aip_error "could not remove the existing skill $name"
+    return 1
+  fi
+  if ! _aip_add_copy_skill "$skill_dir" "$dest" "$name"; then
+    command rm -rf -- "$dir"
+    return 1
+  fi
+  if ! _aip_write_skill_source "$dest" "$source" "$url" "$path"; then
+    command rm -rf -- "$dir"
+    return 1
+  fi
+  command rm -rf -- "$dir"
+  printf 'updated %s in %s\n' "$name" "$pname"
+}
+
+_aip_skills_update() (
+  _aip_clear_git_routing
+  local profile='' all_profiles=0 all=0
+  local arg namesfile profilesfile name pname
+  namesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-upd-names.XXXXXX") || return 1
+  profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-upd-profiles.XXXXXX") || { command rm -f "$namesfile"; return 1; }
+  trap 'command rm -f "$namesfile" "$profilesfile"' EXIT
+  while [ "$#" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+      --all-profiles) all_profiles=1 ;;
+      --all) all=1 ;;
+      --)
+        while [ "$#" -gt 0 ]; do
+          printf '%s\n' "$1" >>"$namesfile"
+          shift
+        done
+        ;;
+      -*)
+        _aip_error "unknown update option '$arg'"
+        _aip_skills_update_usage
+        return 2
+        ;;
+      *)
+        if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then profile=$arg
+        else printf '%s\n' "$arg" >>"$namesfile"
+        fi
+        ;;
+    esac
+  done
+  if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then
+    _aip_error 'no profile selected; pass a PROFILE or --all-profiles'
+    _aip_skills_update_usage
+    return 2
+  fi
+  { [ "$all_profiles" -eq 1 ] && [ -n "$profile" ]; } && { _aip_error '--all-profiles conflicts with the PROFILE argument'; return 2; }
+  { [ "$all" -eq 1 ] && [ -s "$namesfile" ]; } && { _aip_error '--all conflicts with NAME arguments'; _aip_skills_update_usage; return 2; }
+  if [ "$all" -eq 0 ] && [ ! -s "$namesfile" ]; then
+    _aip_skills_update_usage
+    return 2
+  fi
+  if [ "$all" -eq 1 ]; then
+    _aip_error 'usage: aip skills update PROFILE NAME...'
+    return 2
+  fi
+  if [ "$all_profiles" -eq 1 ]; then
+    _aip_error 'usage: aip skills update PROFILE NAME...'
+    return 2
+  fi
+  _aip_import_require_profile "$profile" || return
+  printf '%s\n' "$profile" >|"$profilesfile"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    _aip_validate_name "$name" || { _aip_error "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"; return 1; }
+    while IFS= read -r pname; do
+      [ -n "$pname" ] || continue
+      _aip_skills_update_one "$pname" "$name" || return 1
+    done <"$profilesfile"
+  done <"$namesfile"
+  return 0
+)
 
 _aip_add_usage() {
   _aip_error 'usage: aip skills add PROFILE SOURCE... | aip skills add --all-profiles SOURCE... [--force] [--skip-existing]'
