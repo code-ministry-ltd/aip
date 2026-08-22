@@ -2688,10 +2688,28 @@ _aip_skills_update_one() {
   printf 'updated %s in %s\n' "$name" "$pname"
 }
 
+_aip_skills_update_all() {
+  # $1 profile. Update every sidecar-backed skill dir; note dirs without a sidecar.
+  local pname=$1 skills dest name
+  skills=$(_aip_profile_path "$pname")/skills
+  [ -d "$skills" ] || return 0
+  command find "$skills" -mindepth 1 -maxdepth 1 ! -name '.git' -print | LC_ALL=C command sort |
+  while IFS= read -r dest; do
+    [ -n "$dest" ] || continue
+    [ -d "$dest" ] || continue
+    name=${dest##*/}
+    if _aip_read_skill_source "$dest"; then
+      _aip_skills_update_one "$pname" "$name" || return 1
+    else
+      printf 'skipped %s in %s (no recorded source)\n' "$name" "$pname"
+    fi
+  done
+}
+
 _aip_skills_update() (
   _aip_clear_git_routing
   local profile='' all_profiles=0 all=0
-  local arg namesfile profilesfile name pname
+  local arg namesfile profilesfile name pname dest found
   namesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-upd-names.XXXXXX") || return 1
   profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-upd-profiles.XXXXXX") || { command rm -f "$namesfile"; return 1; }
   trap 'command rm -f "$namesfile" "$profilesfile"' EXIT
@@ -2730,23 +2748,46 @@ _aip_skills_update() (
     _aip_skills_update_usage
     return 2
   fi
-  if [ "$all" -eq 1 ]; then
-    _aip_error 'usage: aip skills update PROFILE NAME...'
-    return 2
-  fi
   if [ "$all_profiles" -eq 1 ]; then
-    _aip_error 'usage: aip skills update PROFILE NAME...'
-    return 2
+    _aip_list_profile_names | command grep -vx aip >|"$profilesfile" || :
+    if [ ! -s "$profilesfile" ]; then
+      if [ -n "$(_aip_list_profile_names)" ]; then
+        _aip_error 'no user profiles found; --all-profiles skips the aip management profile'
+        return 1
+      fi
+      _aip_error 'no profiles found; create a profile with aip create first'
+      return 1
+    fi
+  else
+    _aip_import_require_profile "$profile" || return
+    printf '%s\n' "$profile" >|"$profilesfile"
   fi
-  _aip_import_require_profile "$profile" || return
-  printf '%s\n' "$profile" >|"$profilesfile"
+  if [ "$all" -eq 1 ]; then
+    while IFS= read -r pname; do
+      [ -n "$pname" ] || continue
+      _aip_skills_update_all "$pname" || return 1
+    done <"$profilesfile"
+    return 0
+  fi
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     _aip_validate_name "$name" || { _aip_error "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"; return 1; }
-    while IFS= read -r pname; do
-      [ -n "$pname" ] || continue
-      _aip_skills_update_one "$pname" "$name" || return 1
-    done <"$profilesfile"
+    if [ "$all_profiles" -eq 1 ]; then
+      found=0
+      while IFS= read -r pname; do
+        [ -n "$pname" ] || continue
+        dest=$(_aip_profile_path "$pname")/skills/$name
+        if _aip_read_skill_source "$dest"; then
+          _aip_skills_update_one "$pname" "$name" || return 1
+          found=1
+        elif [ -e "$dest" ] || [ -L "$dest" ]; then
+          printf 'skipped %s in %s (no recorded source)\n' "$name" "$pname"
+        fi
+      done <"$profilesfile"
+      [ "$found" -eq 1 ] || { _aip_error "skill '$name' has no recorded source in any target profile"; return 1; }
+    else
+      _aip_skills_update_one "$profile" "$name" || return 1
+    fi
   done <"$namesfile"
   return 0
 )
