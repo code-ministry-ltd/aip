@@ -2606,7 +2606,7 @@ _aip_add_parse_source() {
   local source=$1 url path name rest second
   case $source in
     ''|*$'\n'*|*"*"*|*'\\'*|*' '*|*$'\t'*)
-      _aip_error "invalid source: $source"
+      _aip_error "invalid source: $(_aip_redact_url "$source")"
       return 2
       ;;
     /*|'~/'*|'./'*|'../'*)
@@ -2658,7 +2658,7 @@ _aip_add_parse_source() {
     name=${name##*:}
     case $name in *.git) name=${name%.git} ;; esac
   fi
-  [ -n "$name" ] || { _aip_error "unsupported source: $source; cannot determine the skill name"; return 2; }
+  [ -n "$name" ] || { _aip_error "unsupported source: $(_aip_redact_url "$source"); cannot determine the skill name"; return 2; }
   _AIP_ADD_URL=$url
   _AIP_ADD_PATH=$path
   _AIP_ADD_NAME=$name

@@ -2700,6 +2700,10 @@ Describe 'add' {
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'could not clone'
         $script:AipLastError | Should -Not -Match 's3cret'
+        aip add work 'http://user:s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'unsupported source URL'
+        $script:AipLastError | Should -Not -Match 's3cret'
     }
 
     It 'rejects mixed-separator traversal in the source path' {

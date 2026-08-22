@@ -2786,7 +2786,7 @@ function ConvertFrom-AipAddSource {
     # path, or of the repository URL for a repo-root source.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Source)
     if ([string]::IsNullOrWhiteSpace($Source) -or $Source -match '\s') {
-        Write-AipError "invalid source: $Source"
+        Write-AipError "invalid source: $(Get-AipRedactedUrl $Source)"
         $script:AipCommandStatus = 2
         return $null
     }
@@ -2796,7 +2796,7 @@ function ConvertFrom-AipAddSource {
         $idx = $Source.IndexOf('#')
         if ($idx -ge 0) { $url = $Source.Substring(0, $idx); $path = $Source.Substring($idx + 1) } else { $url = $Source }
         if (-not ($url.StartsWith('https://') -or $url.StartsWith('ssh://') -or $url.StartsWith('file://'))) {
-            Write-AipError "unsupported source URL: $Source; expected https://, ssh://, git@, or file://"
+            Write-AipError "unsupported source URL: $(Get-AipRedactedUrl $Source); expected https://, ssh://, git@, or file://"
             $script:AipCommandStatus = 2
             return $null
         }
@@ -2841,7 +2841,7 @@ function ConvertFrom-AipAddSource {
         $name = ($url -replace '.*[/:]', '') -replace '\.git$', ''
     }
     if ([string]::IsNullOrEmpty($name)) {
-        Write-AipError "unsupported source: $Source; cannot determine the skill name"
+        Write-AipError "unsupported source: $(Get-AipRedactedUrl $Source); cannot determine the skill name"
         $script:AipCommandStatus = 2
         return $null
     }
