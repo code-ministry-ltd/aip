@@ -107,6 +107,10 @@ AfterEach {
 It 'reports the embedded version and rejects extra arguments' {
     aip version | Should -Be 'aip 0.5.0'
     $global:LASTEXITCODE | Should -Be 0
+    aip --version | Should -Be 'aip 0.5.0'
+    $global:LASTEXITCODE | Should -Be 0
+    aip -v | Should -Be 'aip 0.5.0'
+    $global:LASTEXITCODE | Should -Be 0
     aip version extra *> $null
     $global:LASTEXITCODE | Should -Not -Be 0
 }
@@ -136,7 +140,7 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
+    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help', 'import') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
     $helpOutput | Should -Match ([regex]::Escape('aip add PROFILE SOURCE...'))
@@ -171,8 +175,18 @@ Describe 'profile creation and selection' {
         Get-Command Invoke-AipOutfit -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
     }
 
-    It 'allows TOML-compatible C1 characters in Codex instructions' {
-        ConvertTo-AipTomlString "before$([char]0x85)after" | Should -Be "`"before$([char]0x85)after`""
+    It 'rejects C1 control characters in Codex instructions' {
+        { ConvertTo-AipTomlString "before$([char]0x85)after" } | Should -Throw '*control character*'
+    }
+
+    It 'delete confirmation matcher accepts y yes variants and rejects the rest' {
+        Test-AipDeleteConfirm 'y' | Should -BeTrue
+        Test-AipDeleteConfirm 'Y' | Should -BeTrue
+        Test-AipDeleteConfirm 'yes' | Should -BeTrue
+        Test-AipDeleteConfirm 'YES' | Should -BeTrue
+        Test-AipDeleteConfirm 'n' | Should -BeFalse
+        Test-AipDeleteConfirm '' | Should -BeFalse
+        Test-AipDeleteConfirm 'yeah' | Should -BeFalse
     }
 
     It 'keeps command and harness spellings case-sensitive' {
@@ -196,6 +210,8 @@ Describe 'profile creation and selection' {
         (Get-Content -LiteralPath (Join-Path $profile 'claude/CLAUDE.md') -TotalCount 1) | Should -Be '@../AGENTS.md'
         [IO.File]::ReadAllBytes((Join-Path $profile 'claude/CLAUDE.md')) | Should -Not -Contain 13
         [IO.File]::ReadAllBytes((Join-Path $profile '.gitignore')) | Should -Not -Contain 13
+        (Get-Content -LiteralPath (Join-Path $profile '.gitignore') -Raw) | Should -Match '(?m)^\*\*/\.credentials\.json$'
+        (Get-Content -LiteralPath (Join-Path $profile '.gitignore') -Raw) | Should -Match '(?m)^\*\*/auth\.json$'
         ((& git -C $root ls-files -s work/codex/AGENTS.md) -split ' ')[0] | Should -Be '120000'
         (& git -C $root config --bool core.symlinks) | Should -Be 'true'
         (& git -C $root ls-files -- work/skills/.gitkeep) | Should -Be 'work/skills/.gitkeep'
@@ -487,6 +503,17 @@ Describe 'harness wrappers' {
         aip manage bogus *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match "unknown harness 'bogus'"
+    }
+
+    It 'manage restores a prior AIP_PROFILE and leaves unset unset' {
+        New-TestProfile aip
+        New-TestProfile work
+        $env:AIP_PROFILE = 'work'
+        aip manage pi *> $null
+        $env:AIP_PROFILE | Should -Be 'work'
+        Remove-Item Env:AIP_PROFILE -ErrorAction SilentlyContinue
+        aip manage pi *> $null
+        Test-Path Env:AIP_PROFILE | Should -BeFalse
     }
 
     It 'manage requires the aip profile with a fix hint' {
@@ -1080,6 +1107,30 @@ Describe 'Git checkpoint and sync' {
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
         (& git -C $script:AipProfileRoot ls-files -- work/skills/reviewer/id_ed25519) | Should -BeNullOrEmpty
+    }
+
+    It 'blocks skill-tree .credentials.json even when gitignore allows it' {
+        $profile = Join-Path $script:AipProfileRoot 'work'
+        $dir = Join-Path $profile 'skills/x'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        Add-Content -LiteralPath (Join-Path $profile '.gitignore') -Value '!skills/x/.credentials.json'
+        'secret' | Set-Content (Join-Path $dir '.credentials.json')
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
+        @(& git -C $script:AipProfileRoot ls-files -- 'work/skills/x/.credentials.json').Count | Should -Be 0
+    }
+
+    It 'blocks skill-tree auth.json even when gitignore allows it' {
+        $profile = Join-Path $script:AipProfileRoot 'work'
+        $dir = Join-Path $profile 'skills/x'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        Add-Content -LiteralPath (Join-Path $profile '.gitignore') -Value '!skills/x/auth.json'
+        'secret' | Set-Content (Join-Path $dir 'auth.json')
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'forbidden credential path exists under skills'
+        @(& git -C $script:AipProfileRoot ls-files -- 'work/skills/x/auth.json').Count | Should -Be 0
     }
 
     It 'blocks uppercase credential extensions under skills' {
@@ -1724,6 +1775,46 @@ Describe 'remote' {
         $script:AipLastError | Should -Match 'aip remote remove'
     }
 
+    It 'never prints URL userinfo on an unreachable clone' {
+        $script:AipProfileRoot = Join-Path $TestDrive 'fresh-secret'
+        aip remote add 'https://user:s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'could not clone'
+        $script:AipLastError | Should -Not -Match 's3cret'
+    }
+
+    It 'redacts userinfo when origin is already configured' {
+        New-TestProfile work
+        & git -C $script:AipProfileRoot remote add origin 'https://user:s3cret@example.test/repo.git'
+        aip remote add 'https://example.test/other.git' *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'origin is already configured'
+        $script:AipLastError | Should -Not -Match 's3cret'
+    }
+
+    It 'redacts userinfo on a successful fresh-machine clone' {
+        New-TestProfile work
+        aip remote add $script:TestRemote *> $null
+        $fileUrl = if ($script:TestRemote -match '^[A-Za-z]:') { 'file:///' + $script:TestRemote.Replace('\', '/') } else { 'file://' + $script:TestRemote }
+        & git config --global "url.$fileUrl.insteadOf" 'https://user:s3cret@example.test/repo.git'
+        $freshRoot = Join-Path $TestDrive 'fresh-userinfo'
+        $script:AipProfileRoot = $freshRoot
+        $out = (aip remote add 'https://user:s3cret@example.test/repo.git' | Out-String)
+        $global:LASTEXITCODE | Should -Be 0
+        $out | Should -Match 'Cloned profiles from https://example.test/repo.git.'
+        $out | Should -Not -Match 's3cret'
+    }
+
+    It 'restores GIT_SSH_COMMAND after remote add' {
+        $env:GIT_SSH_COMMAND = 'keep-me'
+        try {
+            New-TestProfile work
+            aip remote add $script:TestRemote *> $null
+            $env:GIT_SSH_COMMAND | Should -Be 'keep-me'
+        }
+        finally { Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue }
+    }
+
     It 'clones the repository on a fresh machine and lists every profile' {
         New-TestProfile work
         New-TestProfile personal
@@ -1803,6 +1894,27 @@ Describe 'remote' {
 }
 
 Describe 'sync output' {
+    It 'harness sync skips fetch and push when HEAD matches ls-remote' {
+        New-TestProfile work
+        Initialize-TestUpstream
+        $script:AipGitLog = [System.Collections.Generic.List[string]]::new()
+        $original = ${function:Invoke-AipGit}
+        ${function:Invoke-AipGit} = {
+            $script:AipGitLog.Add(($args -join ' '))
+            & $original @args
+        }
+        try {
+            $out = Invoke-AipSync 'before' | Out-String
+            $global:LASTEXITCODE | Should -Be 0
+            $out | Should -Match 'Profiles up to date with'
+            $joined = $script:AipGitLog -join "`n"
+            $joined | Should -Match 'ls-remote'
+            $joined | Should -Not -Match '(?i)\bfetch\b'
+            $joined | Should -Not -Match '(?i)\bpush\b'
+        }
+        finally { ${function:Invoke-AipGit} = $original }
+    }
+
     It 'a sync emits its result line and no spinner machinery exists' {
         New-TestProfile work
         Initialize-TestUpstream
@@ -1923,8 +2035,9 @@ It 'returns a nonzero process status when installation fails' {
             $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
             $LASTEXITCODE | Should -Be 0
             $root = $env:_AIP_PROFILE_ROOT
-            Test-Path -LiteralPath (Join-Path $root 'aip/skills/aip/SKILL.md') | Should -BeTrue
-            Test-Path -LiteralPath (Join-Path $root 'aip/skills/aip/.aip-managed') | Should -BeTrue
+            foreach ($name in 'SKILL.md', 'README.md', 'setup.md', 'audit.md', 'conflicts.md', '.aip-managed') {
+                Test-Path -LiteralPath (Join-Path $root "aip/skills/aip/$name") | Should -BeTrue
+            }
             & git -C $root rev-parse --verify HEAD 2>$null | Out-Null
             $global:LASTEXITCODE | Should -Be 0
             @(& git -C $root ls-files -- 'aip/skills/aip/SKILL.md' 'aip/skills/aip/.aip-managed').Count | Should -Be 0
@@ -2238,12 +2351,16 @@ Describe 'import' {
     }
 
     It 'replaces a non-managed symlink destination instead of writing through' {
-        Set-Content -LiteralPath (Join-Path $TestDrive 'target.txt') -Value 'elsewhere' -Encoding utf8NoBOM -NoNewline
-        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Target (Join-Path $TestDrive 'target.txt') -ErrorAction SilentlyContinue | Out-Null
+        $target = Join-Path $TestDrive 'target.txt'
+        Set-Content -LiteralPath $target -Value 'elsewhere' -Encoding utf8NoBOM -NoNewline
+        $link = New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Target $target
+        $link | Should -Not -BeNullOrEmpty
+        $link.LinkType | Should -Be 'SymbolicLink'
         aip import pi models.json --profile work --force *> $null
         $global:LASTEXITCODE | Should -Be 0
         (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')).LinkType | Should -BeNullOrEmpty
         (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be '{"models":[]}'
+        (Get-Content -LiteralPath $target -Raw) | Should -Be 'elsewhere'
     }
 
     It 'warns when a destination is not covered by the profile gitignore' {
@@ -2266,6 +2383,29 @@ Describe 'import' {
             (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') -Raw) | Should -Be '{"token":"secret"}'
         }
         finally { $env:PI_CODING_AGENT_DIR = $null }
+    }
+
+    It 'rejects backslash and mixed-separator traversal' {
+        $outside = Join-Path $script:AipProfileRoot 'outside.txt'
+        Set-Content -LiteralPath $outside -Value 'keep' -Encoding utf8NoBOM
+        aip import pi '..\..\outside.txt' --profile work --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid file path'
+        (Get-Content -LiteralPath $outside -Raw) | Should -Be 'keep'
+        aip import pi 'foo\..\bar' --profile work --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid file path'
+        aip import pi 'foo/..\bar' --profile work --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid file path'
+    }
+
+    It '--all-profiles skips the aip management profile' {
+        New-TestProfile aip
+        aip import pi auth.json --all-profiles --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/auth.json') | Should -BeTrue
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'aip/pi/auth.json') -Force).LinkType | Should -Be 'SymbolicLink'
     }
 
     It 'exposes no picker machinery and requires files' {
@@ -2306,6 +2446,9 @@ Describe 'add' {
             Set-Content -LiteralPath (Join-Path $script:AddSrc 'dup/alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha copy`n" -Encoding utf8NoBOM
             Set-Content -LiteralPath (Join-Path $script:AddSrc 'Bad-Name/SKILL.md') -Value "---`nname: bad`n---`n# Bad`n" -Encoding utf8NoBOM
             $null = New-Item -ItemType SymbolicLink -Path (Join-Path $script:AddSrc 'linkdir') -Target 'alpha'
+            $null = New-Item -ItemType Directory -Path (Join-Path $script:AddSrc 'nestedlink') -Force
+            Set-Content -LiteralPath (Join-Path $script:AddSrc 'nestedlink/SKILL.md') -Value "---`nname: nestedlink`n---`n# Nested`n" -Encoding utf8NoBOM
+            $null = New-Item -ItemType SymbolicLink -Path (Join-Path $script:AddSrc 'nestedlink/inside.md') -Target 'SKILL.md'
             & git -C $script:AddSrc add -A
             & git -C $script:AddSrc commit -q -m 'source'
             # A repository whose root is itself a skill (repo-root source form).
@@ -2532,6 +2675,71 @@ Describe 'add' {
         (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh') | Should -BeTrue
     }
+
+    It 'copies a repo-root skill without its .git and a following sync succeeds' {
+        Initialize-TestUpstream
+        aip add work (Get-AddFileUrl $script:AddSrcRoot) *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/rootskill/SKILL.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/rootskill/.git') | Should -BeFalse
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        & git -C $script:TestRemote cat-file -e 'main:work/skills/rootskill/SKILL.md'
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'rejects a symlink inside the skill directory and leaves dest absent' {
+        aip add work "$(Get-AddFileUrl $script:AddSrc)#nestedlink" *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'nested symlink'
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/nestedlink') | Should -BeFalse
+    }
+
+    It 'never prints URL userinfo' {
+        aip add work 'https://user:s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'could not clone'
+        $script:AipLastError | Should -Not -Match 's3cret'
+        aip add work 'http://user:s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'unsupported source URL'
+        $script:AipLastError | Should -Not -Match 's3cret'
+    }
+
+    It 'rejects mixed-separator traversal in the source path' {
+        aip add work "$(Get-AddFileUrl $script:AddSrc)#..\outside" *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid source path'
+        aip add work "$(Get-AddFileUrl $script:AddSrc)#foo/..\bar" *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'invalid source path'
+    }
+
+    It '--all-profiles skips the aip management profile' {
+        New-TestProfile aip
+        aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'aip/skills/alpha/SKILL.md') | Should -BeFalse
+        @(aip list) | Should -Contain 'aip'
+    }
+
+    It 'explicit add aip still installs into the management profile' {
+        New-TestProfile aip
+        aip add aip "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'aip/skills/alpha/SKILL.md') | Should -BeTrue
+    }
+
+    It '--all-profiles with only aip is a distinct error' {
+        Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force
+        $null = New-Item -ItemType Directory -Path $script:AipProfileRoot -Force
+        New-TestProfile aip
+        aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'skips the aip management profile'
+        $script:AipLastError | Should -Not -Match 'no profiles found'
+    }
 }
 
 Describe 'pass-through' {
@@ -2731,6 +2939,20 @@ Describe 'pass-through' {
         New-Item -ItemType Directory -Path $script:AipImportHome -Force | Out-Null
         Invoke-AipPassthroughProfile 'work'
         (Get-AipGitIgnoreText 'work') | Should -Be $block
+    }
+
+    It 'import refuses children of a pass-through directory' {
+        $plugins = Join-Path $script:AipImportHome '.claude/plugins'
+        New-Item -ItemType Directory -Path $plugins -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $plugins 'hook.json') -Value '{"hook":true}' -Encoding utf8NoBOM -NoNewline
+        New-TestProfile claudy
+        $link = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'claudy/claude/plugins') -Force
+        $link.LinkType | Should -Be 'SymbolicLink'
+        aip import claude plugins/hook.json --profile claudy --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'pass-through directory'
+        (Get-Content -LiteralPath (Join-Path $plugins 'hook.json') -Raw) | Should -Be '{"hook":true}'
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'claudy/claude/plugins') -Force).LinkType | Should -Be 'SymbolicLink'
     }
 
     It 'convergence: claude entries survive pi maintenance' {

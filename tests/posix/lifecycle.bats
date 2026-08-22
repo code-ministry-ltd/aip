@@ -63,6 +63,23 @@ setup() {
   [ -L "$_AIP_PROFILE_ROOT/dangling" ]
 }
 
+@test "delete confirmation matcher accepts y yes variants and rejects the rest" {
+  run _aip_delete_confirm_accepts y
+  [ "$status" -eq 0 ]
+  run _aip_delete_confirm_accepts Y
+  [ "$status" -eq 0 ]
+  run _aip_delete_confirm_accepts yes
+  [ "$status" -eq 0 ]
+  run _aip_delete_confirm_accepts YES
+  [ "$status" -eq 0 ]
+  run _aip_delete_confirm_accepts n
+  [ "$status" -ne 0 ]
+  run _aip_delete_confirm_accepts ''
+  [ "$status" -ne 0 ]
+  run _aip_delete_confirm_accepts yeah
+  [ "$status" -ne 0 ]
+}
+
 @test "delete refuses the active session profile even with force" {
   AIP_PROFILE=work
 

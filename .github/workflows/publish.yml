@@ -7,12 +7,85 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  posix:
+    name: POSIX (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Lint shell (advisory)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --severity=warning aip.sh install.sh
+      - name: Install test dependencies
+        run: npm ci
+      - name: Run Bats suite
+        run: |
+          mkdir -p test-results
+          npm run test:posix -- --report-formatter junit --output test-results
+      - name: Upload Bats report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: bats-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: warn
+
+  powershell:
+    name: PowerShell (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned Pester
+        shell: pwsh
+        run: |
+          $version = (Get-Content tests/Pester.version -Raw).Trim()
+          Install-Module Pester -RequiredVersion $version -Scope CurrentUser -Force -AllowClobber
+      - name: Lint PowerShell (advisory)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -AllowClobber
+          foreach ($file in @('aip.ps1', 'install.ps1')) {
+            Invoke-ScriptAnalyzer -Path $file -Severity Warning, Error | Format-Table -AutoSize
+          }
+      - name: Run Pester suite
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/run-powershell.ps1
+      - name: Upload Pester report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pester-windows
+          path: test-results/
+          if-no-files-found: warn
+
   publish:
     name: Publish to npm
+    needs: [posix, powershell]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -24,9 +97,5 @@ jobs:
           node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
-      - name: Install test dependencies
-        run: npm ci
-      - name: Run Bats suite
-        run: npm run test:posix
       - name: Publish to npm (trusted publishing)
         run: npm publish

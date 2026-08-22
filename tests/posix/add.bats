@@ -19,6 +19,9 @@ setup() {
   printf -- '---\nname: alpha\n---\n# Alpha copy\n' >"$TEST_SRC/dup/alpha/SKILL.md"
   printf -- '---\nname: bad\n---\n# Bad\n' >"$TEST_SRC/Bad-Name/SKILL.md"
   ln -s alpha "$TEST_SRC/linkdir"
+  mkdir -p "$TEST_SRC/nestedlink"
+  printf -- '---\nname: nestedlink\n---\n# Nested\n' >"$TEST_SRC/nestedlink/SKILL.md"
+  ln -s SKILL.md "$TEST_SRC/nestedlink/inside.md"
   git -C "$TEST_SRC" add -A
   git -C "$TEST_SRC" commit -q -m 'source'
   # A repository whose root is itself a skill (repo-root source form).
@@ -198,6 +201,62 @@ name: beta
   run aip add work "file://$TEST_SRC#alpha" --skip-existing
   [ "$status" -eq 0 ]
   [[ "$output" == *"skipped alpha in work"* ]]
+}
+
+@test "add copies a repo-root skill without its .git and a following sync succeeds" {
+  aip remote add "$TEST_REMOTE" >/dev/null
+  run aip add work "file://$TEST_SRC_ROOT"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/work/skills/rootskill/SKILL.md" ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/skills/rootskill/.git" ]
+  run aip sync
+  [ "$status" -eq 0 ]
+  git -C "$TEST_REMOTE" cat-file -e main:work/skills/rootskill/SKILL.md
+}
+
+@test "add rejects a symlink inside the skill directory and leaves dest absent" {
+  run aip add work "file://$TEST_SRC#nestedlink"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"nested symlink"* ]]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/skills/nestedlink" ]
+}
+
+@test "add never prints URL userinfo" {
+  run aip add work "https://user:s3cret@example.test/nope.git"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not clone"* ]]
+  [[ "$output" != *s3cret* ]]
+  run aip add work "http://user:s3cret@example.test/nope.git"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unsupported source URL"* ]]
+  [[ "$output" != *s3cret* ]]
+}
+
+@test "add --all-profiles skips the aip management profile" {
+  create_profile aip
+  run aip add --all-profiles "file://$TEST_SRC#alpha"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/work/skills/alpha/SKILL.md" ]
+  [ ! -e "$_AIP_PROFILE_ROOT/aip/skills/alpha/SKILL.md" ]
+  run aip list
+  printf '%s\n' "$output" | grep -Fxq aip
+}
+
+@test "add aip still installs into the management profile" {
+  create_profile aip
+  run aip add aip "file://$TEST_SRC#alpha"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/aip/skills/alpha/SKILL.md" ]
+}
+
+@test "add --all-profiles with only aip is a distinct error" {
+  command rm -rf "$_AIP_PROFILE_ROOT"
+  command mkdir -p "$_AIP_PROFILE_ROOT"
+  create_profile aip
+  run aip add --all-profiles "file://$TEST_SRC#alpha"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"skips the aip management profile"* ]]
+  [[ "$output" != *"no profiles found"* ]]
 }
 
 @test "add --force replaces an existing skill directory" {

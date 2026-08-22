@@ -26,6 +26,46 @@ function Write-AipWarning {
     $script:AipLastWarning = $Message
 }
 
+function Get-AipRedactedUrl {
+    # Display-only: strip user:pass@ / URL userinfo. scp-style git@host: is left alone.
+    param([AllowEmptyString()][string]$Url)
+    if ($Url -match '://[^/]*:[^/@]*@') {
+        return [regex]::Replace($Url, '(://)[^/@]+:[^/@]*@', '$1')
+    }
+    return $Url
+}
+
+function Test-AipPathUnder {
+    param([Parameter(Mandatory)][string]$Parent, [Parameter(Mandatory)][string]$Child)
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $parentFull = [IO.Path]::GetFullPath($Parent).TrimEnd($sep) + $sep
+    $childFull = [IO.Path]::GetFullPath($Child)
+    $comparison = Test-AipPathComparison
+    return $childFull.StartsWith($parentFull, $comparison)
+}
+
+function Test-AipHasDisallowedControl {
+    # Reject U+0000–U+001F, U+007F, U+0080–U+009F by UTF-16 code unit (BMP).
+    param([AllowEmptyString()][string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return $false }
+    foreach ($character in $Value.ToCharArray()) {
+        $code = [int]$character
+        if ($code -le 0x1F -or $code -eq 0x7F -or ($code -ge 0x80 -and $code -le 0x9F)) { return $true }
+    }
+    return $false
+}
+
+function Test-AipDeleteConfirm {
+    param([AllowEmptyString()][string]$Answer)
+    switch -CaseSensitive ($Answer) {
+        'y' { return $true }
+        'Y' { return $true }
+        'yes' { return $true }
+        'YES' { return $true }
+        default { return $false }
+    }
+}
+
 function Invoke-AipWithoutGitRouting {
     param([Parameter(Mandatory)][scriptblock]$Action)
     $names = @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR')
@@ -296,7 +336,7 @@ function ConvertTo-AipTomlString {
             34 { [void]$builder.Append('\"') }
             92 { [void]$builder.Append('\\') }
             default {
-                if ($code -lt 32 -or $code -eq 127) { throw 'Codex instructions contain a control character that TOML cannot represent safely' }
+                if (Test-AipHasDisallowedControl ([string]$character)) { throw 'Codex instructions contain a control character that TOML cannot represent safely' }
                 [void]$builder.Append($character)
             }
         }
@@ -461,6 +501,7 @@ function Get-AipGitIgnoreLines {
         '# aip-managed credential and runtime exclusions',
         '.env', '.env.*', '!.env.example', '*.pem', '*.key', '*.p12', '*.pfx',
         '.netrc', '.npmrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'node_modules/',
+        '**/.credentials.json', '**/auth.json',
         'claude/.credentials.json', 'claude/history.jsonl', 'claude/projects/', 'claude/session-env/', 'claude/shell-snapshots/', 'claude/statsig/', 'claude/todos/', 'claude/debug/', 'claude/cache/', 'claude/logs/', 'claude/file-history/',
         'codex/auth.json', 'codex/history.jsonl', 'codex/sessions/', 'codex/archived_sessions/', 'codex/log/', 'codex/logs/', 'codex/cache/', 'codex/*.db', 'codex/*.db-*', 'codex/*.sqlite', 'codex/*.sqlite-*',
         'pi/auth.json', 'pi/sessions/', 'pi/logs/', 'pi/cache/',
@@ -685,7 +726,7 @@ function Invoke-AipDelete {
             Write-AipError "deletion requires confirmation$riskText; rerun with --force for non-interactive use"
             return
         }
-        if ($answer -ne 'yes') { Write-AipError 'deletion cancelled; rerun with --force for non-interactive use'; return }
+        if (-not (Test-AipDeleteConfirm $answer)) { Write-AipError 'deletion cancelled; rerun with --force for non-interactive use'; return }
     }
     $defaultPath = Join-Path $script:AipProfileRoot '.default'
     $defaultName = Get-AipNameFile $defaultPath
@@ -990,6 +1031,8 @@ function Get-AipRealCommand {
 function Test-AipForbiddenPath {
     param([Parameter(Mandatory)][string]$RelativePath)
     $relative = $RelativePath.Replace('\', '/').ToLowerInvariant()
+    $leaf = ($relative -split '/')[-1]
+    if ($leaf -eq '.credentials.json' -or $leaf -eq 'auth.json') { return $true }
     if ($relative -like '.env.example' -or $relative -like '*/.env.example') { return $false }
     switch -Wildcard ($relative) {
         '.env' { return $true }
@@ -1483,6 +1526,8 @@ function Invoke-AipSyncCore {
                 return
             }
         }
+        $preSha = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify 'HEAD^{commit}' 2>$null
+        if ($LASTEXITCODE -ne 0) { $preSha = '' }
         if (-not (Add-AipCheckpoint $script:AipProfileRoot $Mode)) { return }
         if ($script:AipCheckpointCreated) { Write-Output 'Checkpointed local profile changes.' }
         Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify '@{upstream}' *> $null
@@ -1509,6 +1554,18 @@ function Invoke-AipSyncCore {
             $env:GCM_INTERACTIVE = 'never'
             $env:GIT_SSH_COMMAND = $transport.Command
             $env:GIT_SSH_VARIANT = $transport.Variant
+            if ($Mode -eq 'before' -or $Mode -eq 'after') {
+                $curSha = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify 'HEAD^{commit}' 2>$null
+                if ($LASTEXITCODE -eq 0 -and $curSha -eq $preSha) {
+                    $storedSha = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify "refs/remotes/$remote/$branch^{commit}" 2>$null
+                    $remoteLine = Invoke-AipGit -C $script:AipProfileRoot ls-remote $remote $mergeRef 2>$null
+                    $remoteSha = if ($LASTEXITCODE -eq 0 -and $remoteLine) { ("$remoteLine" -split '\s+')[0] } else { '' }
+                    if ($remoteSha -and $remoteSha -eq $storedSha -and $curSha -eq $storedSha) {
+                        Write-Output "Profiles up to date with $upstream."
+                        return
+                    }
+                }
+            }
             Invoke-AipGit -C $script:AipProfileRoot fetch --quiet $remote *> $null
             if ($LASTEXITCODE -ne 0) {
                 if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
@@ -1897,9 +1954,13 @@ function Invoke-AipManage {
         $script:AipCommandStatus = 1
         return
     }
+    $previousProfile = if (Test-Path Env:AIP_PROFILE) { $env:AIP_PROFILE } else { $null }
     $env:AIP_PROFILE = 'aip'
     try { Invoke-AipRun (@('aip', $harness) + @($rest)) }
-    finally { $env:AIP_PROFILE = $null }
+    finally {
+        if ($null -eq $previousProfile) { Remove-Item Env:AIP_PROFILE -ErrorAction SilentlyContinue }
+        else { $env:AIP_PROFILE = $previousProfile }
+    }
 }
 
 function Invoke-AipRemoteShow {
@@ -1912,7 +1973,7 @@ function Invoke-AipRemoteShow {
         $url = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
         if ($LASTEXITCODE -ne 0) { $url = @() }
     }
-    if ($url.Count -eq 1 -and "$url[0]".Trim().Length -gt 0) { Write-Output $url[0] }
+    if ($url.Count -eq 1 -and "$url[0]".Trim().Length -gt 0) { Write-Output (Get-AipRedactedUrl $url[0]) }
     else { Write-Output 'no remote is configured' }
 }
 
@@ -1940,7 +2001,7 @@ function Invoke-AipRemoteRemove {
 function Invoke-AipRemoteAdd {
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Url)
     if ("$Url".Trim().Length -eq 0) { Write-AipError 'usage: aip remote add URL'; $script:AipCommandStatus = 2; return }
-    if ($Url -match '\s') { Write-AipError "invalid remote URL: $Url"; $script:AipCommandStatus = 2; return }
+    if ($Url -match '\s') { Write-AipError "invalid remote URL: $(Get-AipRedactedUrl $Url)"; $script:AipCommandStatus = 2; return }
     $root = $script:AipProfileRoot
     $rootGit = Join-Path $root '.git'
     $repoExists = (Test-Path -LiteralPath $rootGit -PathType Container) -and
@@ -1949,13 +2010,13 @@ function Invoke-AipRemoteAdd {
     if ($repoExists) {
         $existing = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
         if ($LASTEXITCODE -eq 0 -and $existing.Count -eq 1 -and "$existing[0]".Trim().Length -gt 0) {
-            Write-AipError "origin is already configured ($($existing[0])); run 'aip remote remove' first"
+            Write-AipError "origin is already configured ($(Get-AipRedactedUrl $existing[0])); run 'aip remote remove' first"
             $script:AipCommandStatus = 1
             return
         }
         $null = Invoke-AipGit -C $root remote add origin $Url
         if ($LASTEXITCODE -ne 0) {
-            Write-AipError "could not configure origin: $Url"
+            Write-AipError "could not configure origin: $(Get-AipRedactedUrl $Url)"
             $script:AipCommandStatus = 1
             return
         }
@@ -1987,19 +2048,28 @@ function Invoke-AipRemoteAdd {
             $script:AipCommandStatus = 1
             return
         }
+        $oldPrompt = $env:GIT_TERMINAL_PROMPT
+        $oldGcm = $env:GCM_INTERACTIVE
+        $oldSsh = $env:GIT_SSH_COMMAND
+        $oldVariant = $env:GIT_SSH_VARIANT
         $env:GIT_TERMINAL_PROMPT = '0'
         $env:GCM_INTERACTIVE = 'never'
         $env:GIT_SSH_COMMAND = $transport.Command
         $env:GIT_SSH_VARIANT = $transport.Variant
         try {
-            $null = Invoke-AipGit clone --quiet -- $Url $root
+            $null = Invoke-AipGit clone -c core.symlinks=true --quiet -- $Url $root
             if ($LASTEXITCODE -ne 0) {
-                Write-AipError "could not clone $Url into $root; the remote must be a profiles repository created by aip"
+                Write-AipError "could not clone $(Get-AipRedactedUrl $Url) into $root; the remote must be a profiles repository created by aip"
                 $script:AipCommandStatus = 1
                 return
             }
         }
-        finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+        finally {
+            if ($null -eq $oldPrompt) { Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue } else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+            if ($null -eq $oldGcm) { Remove-Item Env:GCM_INTERACTIVE -ErrorAction SilentlyContinue } else { $env:GCM_INTERACTIVE = $oldGcm }
+            if ($null -eq $oldSsh) { Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue } else { $env:GIT_SSH_COMMAND = $oldSsh }
+            if ($null -eq $oldVariant) { Remove-Item Env:GIT_SSH_VARIANT -ErrorAction SilentlyContinue } else { $env:GIT_SSH_VARIANT = $oldVariant }
+        }
         $null = Invoke-AipGit -C $root config core.symlinks true
         if ($LASTEXITCODE -ne 0) {
             Write-AipError 'could not configure symbolic-link checkout'
@@ -2019,7 +2089,7 @@ function Invoke-AipRemoteAdd {
                 }
             }
         }
-        Write-Output "Cloned profiles from $Url."
+        Write-Output "Cloned profiles from $(Get-AipRedactedUrl $Url)."
     }
     $branch = Invoke-AipGit -C $root branch --show-current 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $branch) { $branch = '' }
@@ -2034,6 +2104,10 @@ function Invoke-AipRemoteAdd {
         $script:AipCommandStatus = 1
         return
     }
+    $oldPrompt = $env:GIT_TERMINAL_PROMPT
+    $oldGcm = $env:GCM_INTERACTIVE
+    $oldSsh = $env:GIT_SSH_COMMAND
+    $oldVariant = $env:GIT_SSH_VARIANT
     $env:GIT_TERMINAL_PROMPT = '0'
     $env:GCM_INTERACTIVE = 'never'
     $env:GIT_SSH_COMMAND = $transport.Command
@@ -2065,7 +2139,12 @@ function Invoke-AipRemoteAdd {
         }
         Write-Output "Profiles published to origin/$branch."
     }
-    finally { $env:GIT_TERMINAL_PROMPT = $null; $env:GCM_INTERACTIVE = $null; $env:GIT_SSH_COMMAND = $null; $env:GIT_SSH_VARIANT = $null }
+    finally {
+        if ($null -eq $oldPrompt) { Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue } else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+        if ($null -eq $oldGcm) { Remove-Item Env:GCM_INTERACTIVE -ErrorAction SilentlyContinue } else { $env:GCM_INTERACTIVE = $oldGcm }
+        if ($null -eq $oldSsh) { Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue } else { $env:GIT_SSH_COMMAND = $oldSsh }
+        if ($null -eq $oldVariant) { Remove-Item Env:GIT_SSH_VARIANT -ErrorAction SilentlyContinue } else { $env:GIT_SSH_VARIANT = $oldVariant }
+    }
 }
 
 function Invoke-AipRemote {
@@ -2181,6 +2260,31 @@ function Test-AipPassthroughLink {
     # broken link: lexical resolution must stay under the root
     $normRaw = [IO.Path]::GetFullPath($raw.Replace('/', $sep))
     return $normRaw.StartsWith($normRoot, $comparison)
+}
+
+function Test-AipImportBlockedByPassthroughDir {
+    # True when a prefix of dest (not dest itself) is a pass-through directory link.
+    # Managed skills/AGENTS.md links are not pass-through and are left alone.
+    param(
+        [Parameter(Mandatory)][string]$Dest,
+        [Parameter(Mandatory)][string]$ProfilePath,
+        [Parameter(Mandatory)][string]$Harness,
+        [Parameter(Mandatory)][string]$Rel
+    )
+    $parts = @($Rel.Replace('\', '/').Split('/') | Where-Object { $_ -ne '' })
+    if ($parts.Count -lt 2) { return $false }
+    $prefix = ''
+    for ($i = 0; $i -lt ($parts.Count - 1); $i++) {
+        if ($prefix -eq '') { $prefix = $parts[$i] } else { $prefix = $prefix + '/' + $parts[$i] }
+        $candidate = Join-Path $ProfilePath (Join-Path $Harness $prefix)
+        $item = Get-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item) { continue }
+        $isDirLink = $item.PSIsContainer -and ($null -ne $item.LinkType) -and ($item.LinkType -eq 'SymbolicLink')
+        if (-not $isDirLink) { continue }
+        if (Test-AipImportManagedLink $candidate) { continue }
+        if (Test-AipPassthroughLink -Relative "$Harness/$prefix" -ProfilePath $ProfilePath) { return $true }
+    }
+    return $false
 }
 
 function Get-AipPassthroughGitIgnoreEntry {
@@ -2370,15 +2474,16 @@ function Write-AipDoctorPassthrough {
 function Write-AipImportUsage {
     # Prints usage without clobbering AipLastError: the specific error (e.g.
     # 'no profiles selected') is what tests and users need to see.
-    [Console]::Error.WriteLine('aip: usage: aip import HARNESS [FILE...] [--profile NAME[,NAME...]] [--all-profiles] [--force] [--skip-existing] [--dry-run]')
+    [Console]::Error.WriteLine('aip: usage: aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles [--force] [--skip-existing] [--dry-run]')
     $script:AipCommandStatus = 2
 }
 
 function Test-AipImportRelPath {
     param([AllowEmptyString()][string]$Rel)
     if ([string]::IsNullOrEmpty($Rel)) { return $false }
-    if ($Rel.StartsWith('/') -or $Rel.StartsWith('\') -or $Rel.EndsWith('/') -or $Rel.EndsWith('\')) { return $false }
-    foreach ($part in $Rel.Split('/')) {
+    $norm = $Rel.Replace('\', '/')
+    if ($norm.StartsWith('/') -or $norm.EndsWith('/')) { return $false }
+    foreach ($part in $norm.Split('/')) {
         if ($part -eq '' -or $part -eq '.' -or $part -eq '..') { return $false }
     }
     return $true
@@ -2522,9 +2627,18 @@ function Invoke-AipImportCopy {
     foreach ($name in $ProfileNames) {
         $profilePath = Get-AipProfilePath $name
         foreach ($rel in $FileList) {
-            $dest = Join-Path $profilePath (Join-Path $Harness $rel)
+            $normRel = $rel.Replace('\', '/')
+            $dest = Join-Path $profilePath (Join-Path $Harness $normRel)
+            if (-not (Test-AipPathUnder -Parent $profilePath -Child $dest)) {
+                Write-AipError "invalid file path: $rel"
+                return
+            }
+            if (Test-AipImportBlockedByPassthroughDir -Dest $dest -ProfilePath $profilePath -Harness $Harness -Rel $normRel) {
+                Write-AipError "refusing to import through a pass-through directory: $name/$normRel"
+                return
+            }
             $overwrite = if ($script:AipImportOverwrite -eq 'ask') { 'ask' } else { $script:AipImportOverwrite }
-            Copy-AipImportFile -Source (Join-Path $SourceRoot $rel) -Dest $dest -Overwrite $overwrite -Name $name -Rel $rel -DryRun $DryRun -Harness $Harness -ProfilePath $profilePath
+            Copy-AipImportFile -Source (Join-Path $SourceRoot $rel) -Dest $dest -Overwrite $overwrite -Name $name -Rel $normRel -DryRun $DryRun -Harness $Harness -ProfilePath $profilePath
             switch ($script:AipImportStatus) {
                 0 { $copied++ }
                 3 { $skipped++ }
@@ -2642,7 +2756,18 @@ function Invoke-AipImport {
         if (-not (Test-AipImportRelPath $rel)) { Write-AipError "invalid file path: $rel"; return }
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $rel) -PathType Leaf)) { Write-AipError "no such file in the $harness configuration: $rel"; return }
     }
-    if ($allProfiles) { foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) } }
+    if ($allProfiles) {
+        foreach ($n in (Get-AipProfileNames)) { if ($n -cne 'aip') { $profiles.Add($n) } }
+        if ($profiles.Count -eq 0) {
+            if (@(Get-AipProfileNames).Count -gt 0) {
+                Write-AipError 'no user profiles found; --all-profiles skips the aip management profile'
+                $script:AipCommandStatus = 1
+                return
+            }
+            Write-AipError 'no profiles selected; nothing to do'
+            return
+        }
+    }
     else { foreach ($n in $profilesOpt.Split(',')) { if (-not (Test-AipImportProfile $n)) { return }; $profiles.Add($n) } }
     if ($profiles.Count -eq 0) { Write-AipError 'no profiles selected; nothing to do'; return }
     Invoke-AipImportCopy -Harness $harness -SourceRoot $sourceRoot -DryRun $dryRun -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() -Force $force -SkipExisting $skipExisting
@@ -2661,7 +2786,7 @@ function ConvertFrom-AipAddSource {
     # path, or of the repository URL for a repo-root source.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Source)
     if ([string]::IsNullOrWhiteSpace($Source) -or $Source -match '\s') {
-        Write-AipError "invalid source: $Source"
+        Write-AipError "invalid source: $(Get-AipRedactedUrl $Source)"
         $script:AipCommandStatus = 2
         return $null
     }
@@ -2671,7 +2796,7 @@ function ConvertFrom-AipAddSource {
         $idx = $Source.IndexOf('#')
         if ($idx -ge 0) { $url = $Source.Substring(0, $idx); $path = $Source.Substring($idx + 1) } else { $url = $Source }
         if (-not ($url.StartsWith('https://') -or $url.StartsWith('ssh://') -or $url.StartsWith('file://'))) {
-            Write-AipError "unsupported source URL: $Source; expected https://, ssh://, git@, or file://"
+            Write-AipError "unsupported source URL: $(Get-AipRedactedUrl $Source); expected https://, ssh://, git@, or file://"
             $script:AipCommandStatus = 2
             return $null
         }
@@ -2694,7 +2819,8 @@ function ConvertFrom-AipAddSource {
         $path = if ($parts.Count -gt 2) { ($parts[2..($parts.Count - 1)]) -join '/' } else { '' }
         $url = "https://github.com/$owner/$repo.git"
     }
-    if ($path -ne '' -and ($path.StartsWith('/') -or $path.StartsWith('\') -or $path.EndsWith('/') -or $path.EndsWith('\'))) {
+    if ($path -ne '') { $path = $path.Replace('\', '/') }
+    if ($path -ne '' -and ($path.StartsWith('/') -or $path.EndsWith('/'))) {
         Write-AipError "invalid source path: $path"
         $script:AipCommandStatus = 1
         return $null
@@ -2715,7 +2841,7 @@ function ConvertFrom-AipAddSource {
         $name = ($url -replace '.*[/:]', '') -replace '\.git$', ''
     }
     if ([string]::IsNullOrEmpty($name)) {
-        Write-AipError "unsupported source: $Source; cannot determine the skill name"
+        Write-AipError "unsupported source: $(Get-AipRedactedUrl $Source); cannot determine the skill name"
         $script:AipCommandStatus = 2
         return $null
     }
@@ -2744,7 +2870,7 @@ function Invoke-AipAddClone {
     try {
         $null = Invoke-AipGit clone -c core.symlinks=true --quiet --depth 1 -- $Url $Dir 2>$null
         if ($LASTEXITCODE -ne 0) {
-            Write-AipError "could not clone $Url; the source repository is unreachable or requires interactive credentials"
+            Write-AipError "could not clone $(Get-AipRedactedUrl $Url); the source repository is unreachable or requires interactive credentials"
             $script:AipCommandStatus = 1
             return $false
         }
@@ -2829,9 +2955,62 @@ function Invoke-AipAddInstall {
         try { $null = New-Item -ItemType Directory -Path $skills -Force -ErrorAction Stop }
         catch { Write-AipError "could not create $skills"; $script:AipCommandStatus = 1; $script:AipAddInstallStatus = 1; return }
     }
-    try { $null = Copy-Item -LiteralPath $SkillDir -Destination $dest -Recurse -Force -ErrorAction Stop }
-    catch { Write-AipError "could not copy the skill $Name"; $script:AipCommandStatus = 1; $script:AipAddInstallStatus = 1; return }
+    if (-not (Test-AipPathUnder -Parent $skills -Child $dest)) {
+        Write-AipError "invalid source path: $Name"
+        $script:AipCommandStatus = 1
+        $script:AipAddInstallStatus = 1
+        return
+    }
+    if (-not (Copy-AipSkillTree -SkillDir $SkillDir -Dest $dest -Name $Name)) {
+        $script:AipAddInstallStatus = 1
+        return
+    }
     Write-Output "added $Name to $ProfileName"
+}
+
+function Copy-AipSkillTree {
+    # Walk the source first: any reparse point fails (dest absent). Then copy excluding .git.
+    param(
+        [Parameter(Mandatory)][string]$SkillDir,
+        [Parameter(Mandatory)][string]$Dest,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $walk = Get-ChildItem -LiteralPath $SkillDir -Force -Recurse -ErrorAction SilentlyContinue
+    foreach ($item in @($walk)) {
+        $rel = $item.FullName.Substring($SkillDir.Length).TrimStart('\', '/')
+        if ($rel -eq '.git' -or $rel.StartsWith('.git\') -or $rel.StartsWith('.git/')) { continue }
+        if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+            Write-AipError "skill '$Name' contains a nested symlink; dest is not created"
+            $script:AipCommandStatus = 1
+            return $false
+        }
+    }
+    try {
+        $null = New-Item -ItemType Directory -Path $Dest -Force -ErrorAction Stop
+        Copy-AipSkillTreeContents -Src $SkillDir -Dest $Dest
+    }
+    catch {
+        if (Test-Path -LiteralPath $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-AipError "could not copy the skill $Name"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    return $true
+}
+
+function Copy-AipSkillTreeContents {
+    param([Parameter(Mandatory)][string]$Src, [Parameter(Mandatory)][string]$Dest)
+    foreach ($item in Get-ChildItem -LiteralPath $Src -Force) {
+        if ($item.Name -eq '.git') { continue }
+        $target = Join-Path $Dest $item.Name
+        if ($item.PSIsContainer -and -not $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+            $null = New-Item -ItemType Directory -Path $target -Force -ErrorAction Stop
+            Copy-AipSkillTreeContents -Src $item.FullName -Dest $target
+        }
+        else {
+            Copy-Item -LiteralPath $item.FullName -Destination $target -Force -ErrorAction Stop
+        }
+    }
 }
 
 function Invoke-AipAdd {
@@ -2875,8 +3054,17 @@ function Invoke-AipAdd {
     if ($allProfiles -and $null -ne $profile) { Write-AipError '--all-profiles conflicts with the PROFILE argument'; $script:AipCommandStatus = 2; return }
     $profiles = [System.Collections.Generic.List[string]]::new()
     if ($allProfiles) {
-        foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) }
-        if ($profiles.Count -eq 0) { Write-AipError 'no profiles found; create a profile with aip create first'; $script:AipCommandStatus = 1; return }
+        foreach ($n in (Get-AipProfileNames)) { if ($n -cne 'aip') { $profiles.Add($n) } }
+        if ($profiles.Count -eq 0) {
+            if (@(Get-AipProfileNames).Count -gt 0) {
+                Write-AipError 'no user profiles found; --all-profiles skips the aip management profile'
+                $script:AipCommandStatus = 1
+                return
+            }
+            Write-AipError 'no profiles found; create a profile with aip create first'
+            $script:AipCommandStatus = 1
+            return
+        }
     }
     else {
         if (-not (Test-AipImportProfile $profile)) { return }
@@ -2941,7 +3129,8 @@ Commands:
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
   aip add PROFILE SOURCE...         Install skills from a git repository
-  aip import HARNESS [FILE...]      Copy config/skills from a harness into profiles
+  aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
+                                     Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Update the aip npm package
@@ -2991,6 +3180,8 @@ function aip {
             'help' { Invoke-AipHelp $rest }
             '--help' { Invoke-AipHelp @() }
             '-h' { Invoke-AipHelp @() }
+            '--version' { Invoke-AipVersion $rest }
+            '-v' { Invoke-AipVersion $rest }
             'remote' { Invoke-AipWithoutGitRouting { Invoke-AipRemote $rest } }
             'import' { Invoke-AipWithoutGitRouting { Invoke-AipImport $rest } }
             'run' { Invoke-AipRun $rest }

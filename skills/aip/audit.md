@@ -36,10 +36,18 @@ rather than re-offered.
 ## 2. Inventory settings
 
 Most machine settings need **no import**: aip pass-through automatically
-links each harness's machine-local config into every profile — settings,
-credentials, and the commands/agents/plugins/themes directories — so the
-harness keeps reading exactly what it read outside aip. Say so; it is the
-answer most users need.
+links each harness's machine-local config into every profile. The allowlist
+(names without a trailing slash; each maps to the same relative path under
+the harness default root):
+
+| Harness | Pass-through paths |
+|---|---|
+| pi | `models.json`, `auth.json`, `settings.json`, `themes`, `prompts`, `extensions` |
+| claude | `settings.json`, `settings.local.json`, `.credentials.json`, `agents`, `commands`, `context-mode`, `output-styles`, `workflows`, `keybindings.json`, `plugins` |
+| codex | `config.toml`, `auth.json`, `plugins` |
+| opencode | `opencode.json`, `auth.json`, `tui.json`, `agent`, `command`, `plugins` |
+
+Say so; it is the answer most users need.
 
 Importing a settings file is only for two deliberate cases:
 
@@ -91,9 +99,9 @@ Cautions, all verified:
   and edit the per-harness files directly; if the user insists on importing
   one, do it and then restore that first line.
 - Files *under a pass-through-linked directory* (for example
-  `~/.claude/commands/foo.md`) resolve through the link to the machine-local
-  source, so importing one fails with a "same file" copy error — do not
-  import them; the link already shares them.
+  `~/.claude/plugins/hook.json`) are refused: aip will not write through the
+  directory link into the machine-global tree. Do not import them; the link
+  already shares them.
 - aip refuses to overwrite its own managed links, and warns about imported
   files the profile `.gitignore` does not cover — those only sync once
   deliberately tracked; credential files like `pi/auth.json` are gitignored

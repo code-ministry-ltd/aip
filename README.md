@@ -27,7 +27,7 @@ aip keeps **every profile in one Git repository** — the *profiles repository*,
 aip is published on npm as `@code-ministry/aip`:
 
 ```sh
-npx -y @code-ministry/aip install
+npx -y @code-ministry/aip@latest install
 ```
 
 Bash, Zsh and PowerShell 7.3+ all use the same command; the platform installer runs automatically. The installer prints both affected paths, copies the aip script and a `VERSION` marker into an install root under your user data directory, and adds one marked, idempotent source line to your shell profile. It requires no elevation and does not install Git or a harness.
@@ -35,7 +35,7 @@ Bash, Zsh and PowerShell 7.3+ all use the same command; the platform installer r
 Prefer to review before installing?
 
 ```sh
-npx -y @code-ministry/aip version   # confirms the package resolves
+npx -y @code-ministry/aip@latest version   # confirms the package resolves
 # or read the source: https://github.com/code-ministry-ltd/aip/blob/main/install.sh
 ```
 
@@ -210,7 +210,7 @@ To resolve a blocked conflict, work in the profiles repository directly:
 git -C ~/agent-profiles status
 # edit the conflicting files, then:
 git -C ~/agent-profiles add work/AGENTS.md
-git -C ~/agent-profiles rebase --continue
+GIT_EDITOR=true git -C ~/agent-profiles rebase --continue
 # or abandon the local side:
 git -C ~/agent-profiles rebase --abort
 ```
@@ -236,8 +236,9 @@ Files are mirrored into the matching profile subdirectory, so
 variables are deliberately **not** used to find the source: aip itself sets them to a
 profile when launching a harness, so they cannot name your pre-aip global config.
 
-Relative paths are resolved against the harness's config directory, and skills
-import fine (`aip import pi skills/reviewer/SKILL.md --profile work`). Import never
+Relative paths are resolved against the harness's config directory. Import is
+for settings and config files — install skills with `aip add`, or copy a local
+skill directory into `<profile>/skills/` (see the packaged skill). Import never
 commits anything: files land on disk, and the next `aip sync` checkpoint handles
 Git as usual. When a destination
 already exists you are prompted per file (`o` overwrite, `s` skip, `a` all overwrite,
@@ -380,7 +381,8 @@ aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
 aip remote remove                  disconnect the remote
 aip add PROFILE SOURCE...          install skills from a git repository
-aip import HARNESS [FILE...]       copy config/skills from a harness into profiles
+aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
+                                   copy config from a harness into profiles
 aip doctor [NAME]                  diagnose the repository and profiles
 aip run [NAME] HARNESS [ARGS...]   launch a harness with a profile
 aip update                         update the aip npm package
@@ -392,8 +394,10 @@ aip help                           show help (--help and -h work too)
 
 `aip delete` never infers a target. It refuses the active session profile and requires confirmation unless `--force` is explicit.
 
-`aip import HARNESS [FILE...]` copies files from a harness's config directory into
-profiles (see [Importing existing config and skills](#importing-existing-config-and-skills)).
+`aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles` copies
+files from a harness's config directory into profiles (see
+[Importing existing config and skills](#importing-existing-config-and-skills)).
+`--all-profiles` skips the `aip` management profile; pass it by name to target it.
 
 `aip add PROFILE SOURCE...` installs skills from a git repository into the
 profiles' shared `skills/` trees (see
@@ -440,5 +444,6 @@ Profiles are retained. Remove only the marked block between `# >>> aip >>>` and 
 - POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`)
 - Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
 - PowerShell on macOS/Linux: `~/.local/share/aip/`
+- The managed skill, if you installed aip: `<profiles-root>/aip/skills/aip/` (including `.aip-managed`)
 
 The profiles repository in `~/agent-profiles` is yours — keep it, move it, or delete it.
