@@ -2775,8 +2775,45 @@ function Invoke-AipImport {
     if (-not $dryRun) { Test-AipImportTrackedWarning -Harness $harness -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() }
 }
 
+function Write-AipSkillsUsage {
+    Write-AipError 'usage: aip skills add|update|remove …'
+    $script:AipCommandStatus = 2
+}
+
+function Invoke-AipSkills {
+    param([object[]]$Arguments)
+    $sub = if ($null -ne $Arguments -and $Arguments.Count -gt 0) { [string]$Arguments[0] } else { '' }
+    $rest = @(if ($null -ne $Arguments) { $Arguments | Select-Object -Skip 1 })
+    switch -CaseSensitive ($sub) {
+        'add' { Invoke-AipAdd $rest }
+        default { Write-AipSkillsUsage }
+    }
+}
+
+function Write-AipSkillSource {
+    param(
+        [Parameter(Mandatory)][string]$Dest,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Source,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Url,
+        [AllowEmptyString()][string]$Path = ''
+    )
+    try {
+        Set-AipUtf8LfFile (Join-Path $Dest '.aip-source') @(
+            "source=$Source"
+            "url=$Url"
+            "path=$Path"
+        )
+        return $true
+    }
+    catch {
+        Write-AipError "could not write provenance for $(Split-Path -Leaf $Dest)"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+}
+
 function Write-AipAddUsage {
-    [Console]::Error.WriteLine('aip: usage: aip add PROFILE SOURCE... | aip add --all-profiles SOURCE... [--force] [--skip-existing]')
+    [Console]::Error.WriteLine('aip: usage: aip skills add PROFILE SOURCE... | aip skills add --all-profiles SOURCE... [--force] [--skip-existing]')
     $script:AipCommandStatus = 2
 }
 
@@ -2965,7 +3002,6 @@ function Invoke-AipAddInstall {
         $script:AipAddInstallStatus = 1
         return
     }
-    Write-Output "added $Name to $ProfileName"
 }
 
 function Copy-AipSkillTree {
@@ -3094,6 +3130,11 @@ function Invoke-AipAdd {
             foreach ($pname in $profiles) {
                 Invoke-AipAddInstall -SkillDir $skillDir -Name $name -ProfileName $pname -Force $force -SkipExisting $skipExisting
                 if ($script:AipAddInstallStatus -eq 1) { return }
+                if ($script:AipAddInstallStatus -eq 0) {
+                    $dest = Join-Path (Join-Path (Get-AipProfilePath $pname) 'skills') $name
+                    if (-not (Write-AipSkillSource -Dest $dest -Source $source -Url $parsed.Url -Path $parsed.Path)) { return }
+                    Write-Output "added $name to $pname"
+                }
             }
         }
         finally {
@@ -3128,7 +3169,7 @@ Commands:
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
-  aip add PROFILE SOURCE...         Install skills from a git repository
+  aip skills add|update|remove       Install, refresh, or remove skills
   aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
                                      Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
@@ -3168,7 +3209,7 @@ function aip {
         $command = [string]$arguments[0]
         $rest = @($arguments | Select-Object -Skip 1)
         switch -CaseSensitive ($command) {
-            'add' { Invoke-AipWithoutGitRouting { Invoke-AipAdd $rest } }
+            'skills' { Invoke-AipWithoutGitRouting { Invoke-AipSkills $rest } }
             'create' { Invoke-AipWithoutGitRouting { Invoke-AipCreate $rest } }
             'manage' { Invoke-AipManage $rest }
             'clone' { Invoke-AipWithoutGitRouting { Invoke-AipClone $rest } }

@@ -140,10 +140,11 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help', 'import') {
+    foreach ($command in 'skills', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help', 'import') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
-    $helpOutput | Should -Match ([regex]::Escape('aip add PROFILE SOURCE...'))
+    $helpOutput | Should -Match ([regex]::Escape('aip skills add|update|remove'))
+    $helpOutput | Should -Not -Match 'aip add PROFILE'
     $helpOutput | Should -Match ([regex]::Escape('aip manage HARNESS [ARGS...]'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote add URL'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote show'))
@@ -2431,7 +2432,7 @@ Describe 'import' {
     It 'appears in help' {
         $help = aip help | Out-String
         $help | Should -Match 'aip import HARNESS'
-        $help | Should -Match 'aip add PROFILE SOURCE...'
+        $help | Should -Match 'aip skills add\|update\|remove'
     }
 }
 
@@ -2505,14 +2506,14 @@ Describe 'add' {
     }
 
     It 'installs a skill from a file:// source with a #path into the profile' {
-        $out = (aip add work "$(Get-AddFileUrl $script:AddSrc)#pack/beta" 2>&1) -join "`n"
+        $out = (aip skills add work "$(Get-AddFileUrl $script:AddSrc)#pack/beta" 2>&1) -join "`n"
         $global:LASTEXITCODE | Should -Be 0
         (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/beta/SKILL.md') -Raw).Trim() | Should -Be "---`nname: beta`n---`n# Beta"
         $out | Should -Match 'added beta to work'
     }
 
     It 'installs every file in the skill directory, preserving modes' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh') | Should -BeTrue
@@ -2525,14 +2526,14 @@ Describe 'add' {
     }
 
     It 'names the skill after the repository for a repo-root source' {
-        $out = (aip add work (Get-AddFileUrl $script:AddSrcRoot) 2>&1) -join "`n"
+        $out = (aip skills add work (Get-AddFileUrl $script:AddSrcRoot) 2>&1) -join "`n"
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/rootskill/SKILL.md') | Should -BeTrue
         $out | Should -Match 'added rootskill to work'
     }
 
     It 'lands the skill untracked with the harness symlinks intact' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         $tracked = & git -C $script:AipProfileRoot ls-files -- 'work/skills/alpha/'
         @($tracked).Count | Should -Be 0
@@ -2542,7 +2543,7 @@ Describe 'add' {
 
     It 'creates no commit: the profiles history is unchanged' {
         $before = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         $after = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
         $after | Should -Be $before
@@ -2550,7 +2551,7 @@ Describe 'add' {
 
     It 'a following aip sync checkpoints and pushes the added skill' {
         Initialize-TestUpstream
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         aip sync *> $null
         $global:LASTEXITCODE | Should -Be 0
@@ -2560,7 +2561,7 @@ Describe 'add' {
 
     It '--all-profiles installs into every profile' {
         New-TestProfile suit
-        $out = (aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" 2>&1) -join "`n"
+        $out = (aip skills add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" 2>&1) -join "`n"
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'suit/skills/alpha/SKILL.md') | Should -BeTrue
@@ -2571,119 +2572,119 @@ Describe 'add' {
     It '--all-profiles with no profiles is an error' {
         Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force
         $null = New-Item -ItemType Directory -Path $script:AipProfileRoot -Force
-        aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'no profiles found'
     }
 
     It 'with a missing profile is an import-style error' {
-        aip add missing "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add missing "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match "profile 'missing' does not exist"
     }
 
     It 'without a profile or without a source is a usage error' {
-        aip add *> $null
+        aip skills add *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'no profile selected'
-        aip add work *> $null
+        aip skills add work *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'no source given'
     }
 
     It 'with conflicting flags is a usage error' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --force --skip-existing *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --force --skip-existing *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match '--force and --skip-existing conflict'
     }
 
     It 'rejects unknown options' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --bogus *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --bogus *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match "unknown add option '--bogus'"
     }
 
     It 'rejects plain local paths with a file:// hint' {
-        aip add work $script:AddSrc *> $null
+        aip skills add work $script:AddSrc *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'file://'
-        aip add work '/abs/where' *> $null
+        aip skills add work '/abs/where' *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'file://'
     }
 
     It 'reports an unreachable source without cloning anything' {
-        aip add work (Get-AddFileUrl (Join-Path $script:AddRoot 'no-such-repo')) *> $null
+        aip skills add work (Get-AddFileUrl (Join-Path $script:AddRoot 'no-such-repo')) *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'could not clone'
     }
 
     It 'converts GitHub shorthand to a github.com URL' {
-        aip add work 'nope/nosuch-repo-xyz-123/some/skill' *> $null
+        aip skills add work 'nope/nosuch-repo-xyz-123/some/skill' *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'github.com/nope/nosuch-repo-xyz-123'
         $script:AipLastError | Should -Match 'could not clone'
     }
 
     It 'rejects a source path that does not exist in the repository' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#nope" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#nope" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'no such path in the source repository: nope'
     }
 
     It 'rejects a source path without a SKILL.md' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#gamma" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#gamma" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'no SKILL.md in the source path: gamma'
     }
 
     It 'rejects traversal segments in the source path' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#../secret" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#../secret" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'invalid source path: ../secret'
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha/../beta" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha/../beta" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'invalid source path: alpha/../beta'
     }
 
     It 'rejects a source path that follows a symlinked directory' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#linkdir" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#linkdir" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'source path follows a symlink: linkdir'
     }
 
     It 'rejects a skill directory name that is not a valid profile name' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#Bad-Name" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#Bad-Name" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match "invalid skill name 'Bad-Name'"
     }
 
     It 'rejects two sources that resolve to the same skill name' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" "$(Get-AddFileUrl $script:AddSrc)#dup/alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" "$(Get-AddFileUrl $script:AddSrc)#dup/alpha" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'duplicate skill name in this call: alpha'
     }
 
     It 'collides with an existing skill by default' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match "skill 'alpha' already exists in profile work"
         $script:AipLastError | Should -Match '--force'
     }
 
     It '--skip-existing skips an existing skill with a note' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
-        $out = (aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --skip-existing 2>&1) -join "`n"
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $out = (aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --skip-existing 2>&1) -join "`n"
         $global:LASTEXITCODE | Should -Be 0
         $out | Should -Match 'skipped alpha in work'
     }
 
     It '--force replaces an existing skill directory' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha v2`n" -Encoding utf8NoBOM
         & git -C $script:AddSrc commit -q -am 'v2'
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --force *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --force *> $null
         $global:LASTEXITCODE | Should -Be 0
         (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh') | Should -BeTrue
@@ -2691,7 +2692,7 @@ Describe 'add' {
 
     It 'copies a repo-root skill without its .git and a following sync succeeds' {
         Initialize-TestUpstream
-        aip add work (Get-AddFileUrl $script:AddSrcRoot) *> $null
+        aip skills add work (Get-AddFileUrl $script:AddSrcRoot) *> $null
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/rootskill/SKILL.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/rootskill/.git') | Should -BeFalse
@@ -2702,39 +2703,39 @@ Describe 'add' {
     }
 
     It 'rejects a symlink inside the skill directory and leaves dest absent' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#nestedlink" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#nestedlink" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'nested symlink'
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/nestedlink') | Should -BeFalse
     }
 
     It 'never prints URL userinfo' {
-        aip add work 'https://user:s3cret@example.test/nope.git' *> $null
+        aip skills add work 'https://user:s3cret@example.test/nope.git' *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'could not clone'
         $script:AipLastError | Should -Not -Match 's3cret'
-        aip add work 'https://s3cret@example.test/nope.git' *> $null
+        aip skills add work 'https://s3cret@example.test/nope.git' *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'could not clone'
         $script:AipLastError | Should -Not -Match 's3cret'
-        aip add work 'http://user:s3cret@example.test/nope.git' *> $null
+        aip skills add work 'http://user:s3cret@example.test/nope.git' *> $null
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'unsupported source URL'
         $script:AipLastError | Should -Not -Match 's3cret'
     }
 
     It 'rejects mixed-separator traversal in the source path' {
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#..\outside" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#..\outside" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'invalid source path'
-        aip add work "$(Get-AddFileUrl $script:AddSrc)#foo/..\bar" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#foo/..\bar" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'invalid source path'
     }
 
     It '--all-profiles skips the aip management profile' {
         New-TestProfile aip
-        aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'aip/skills/alpha/SKILL.md') | Should -BeFalse
@@ -2743,7 +2744,7 @@ Describe 'add' {
 
     It 'explicit add aip still installs into the management profile' {
         New-TestProfile aip
-        aip add aip "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add aip "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 0
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'aip/skills/alpha/SKILL.md') | Should -BeTrue
     }
@@ -2752,10 +2753,68 @@ Describe 'add' {
         Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force
         $null = New-Item -ItemType Directory -Path $script:AipProfileRoot -Force
         New-TestProfile aip
-        aip add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add --all-profiles "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'skips the aip management profile'
         $script:AipLastError | Should -Not -Match 'no profiles found'
+    }
+
+    It 'treats aip add as an unknown command' {
+        aip add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "unknown command 'add'"
+    }
+
+    It 'prints usage for aip skills and an unknown subcommand' {
+        aip skills *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip skills'
+        $script:AipLastError | Should -Not -Match "unknown command 'skills'"
+        aip skills bogus *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip skills'
+        $script:AipLastError | Should -Not -Match "unknown command 'skills'"
+    }
+
+    It 'writes a .aip-source sidecar and a following sync checkpoints it' {
+        Initialize-TestUpstream
+        $source = "$(Get-AddFileUrl $script:AddSrc)#alpha"
+        aip skills add work $source *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $sidecar = Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source'
+        $lines = Get-Content -LiteralPath $sidecar
+        $lines | Should -Contain "source=$source"
+        $lines | Should -Contain ("url=" + (Get-AddFileUrl $script:AddSrc))
+        $lines | Should -Contain 'path=alpha'
+        $lines.Count | Should -Be 3
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        & git -C $script:TestRemote cat-file -e 'main:work/skills/alpha/.aip-source'
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It '--skip-existing does not rewrite an existing sidecar' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $sidecar = Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source'
+        Set-Content -LiteralPath $sidecar -Value "source=stale`nurl=stale`npath=stale`n" -Encoding utf8NoBOM
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --skip-existing *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $lines = Get-Content -LiteralPath $sidecar
+        $lines | Should -Contain 'source=stale'
+        $lines | Should -Contain 'url=stale'
+        $lines | Should -Contain 'path=stale'
+    }
+
+    It '--force rewrites the sidecar' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $sidecar = Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source'
+        Set-Content -LiteralPath $sidecar -Value "source=stale`nurl=stale`npath=stale`n" -Encoding utf8NoBOM
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" --force *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $lines = Get-Content -LiteralPath $sidecar
+        $lines | Should -Contain ("source=$(Get-AddFileUrl $script:AddSrc)#alpha")
+        $lines | Should -Contain ("url=" + (Get-AddFileUrl $script:AddSrc))
+        $lines | Should -Contain 'path=alpha'
     }
 }
 
