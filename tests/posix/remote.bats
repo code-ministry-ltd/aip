@@ -51,6 +51,10 @@ make_upstream() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"could not clone"* ]]
   [[ "$output" != *s3cret* ]]
+  run aip remote add "https://s3cret@example.test/nope.git"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not clone"* ]]
+  [[ "$output" != *s3cret* ]]
 }
 
 @test "remote add redacts userinfo when origin is already configured" {

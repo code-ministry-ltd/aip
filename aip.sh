@@ -472,11 +472,11 @@ _aip_path_is_under() {
 }
 
 _aip_redact_url() {
-  # Display-only: strip user:pass@ / URL userinfo. scp-style git@host: is left alone.
+  # Display-only: strip URL userinfo (user@ or user:pass@). scp-style git@host: is left alone.
   local url=$1
   case $url in
-    *://*:*@*)
-      printf '%s\n' "$url" | command sed -E 's#(://)[^/@]+:[^/@]*@#\1#'
+    *://*@*)
+      printf '%s\n' "$url" | command sed -E 's#(://)[^/]*@#\1#'
       ;;
     *)
       printf '%s\n' "$url"

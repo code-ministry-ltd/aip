@@ -27,10 +27,10 @@ function Write-AipWarning {
 }
 
 function Get-AipRedactedUrl {
-    # Display-only: strip user:pass@ / URL userinfo. scp-style git@host: is left alone.
+    # Display-only: strip URL userinfo (user@ or user:pass@). scp-style git@host: is left alone.
     param([AllowEmptyString()][string]$Url)
-    if ($Url -match '://[^/]*:[^/@]*@') {
-        return [regex]::Replace($Url, '(://)[^/@]+:[^/@]*@', '$1')
+    if ($Url -match '://[^/]*@') {
+        return [regex]::Replace($Url, '(://)[^/]*@', '$1')
     }
     return $Url
 }

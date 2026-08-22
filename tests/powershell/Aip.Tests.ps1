@@ -1781,6 +1781,10 @@ Describe 'remote' {
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'could not clone'
         $script:AipLastError | Should -Not -Match 's3cret'
+        aip remote add 'https://s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'could not clone'
+        $script:AipLastError | Should -Not -Match 's3cret'
     }
 
     It 'redacts userinfo when origin is already configured' {
@@ -2408,6 +2412,16 @@ Describe 'import' {
         (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'aip/pi/auth.json') -Force).LinkType | Should -Be 'SymbolicLink'
     }
 
+    It '--all-profiles with only aip is a distinct error' {
+        Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force
+        $null = New-Item -ItemType Directory -Path $script:AipProfileRoot -Force
+        New-TestProfile aip
+        aip import pi auth.json --all-profiles --force *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'skips the aip management profile'
+        $script:AipLastError | Should -Not -Match 'no profiles found'
+    }
+
     It 'exposes no picker machinery and requires files' {
         Get-Command Invoke-AipImportInteractive -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
         aip import pi *> $null
@@ -2697,6 +2711,10 @@ Describe 'add' {
 
     It 'never prints URL userinfo' {
         aip add work 'https://user:s3cret@example.test/nope.git' *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'could not clone'
+        $script:AipLastError | Should -Not -Match 's3cret'
+        aip add work 'https://s3cret@example.test/nope.git' *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'could not clone'
         $script:AipLastError | Should -Not -Match 's3cret'
