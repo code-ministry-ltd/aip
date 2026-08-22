@@ -60,3 +60,11 @@ setup() {
   [ "$status" -eq 2 ]
   [[ "$output" == *"usage: aip skills update"* ]]
 }
+
+@test "skills update --all errors on a malformed sidecar" {
+  aip skills add work "file://$TEST_SRC#alpha" >/dev/null
+  printf 'not a sidecar\n' >"$_AIP_PROFILE_ROOT/work/skills/alpha/.aip-source"
+  run aip skills update work --all
+  [ "$status" -eq 1 ]
+  [[ "$(cat "$_AIP_PROFILE_ROOT/work/skills/alpha/SKILL.md")" == *'# Alpha'* ]]
+}

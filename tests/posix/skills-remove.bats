@@ -58,3 +58,8 @@ setup() {
   run aip skills remove work "owner/repo#path"
   [ "$status" -ne 0 ]
 }
+
+@test "skills remove rejects an empty name" {
+  run aip skills remove work ''
+  [ "$status" -eq 1 ]
+}
