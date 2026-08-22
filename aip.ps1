@@ -2800,10 +2800,11 @@ function Read-AipSkillSource {
         return $null
     }
     $text = Get-AipUtf8TextFile $file
+    if ($text.StartsWith([char]0xFEFF)) { $text = $text.Substring(1) }
     $text = $text.Replace("`r", '')
-    if ($text.EndsWith("`n")) { $text = $text.Substring(0, $text.Length - 1) }
-    $lines = @($text -split "`n", -1)
-    if ($lines.Count -ne 3) { return $null }
+    if (-not $text.EndsWith("`n")) { return $null }
+    $lines = $text.Substring(0, $text.Length - 1).Split([char]10)
+    if ($lines.Length -ne 3) { return $null }
     if (-not $lines[0].StartsWith('source=')) { return $null }
     if (-not $lines[1].StartsWith('url=')) { return $null }
     if (-not $lines[2].StartsWith('path=')) { return $null }
