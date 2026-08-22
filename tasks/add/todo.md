@@ -9,7 +9,7 @@ assertions; no commit created by `aip add` itself.
 
 ---
 
-## T1 — `aip add` command (both shells) — M
+## T1 — `aip add` command (both shells) — M ✅
 **Desc.** New `_aip_add` (+ ps1 equivalent) and `add` dispatch entry. Parse
 `PROFILE | --all-profiles`, then `SOURCE...` and `--force`/`--skip-existing`. For each
 source: parse (shorthand `owner/repo[/path]`, or URL with optional `#path`), shallow
@@ -20,9 +20,14 @@ the directory to `<profile>/skills/<name>/` (name = basename, `_aip_validate_nam
 Collision: error by default; `--force` replaces; `--skip-existing` skips. No commit.
 Reuse import's profile plumbing and flag-conflict checks. Print a per-profile summary.
 **Acceptance.**
-- [ ] bats: `file://` source installs into `<profile>/skills/<name>/`, untracked (`git ls-files` empty), `pi/skills → ../skills` intact; a following `aip sync` checkpoints + pushes (bare-remote fixture).
-- [ ] GitHub shorthand, `#path` suffix, repo-root source, and every error class (unreachable, missing path, no `SKILL.md`, `..`, symlinked dir, duplicate name in one call) each return a distinct one-line error with exit 2 (usage) or 1 (failure).
-- [ ] `--force` replaces, `--skip-existing` skips with a note, default collides with an error; `git log` count unchanged after any add.
+- [x] bats: `file://` source installs into `<profile>/skills/<name>/`, untracked (`git ls-files` empty), `pi/skills → ../skills` intact; a following `aip sync` checkpoints + pushes (bare-remote fixture).
+- [x] GitHub shorthand, `#path` suffix, repo-root source, and every error class (unreachable, missing path, no `SKILL.md`, `..`, symlinked dir, duplicate name in one call) each return a distinct one-line error with exit 2 (usage) or 1 (failure).
+- [x] `--force` replaces, `--skip-existing` skips with a note, default collides with an error; `git log` count unchanged after any add.
+
+Note: the first positional is the profile only while `--all-profiles` has not been
+seen; a positional after `--all-profiles` is a source. The ps1 install helper reports
+status via `$script:AipAddInstallStatus` (PowerShell `return` shares the output
+stream, so a numeric return would swallow the user-facing note).
 **Verify.** `npm run test:posix` (new `tests/posix/add.bats`); `pwsh -NoProfile -File tests/run-powershell.ps1` (CI)
 **Depends.** `tasks/cuts` (help text and smoke list are being edited there)
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/add.bats`, `tests/powershell/Aip.Tests.ps1`

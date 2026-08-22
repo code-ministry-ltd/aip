@@ -1375,6 +1375,7 @@ _aip_is_harness() {
 
 _aip_is_command() {
   [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
+    [ "${1-}" = add ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = remote ] ||
@@ -2480,6 +2481,222 @@ _aip_import() (
   return 0
 )
 
+_aip_add_usage() {
+  _aip_error 'usage: aip add PROFILE SOURCE... | aip add --all-profiles SOURCE... [--force] [--skip-existing]'
+}
+
+_aip_add_parse_source() {
+  # $1 source. Sets _AIP_ADD_URL, _AIP_ADD_PATH ('' = repository root), _AIP_ADD_NAME.
+  # Returns 0 ok, 2 usage error (message printed), 1 invalid in-repo path.
+  local source=$1 url path name rest second
+  case $source in
+    ''|*$'\n'*|*"*"*|*'\\'*|*' '*|*$'\t'*)
+      _aip_error "invalid source: $source"
+      return 2
+      ;;
+    /*|'~/'*|'./'*|'../'*)
+      _aip_error "unsupported source: $source; plain local paths need a file:// URL, or use owner/repo[/path] or a git URL"
+      return 2
+      ;;
+  esac
+  if [[ $source == *'://'* ]]; then
+    url=${source%%#*}
+    path=''
+    case $source in *'#'*) path=${source#*#} ;; esac
+    case $url in
+      https://*|ssh://*|file://*) ;;
+      *) _aip_error "unsupported source URL: $source; expected https://, ssh://, git@, or file://"; return 2 ;;
+    esac
+  elif [[ $source == *'@'* ]]; then
+    # scp-style ssh: user@host:owner/repo[.git]
+    url=${source%%#*}
+    path=''
+    case $source in *'#'*) path=${source#*#} ;; esac
+  else
+    # GitHub shorthand: owner/repo[/sub/path]
+    case $source in
+      */*) ;;
+      *) _aip_error "unsupported source: $source; plain local paths need a file:// URL, or use owner/repo[/path] or a git URL"; return 2 ;;
+    esac
+    rest=${source#*/}
+    second=${rest%%/*}
+    path=''
+    case $rest in */*) path=${rest#*/} ;; esac
+    url="https://github.com/${source%%/*}/$second.git"
+  fi
+  case $path in
+    ''|'/') path='' ;;
+  esac
+  local p seg
+  p=$path
+  while [ -n "$p" ]; do
+    seg=${p%%/*}
+    case $seg in
+      ''|.|..|/*) _aip_error "invalid source path: $path"; return 1 ;;
+    esac
+    case $p in */*) p=${p#*/} ;; *) p='' ;; esac
+  done
+  if [ -n "$path" ]; then
+    name=${path##*/}
+  else
+    name=${url##*/}
+    name=${name##*:}
+    case $name in *.git) name=${name%.git} ;; esac
+  fi
+  [ -n "$name" ] || { _aip_error "unsupported source: $source; cannot determine the skill name"; return 2; }
+  _AIP_ADD_URL=$url
+  _AIP_ADD_PATH=$path
+  _AIP_ADD_NAME=$name
+  return 0
+}
+
+_aip_add_clone() {
+  # $1 url, $2 directory (must not exist yet)
+  local url=$1 dir=$2
+  if ! _aip_prepare_ssh_transport "$dir"; then
+    _aip_error 'source is unavailable because the configured SSH variant cannot be made non-interactive'
+    return 1
+  fi
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone --quiet --depth 1 -- "$url" "$dir" 2>/dev/null; then
+    _aip_error "could not clone $url; the source repository is unreachable or requires interactive credentials"
+    return 1
+  fi
+  return 0
+}
+
+_aip_add_resolve_skill() {
+  # $1 cloned root, $2 in-repo path ('' = root). Sets _AIP_ADD_SKILL_DIR.
+  local root=$1 path=$2 prefix='' seg dir=$1
+  if [ -n "$path" ]; then
+    local p=$path
+    while [ -n "$p" ]; do
+      seg=${p%%/*}
+      if [ ! -e "$root/$prefix$seg" ] || [ -L "$root/$prefix$seg" ]; then
+        if [ -e "$root/$prefix$seg" ] && [ -L "$root/$prefix$seg" ]; then
+          _aip_error "source path follows a symlink: $path"
+        else
+          _aip_error "no such path in the source repository: $path"
+        fi
+        return 1
+      fi
+      [ -d "$root/$prefix$seg" ] || { _aip_error "no such path in the source repository: $path"; return 1; }
+      prefix=$prefix$seg/
+      case $p in */*) p=${p#*/} ;; *) p='' ;; esac
+    done
+    dir="$root/$prefix"
+  fi
+  [ -f "$dir/SKILL.md" ] || { _aip_error "no SKILL.md in the source path: ${path:-$_AIP_ADD_NAME}"; return 1; }
+  _AIP_ADD_SKILL_DIR=$dir
+  return 0
+}
+
+_aip_add_install_skill() {
+  # $1 skill dir, $2 name, $3 profile name, $4 force (0|1), $5 skip_existing (0|1)
+  # returns 0 installed, 3 skipped, 1 error (message printed)
+  local src=$1 name=$2 pname=$3 force=$4 skip_existing=$5
+  local dest skills profile_path
+  profile_path=$(_aip_profile_path "$pname")
+  skills=$profile_path/skills
+  dest=$skills/$name
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    if [ "$skip_existing" -eq 1 ]; then
+      printf 'skipped %s in %s (already present)\n' "$name" "$pname"
+      return 3
+    fi
+    if [ "$force" -eq 1 ]; then
+      command rm -rf -- "$dest" || { _aip_error "could not remove the existing skill $name"; return 1; }
+    else
+      _aip_error "skill '$name' already exists in profile $pname; pass --force to replace it or --skip-existing to keep it"
+      return 1
+    fi
+  fi
+  command mkdir -p -- "$skills" || { _aip_error "could not create $skills"; return 1; }
+  command cp -Rp -- "$src" "$dest" || { _aip_error "could not copy the skill $name"; return 1; }
+  printf 'added %s to %s\n' "$name" "$pname"
+  return 0
+}
+
+_aip_add() (
+  _aip_clear_git_routing
+  local profile='' all_profiles=0 force=0 skip_existing=0
+  local arg sourcesfile installedfile profilesfile src name url path pname rc
+  sourcesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-sources.XXXXXX") || return 1
+  installedfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-installed.XXXXXX") || { command rm -f "$sourcesfile"; return 1; }
+  profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-profiles.XXXXXX") || { command rm -f "$sourcesfile" "$installedfile"; return 1; }
+  trap 'command rm -f "$sourcesfile" "$installedfile" "$profilesfile"' EXIT
+  while [ "$#" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+      --all-profiles) all_profiles=1 ;;
+      --force) force=1 ;;
+      --skip-existing) skip_existing=1 ;;
+      --)
+        while [ "$#" -gt 0 ]; do
+          printf '%s\n' "$1" >>"$sourcesfile"
+          shift
+        done
+        ;;
+      -*)
+        _aip_error "unknown add option '$arg'"
+        _aip_add_usage
+        return 2
+        ;;
+      *)
+        if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then profile=$arg
+        else printf '%s\n' "$arg" >>"$sourcesfile"
+        fi
+        ;;
+    esac
+  done
+  if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then
+    _aip_error 'no profile selected; pass a PROFILE or --all-profiles'
+    _aip_add_usage
+    return 2
+  fi
+  [ -s "$sourcesfile" ] || { _aip_error 'no source given'; _aip_add_usage; return 2; }
+  { [ "$force" -eq 1 ] && [ "$skip_existing" -eq 1 ]; } && { _aip_error '--force and --skip-existing conflict'; return 2; }
+  { [ "$all_profiles" -eq 1 ] && [ -n "$profile" ]; } && { _aip_error '--all-profiles conflicts with the PROFILE argument'; return 2; }
+  if [ "$all_profiles" -eq 1 ]; then
+    _aip_list_profile_names >|"$profilesfile"
+    [ -s "$profilesfile" ] || { _aip_error 'no profiles found; create a profile with aip create first'; return 1; }
+  else
+    _aip_import_require_profile "$profile" || return
+    printf '%s\n' "$profile" >|"$profilesfile"
+  fi
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    _aip_add_parse_source "$src" || return
+    url=$_AIP_ADD_URL
+    path=$_AIP_ADD_PATH
+    name=$_AIP_ADD_NAME
+    _aip_validate_name "$name" || { _aip_error "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"; return 1; }
+    if [ -n "$(command grep -Fx -- "$name" "$installedfile" 2>/dev/null)" ]; then
+      _aip_error "duplicate skill name in this call: $name"
+      return 1
+    fi
+    local dir
+    dir=$(command mktemp "${TMPDIR:-/tmp}/aip-add.XXXXXX") || { _aip_error 'could not create a temporary directory'; return 1; }
+    command rm -f -- "$dir"
+    _aip_add_clone "$url" "$dir" || { command rm -rf -- "$dir"; return 1; }
+    _aip_add_resolve_skill "$dir" "$path" || { command rm -rf -- "$dir"; return 1; }
+    local skill_dir rc=0
+    skill_dir=$_AIP_ADD_SKILL_DIR
+    while IFS= read -r pname; do
+      [ -n "$pname" ] || continue
+      _aip_add_install_skill "$skill_dir" "$name" "$pname" "$force" "$skip_existing"
+      case $? in
+        0|3) ;;
+        *) rc=1; break ;;
+      esac
+    done <"$profilesfile"
+    command rm -rf -- "$dir"
+    [ "$rc" -eq 0 ] || return 1
+    printf '%s\n' "$name" >>"$installedfile"
+  done <"$sourcesfile"
+  return 0
+)
+
 _aip_help() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip help'; return 2; }
   cat <<'EOF'
@@ -2675,6 +2892,7 @@ aip() {
   shift
   _aip_is_command "$command" || { _aip_error "unknown command '$command'"; return 2; }
   case $command in
+    add) _aip_add "$@" ;;
     create) _aip_create "$@" ;;
     clone) _aip_clone "$@" ;;
     default) _aip_default "$@" ;;

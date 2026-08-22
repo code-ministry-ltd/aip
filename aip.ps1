@@ -2628,7 +2628,272 @@ function Invoke-AipImport {
     Invoke-AipImportCopy -Harness $harness -SourceRoot $sourceRoot -DryRun $dryRun -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() -Force $force -SkipExisting $skipExisting
     if ($script:AipCommandStatus -ne 0) { return }
     if (-not $dryRun) { Test-AipImportTrackedWarning -Harness $harness -FileList $fileList.ToArray() -ProfileNames $profiles.ToArray() }
-}function Invoke-AipHelp {
+}
+
+function Write-AipAddUsage {
+    [Console]::Error.WriteLine('aip: usage: aip add PROFILE SOURCE... | aip add --all-profiles SOURCE... [--force] [--skip-existing]')
+    $script:AipCommandStatus = 2
+}
+
+function ConvertFrom-AipAddSource {
+    # Parses a source into @{Url=..;Path=..;Name=..} or returns $null with the error printed.
+    # Path is the in-repo path ('' = repository root); Name is the basename of the
+    # path, or of the repository URL for a repo-root source.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Source)
+    if ([string]::IsNullOrWhiteSpace($Source) -or $Source -match '\s') {
+        Write-AipError "invalid source: $Source"
+        $script:AipCommandStatus = 2
+        return $null
+    }
+    $url = $null
+    $path = ''
+    if ($Source.Contains('://')) {
+        $idx = $Source.IndexOf('#')
+        if ($idx -ge 0) { $url = $Source.Substring(0, $idx); $path = $Source.Substring($idx + 1) } else { $url = $Source }
+        if (-not ($url.StartsWith('https://') -or $url.StartsWith('ssh://') -or $url.StartsWith('file://'))) {
+            Write-AipError "unsupported source URL: $Source; expected https://, ssh://, git@, or file://"
+            $script:AipCommandStatus = 2
+            return $null
+        }
+    }
+    elseif ($Source.Contains('@')) {
+        # scp-style ssh: user@host:owner/repo[.git]
+        $idx = $Source.IndexOf('#')
+        if ($idx -ge 0) { $url = $Source.Substring(0, $idx); $path = $Source.Substring($idx + 1) } else { $url = $Source }
+    }
+    elseif ($Source.StartsWith('/') -or $Source.StartsWith('\') -or $Source.StartsWith('~') -or $Source.StartsWith('./') -or $Source.StartsWith('../') -or -not $Source.Contains('/')) {
+        Write-AipError "unsupported source: $Source; plain local paths need a file:// URL, or use owner/repo[/path] or a git URL"
+        $script:AipCommandStatus = 2
+        return $null
+    }
+    else {
+        # GitHub shorthand: owner/repo[/sub/path]
+        $parts = $Source.Split('/')
+        $owner = $parts[0]
+        $repo = $parts[1]
+        $path = if ($parts.Count -gt 2) { ($parts[2..($parts.Count - 1)]) -join '/' } else { '' }
+        $url = "https://github.com/$owner/$repo.git"
+    }
+    if ($path -ne '' -and ($path.StartsWith('/') -or $path.StartsWith('\') -or $path.EndsWith('/') -or $path.EndsWith('\'))) {
+        Write-AipError "invalid source path: $path"
+        $script:AipCommandStatus = 1
+        return $null
+    }
+    # Note: in PowerShell '' -split '/' yields @(''), so the empty path is excluded.
+    if ($path -ne '') {
+        foreach ($part in $path.Split('/')) {
+            if ($part -eq '' -or $part -eq '.' -or $part -eq '..') {
+                Write-AipError "invalid source path: $path"
+                $script:AipCommandStatus = 1
+                return $null
+            }
+        }
+    }
+    $name = ''
+    if ($path -ne '') { $name = ($path.Split('/') | Select-Object -Last 1) }
+    else {
+        $name = ($url -replace '.*[/:]', '') -replace '\.git$', ''
+    }
+    if ([string]::IsNullOrEmpty($name)) {
+        Write-AipError "unsupported source: $Source; cannot determine the skill name"
+        $script:AipCommandStatus = 2
+        return $null
+    }
+    @{ Url = $url; Path = $path; Name = $name }
+}
+
+function Invoke-AipAddClone {
+    # Shallow, non-interactive clone of $Url into $Dir (which must not exist yet).
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dir)
+    $transport = Get-AipSshTransport $Dir
+    if ($null -eq $transport) {
+        Write-AipError 'source is unavailable because the configured SSH variant cannot be made non-interactive'
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    $oldPrompt = $env:GIT_TERMINAL_PROMPT
+    $oldGcm = $env:GCM_INTERACTIVE
+    $oldSsh = $env:GIT_SSH_COMMAND
+    $oldVariant = $env:GIT_SSH_VARIANT
+    $env:GIT_TERMINAL_PROMPT = '0'
+    $env:GCM_INTERACTIVE = 'never'
+    $env:GIT_SSH_COMMAND = $transport.Command
+    $env:GIT_SSH_VARIANT = $transport.Variant
+    try {
+        $null = Invoke-AipGit clone --quiet --depth 1 -- $Url $Dir 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-AipError "could not clone $Url; the source repository is unreachable or requires interactive credentials"
+            $script:AipCommandStatus = 1
+            return $false
+        }
+    }
+    finally {
+        if ($null -eq $oldPrompt) { Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue } else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+        if ($null -eq $oldGcm) { Remove-Item Env:GCM_INTERACTIVE -ErrorAction SilentlyContinue } else { $env:GCM_INTERACTIVE = $oldGcm }
+        if ($null -eq $oldSsh) { Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue } else { $env:GIT_SSH_COMMAND = $oldSsh }
+        if ($null -eq $oldVariant) { Remove-Item Env:GIT_SSH_VARIANT -ErrorAction SilentlyContinue } else { $env:GIT_SSH_VARIANT = $oldVariant }
+    }
+    return $true
+}
+
+function Test-AipAddSkillPath {
+    # Validates the in-repo path (rejecting traversal and symlinked directories) and
+    # requires an ordinary SKILL.md. Sets $script:AipAddSkillDir on success.
+    param([Parameter(Mandatory)][string]$ClonedRoot, [AllowEmptyString()][string]$Path)
+    $prefix = ''
+    if ($Path -ne '') {
+        foreach ($part in $Path.Split('/')) {
+            if ($prefix -eq '') { $candidate = Join-Path $ClonedRoot $part } else { $candidate = Join-Path (Join-Path $ClonedRoot $prefix) $part }
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction SilentlyContinue
+            if ($null -eq $item) {
+                Write-AipError "no such path in the source repository: $Path"
+                $script:AipCommandStatus = 1
+                return $false
+            }
+            if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                Write-AipError "source path follows a symlink: $Path"
+                $script:AipCommandStatus = 1
+                return $false
+            }
+            if ($item -isnot [IO.DirectoryInfo]) {
+                Write-AipError "no such path in the source repository: $Path"
+                $script:AipCommandStatus = 1
+                return $false
+            }
+            if ($prefix -eq '') { $prefix = $part } else { $prefix = $prefix + '/' + $part }
+        }
+        $dir = Join-Path $ClonedRoot $prefix
+    }
+    else { $dir = $ClonedRoot }
+    $skillFile = Join-Path $dir 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $skillFile -PathType Leaf)) {
+        $display = if ($Path -ne '') { $Path } else { $script:AipAddName }
+        Write-AipError "no SKILL.md in the source path: $display"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    $script:AipAddSkillDir = $dir
+    return $true
+}
+
+function Invoke-AipAddInstall {
+    # Returns 0 installed, 3 skipped, 1 error (message printed).
+    param(
+        [Parameter(Mandatory)][string]$SkillDir,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$ProfileName,
+        [Parameter(Mandatory)][bool]$Force,
+        [Parameter(Mandatory)][bool]$SkipExisting
+    )
+    $script:AipAddInstallStatus = 0
+    $profilePath = Get-AipProfilePath $ProfileName
+    $skills = Join-Path $profilePath 'skills'
+    $dest = Join-Path $skills $Name
+    $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    if ($null -ne $existing) {
+        if ($SkipExisting) { Write-Output "skipped $Name in $ProfileName (already present)"; $script:AipAddInstallStatus = 3; return }
+        if ($Force) {
+            try { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction Stop }
+            catch { Write-AipError "could not remove the existing skill $Name"; $script:AipCommandStatus = 1; $script:AipAddInstallStatus = 1; return }
+        }
+        else {
+            Write-AipError "skill '$Name' already exists in profile $ProfileName; pass --force to replace it or --skip-existing to keep it"
+            $script:AipCommandStatus = 1
+            $script:AipAddInstallStatus = 1
+            return
+        }
+    }
+    if (-not (Test-Path -LiteralPath $skills -PathType Container)) {
+        try { $null = New-Item -ItemType Directory -Path $skills -Force -ErrorAction Stop }
+        catch { Write-AipError "could not create $skills"; $script:AipCommandStatus = 1; $script:AipAddInstallStatus = 1; return }
+    }
+    try { $null = Copy-Item -LiteralPath $SkillDir -Destination $dest -Recurse -Force -ErrorAction Stop }
+    catch { Write-AipError "could not copy the skill $Name"; $script:AipCommandStatus = 1; $script:AipAddInstallStatus = 1; return }
+    Write-Output "added $Name to $ProfileName"
+}
+
+function Invoke-AipAdd {
+    param([object[]]$Arguments)
+    $profile = $null
+    $allProfiles = $false
+    $force = $false
+    $skipExisting = $false
+    $sources = [System.Collections.Generic.List[string]]::new()
+    $i = 0
+    while ($i -lt $Arguments.Count) {
+        $arg = [string]$Arguments[$i]
+        switch ($arg) {
+            '--all-profiles' { $allProfiles = $true }
+            '--force' { $force = $true }
+            '--skip-existing' { $skipExisting = $true }
+            '--' {
+                $i++
+                while ($i -lt $Arguments.Count) { $sources.Add([string]$Arguments[$i]); $i++ }
+            }
+            default {
+                if ($arg.StartsWith('-') -and $arg -ne '-') {
+                    Write-AipError "unknown add option '$arg'"
+                    Write-AipAddUsage
+                    return
+                }
+                # The first positional is the profile, unless --all-profiles was given
+                # first (in which case it is a source).
+                if ($null -eq $profile -and -not $allProfiles) { $profile = $arg } else { $sources.Add($arg) }
+            }
+        }
+        $i++
+    }
+    if ($null -eq $profile -and -not $allProfiles) {
+        Write-AipError 'no profile selected; pass a PROFILE or --all-profiles'
+        Write-AipAddUsage
+        return
+    }
+    if ($sources.Count -eq 0) { Write-AipError 'no source given'; Write-AipAddUsage; return }
+    if ($force -and $skipExisting) { Write-AipError '--force and --skip-existing conflict'; $script:AipCommandStatus = 2; return }
+    if ($allProfiles -and $null -ne $profile) { Write-AipError '--all-profiles conflicts with the PROFILE argument'; $script:AipCommandStatus = 2; return }
+    $profiles = [System.Collections.Generic.List[string]]::new()
+    if ($allProfiles) {
+        foreach ($n in (Get-AipProfileNames)) { $profiles.Add($n) }
+        if ($profiles.Count -eq 0) { Write-AipError 'no profiles found; create a profile with aip create first'; $script:AipCommandStatus = 1; return }
+    }
+    else {
+        if (-not (Test-AipImportProfile $profile)) { return }
+        $profiles.Add($profile)
+    }
+    $installed = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($source in $sources) {
+        $parsed = ConvertFrom-AipAddSource $source
+        if ($null -eq $parsed) { return }
+        $name = $parsed.Name
+        if (-not (Test-AipProfileName $name)) {
+            Write-AipError "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (-not $installed.Add($name)) {
+            Write-AipError "duplicate skill name in this call: $name"
+            $script:AipCommandStatus = 1
+            return
+        }
+        $dir = Join-Path ([IO.Path]::GetTempPath()) ('aip-add-' + [guid]::NewGuid().ToString('N'))
+        if (-not (Invoke-AipAddClone -Url $parsed.Url -Dir $dir)) { return }
+        try {
+            $script:AipAddName = $name
+            if (-not (Test-AipAddSkillPath -ClonedRoot $dir -Path $parsed.Path)) { return }
+            $skillDir = $script:AipAddSkillDir
+            foreach ($pname in $profiles) {
+                Invoke-AipAddInstall -SkillDir $skillDir -Name $name -ProfileName $pname -Force $force -SkipExisting $skipExisting
+                if ($script:AipAddInstallStatus -eq 1) { return }
+            }
+        }
+        finally {
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return
+}
+
+function Invoke-AipHelp {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip help'; $script:AipCommandStatus = 2; return }
     @'
@@ -2690,6 +2955,7 @@ function aip {
         $command = [string]$arguments[0]
         $rest = @($arguments | Select-Object -Skip 1)
         switch -CaseSensitive ($command) {
+            'add' { Invoke-AipWithoutGitRouting { Invoke-AipAdd $rest } }
             'create' { Invoke-AipWithoutGitRouting { Invoke-AipCreate $rest } }
             'clone' { Invoke-AipWithoutGitRouting { Invoke-AipClone $rest } }
             'default' { Invoke-AipDefault $rest }
