@@ -88,7 +88,8 @@ doubt, call the CLI instead of improvising.
 Run this when the user just installed aip, or when `aip list` shows no
 profiles, or only the `aip` profile. If user profiles already exist (for
 example a reinstall), skip the profile-creation steps and continue at the
-audit (step 5).
+audit (step 5). The full decision tree is documented in `README.md` next to
+this skill.
 
 1. `aip list` and `aip remote show` — show what exists, what is selected, and
    whether a remote is already connected.
@@ -117,18 +118,25 @@ audit (step 5).
      Resolving conflicts first — that procedure finishes the rebase and then
      runs `aip sync`); if it fails, the attach was incomplete — but if the
      repository has no commits yet (`git -C <profiles root> rev-parse
-     --verify HEAD` fails), do not re-add now, continue to step 4 and re-add
-     after the first profile is created, otherwise `aip remote remove` (with
-     their approval) and `aip remote add` the URL again. If the remote
+     --verify HEAD` fails), do not re-add now — continue to step 4, and once
+     the first profile is created recover with `aip remote remove` (with
+     their approval) and `aip remote add` the URL; otherwise `aip remote
+     remove` (with their approval) and `aip remote add` the URL again. If the remote
      changes, `aip remote remove` (with their approval) and `aip remote add`
      the new URL. Do not retry `aip remote add` blindly — a failed run can
      leave `origin` half-set, which is exactly this refusal.
    - A repository may exist (for example on their other machine) but they
      don't have its URL → tell them how to find it (`aip remote show` on the
      other machine, `git -C <that machine's profiles root> remote get-url
-     origin` — read-only and always fine — or the remote host's web UI), then
-     end the setup here: do not create profiles now, fresh ones would diverge
-     from the existing ones. When they have the URL, resume at this step.
+     origin` — read-only and always fine — or the remote host's web UI), and
+     say you are waiting for it — do not end the setup on your own initiative.
+     While you wait, run the audit (step 5); importing (step 6) and defaults
+     (step 7) wait for profiles, which wait for this answer. Holding off on
+     creating profiles is deliberate: fresh local profiles would diverge from
+     the existing ones. The user may choose to pause here and resume later —
+     this setup re-triggers any time only the `aip` profile exists — but do
+     not force it. When they have the URL, run `aip remote add <url>` and
+     continue from this step.
    - No repository at all, or they decline → continue to step 4.
    - If `aip remote add` reports a conflict or leaves a rebase in progress,
      stop and resolve it (see Resolving conflicts) before continuing.
@@ -138,7 +146,8 @@ audit (step 5).
      '@{upstream}'`: if it succeeds, recovery is `aip sync` (or any later
      checkpoint); if it fails, the attach was incomplete — if the repository
      has no commits yet (`rev-parse --verify HEAD` fails), continue to step 4
-     and re-add after the first profile is created, otherwise `aip remote
+     and recover once the first profile is created with `aip remote remove`
+     (with their approval) and `aip remote add <url>`; otherwise `aip remote
      remove` (with their approval) and `aip remote add <url>` again; if that
      fails with the same error again, stop and report it rather than looping.
      If the clone path ran because the URL pointed at a repository that does
@@ -160,14 +169,18 @@ audit (step 5).
    installer (`aip update` — it creates the repository and the `aip` profile);
    if an `aip remote add` was just attempted, its clone failed — fix the URL
    or the remote and retry it (it configured nothing); if none was attempted,
-   no repair is needed — `aip create` initialises the repository itself. If
-   still no user profiles exist (zero, or only `aip`) and step 3 did not end
-   the setup, propose two profiles (for example `work` and `personal`), create
-   them with `aip create work` / `aip create personal`, or whatever names the
-   user prefers. If `aip create` fails on a missing Git identity, stop and
-   tell the user to configure `user.name`/`user.email`, then re-run
-   `aip create` (`aip create` itself initialises the repository, so nothing
-   else is missing).
+   no repair is needed — `aip create` initialises the repository itself.
+   If still no user profiles exist (zero, or only `aip`), ask the user which
+   profiles they want — names and how many; `work` and `personal` are an
+   example of a common pair, never a default. Create exactly what they choose,
+   one `aip create NAME` each; they may choose none for now, in which case
+   skip steps 6 and 7 and finish with step 8 — and if a remote re-add is still
+   pending from step 3 (a repository with no commits), tell them the
+   connection completes once the first profile exists (`aip remote remove`,
+   then `aip remote add <url>`), or that they may pause and come back. If `aip create` fails on a
+   missing Git identity, stop and tell the user to configure
+   `user.name`/`user.email`, then re-run `aip create` (`aip create` itself
+   initialises the repository, so nothing else is missing).
 5. Audit the machine's existing harness config without reading secrets —
    list names only, one level deep: `ls ~/.claude ~/.codex ~/.pi/agent
    ~/.config/opencode`. An error on one of these paths just means that
@@ -201,9 +214,7 @@ audit (step 5).
    deliberately tracked; credential files like `pi/auth.json` are gitignored by
    the profile scaffold and stay machine-local.
 7. Set the everyday profile: `aip default NAME`, where NAME is the profile the
-   user picks from `aip list` (`work` above is just an example name). If no
-   profile was created, the only selectable one is `aip` — say so, and that
-   this setup can be re-run later.
+   user picks from `aip list` (`work` above is just an example name).
    If a remote is connected, offer `aip sync` to publish what was just
    created. If no remote is connected yet and the user wants their profiles on
    other machines, offer `aip remote add <url>` — a new empty remote works,
