@@ -3134,6 +3134,49 @@ Describe 'skills update' {
         $script:AipLastError | Should -Not -Match 's3cret'
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
     }
+
+    It 'rejects a traversing sidecar path and leaves dest unchanged' {
+        $outside = Join-Path $script:AddSrc 'outside'
+        $null = New-Item -ItemType Directory -Path $outside -Force
+        Set-Content -LiteralPath (Join-Path $outside 'SKILL.md') -Value "---`nname: outside`n---`n# Outside`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc add -A
+        & git -C $script:AddSrc commit -q -m 'outside'
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $url = Get-AddFileUrl $script:AddSrc
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source') -Value "source=kept`nurl=$url`npath=alpha/../outside`n" -Encoding utf8NoBOM
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $text = Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw
+        $text | Should -Match '# Alpha'
+        $text | Should -Not -Match 'Outside'
+    }
+
+    It 'rejects an empty name' {
+        aip skills update work '' *> $null
+        $global:LASTEXITCODE | Should -Be 1
+    }
+
+    It 'accepts a CRLF sidecar' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha v2`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc commit -q -am 'v2'
+        $url = Get-AddFileUrl $script:AddSrc
+        $bytes = [Text.Encoding]::UTF8.GetBytes("source=$url#alpha`r`nurl=$url`r`npath=alpha`r`n")
+        [IO.File]::WriteAllBytes((Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source'), $bytes)
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
+    }
+
+    It 'rejects a sidecar with a trailing extra line' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $url = Get-AddFileUrl $script:AddSrc
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source') -Value "source=$url#alpha`nurl=$url`npath=alpha`n`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Value 'keep' -Encoding utf8NoBOM
+        aip skills update work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw).Trim() | Should -Be 'keep'
+    }
 }
 
 Describe 'skills update --all' {
@@ -3229,6 +3272,14 @@ Describe 'skills update --all' {
         $global:LASTEXITCODE | Should -Be 2
         $script:AipLastError | Should -Match 'usage: aip skills update'
     }
+
+    It 'errors on a malformed sidecar' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/.aip-source') -Value "not a sidecar`n" -Encoding utf8NoBOM
+        aip skills update work --all *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match '# Alpha'
+    }
 }
 
 Describe 'skills remove' {
@@ -3317,5 +3368,10 @@ Describe 'skills remove' {
     It 'rejects a git source as a name' {
         aip skills remove work 'owner/repo#path' *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
+    }
+
+    It 'rejects an empty name' {
+        aip skills remove work '' *> $null
+        $global:LASTEXITCODE | Should -Be 1
     }
 }
