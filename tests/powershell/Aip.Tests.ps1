@@ -3230,3 +3230,92 @@ Describe 'skills update --all' {
         $script:AipLastError | Should -Match 'usage: aip skills update'
     }
 }
+
+Describe 'skills remove' {
+    BeforeAll {
+        function Get-AddFileUrl {
+            param([Parameter(Mandatory)][string]$Path)
+            $p = $Path.Replace('\', '/')
+            if ($p -match '^[A-Za-z]:/') { return "file:///$p" }
+            return "file://$p"
+        }
+    }
+
+    BeforeEach {
+        $script:AddRoot = Join-Path $TestDrive ('rm-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AddRoot -Force | Out-Null
+        $script:AipProfileRoot = Join-Path $script:AddRoot 'profile root'
+        $script:FakeBin = Join-Path $script:AddRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:AddRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:AIP_PROFILE = $null
+        $env:CLAUDE_CONFIG_DIR = $null
+        $env:CODEX_HOME = $null
+        $env:PI_CODING_AGENT_DIR = $null
+        $env:OPENCODE_CONFIG_DIR = $null
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:AddRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        New-TestProfile work
+        $script:AddSrc = Join-Path $script:AddRoot 'source'
+        & git init -q $script:AddSrc
+        $null = New-Item -ItemType Directory -Path (Join-Path $script:AddSrc 'alpha'), (Join-Path $script:AddSrc 'beta') -Force
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'beta/SKILL.md') -Value "---`nname: beta`n---`n# Beta`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc add -A
+        & git -C $script:AddSrc commit -q -m 'source'
+    }
+
+    AfterEach {
+        $env:AIP_PROFILE = $null
+        $env:FAKE_CAPTURE = $null
+        $env:FAKE_EXIT_STATUS = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
+    It 'deletes a named skill and leaves siblings and history alone' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#beta" *> $null
+        $before = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
+        aip skills remove work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/beta/SKILL.md') | Should -BeTrue
+        $after = (& git -C $script:AipProfileRoot rev-list --count HEAD)[0]
+        $after | Should -Be $before
+    }
+
+    It 'errors when the directory is missing' {
+        aip skills remove work alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+    }
+
+    It '--all-profiles deletes every existing directory of that name' {
+        New-TestProfile suit
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add suit "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills remove --all-profiles alpha *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'suit/skills/alpha') | Should -BeFalse
+    }
+
+    It '--all-profiles errors when the name exists in no profile' {
+        aip skills remove --all-profiles alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+    }
+
+    It 'rejects --all as usage' {
+        aip skills remove work --all *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip skills remove'
+    }
+
+    It 'rejects a git source as a name' {
+        aip skills remove work 'owner/repo#path' *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+    }
+}

@@ -2606,6 +2606,7 @@ _aip_skills() {
   case $sub in
     add) _aip_add "$@" ;;
     update) _aip_skills_update "$@" ;;
+    remove) _aip_skills_remove "$@" ;;
     *) _aip_skills_usage; return 2 ;;
   esac
 }
@@ -2787,6 +2788,99 @@ _aip_skills_update() (
       [ "$found" -eq 1 ] || { _aip_error "skill '$name' has no recorded source in any target profile"; return 1; }
     else
       _aip_skills_update_one "$profile" "$name" || return 1
+    fi
+  done <"$namesfile"
+  return 0
+)
+
+_aip_skills_remove_usage() {
+  _aip_error 'usage: aip skills remove PROFILE NAME... | aip skills remove --all-profiles NAME...'
+}
+
+_aip_skills_remove_one() {
+  # $1 profile, $2 name. Directory-keyed: dest must exist.
+  local pname=$1 name=$2 dest skills
+  skills=$(_aip_profile_path "$pname")/skills
+  dest=$skills/$name
+  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+    _aip_error "skill '$name' is not installed in profile $pname"
+    return 1
+  fi
+  if ! _aip_path_is_under "$skills" "$dest"; then
+    _aip_error "invalid skill name '$name'"
+    return 1
+  fi
+  command rm -rf -- "$dest" || { _aip_error "could not remove the skill $name"; return 1; }
+  printf 'removed %s from %s\n' "$name" "$pname"
+}
+
+_aip_skills_remove() (
+  _aip_clear_git_routing
+  local profile='' all_profiles=0
+  local arg namesfile profilesfile name pname dest found
+  namesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-rm-names.XXXXXX") || return 1
+  profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-rm-profiles.XXXXXX") || { command rm -f "$namesfile"; return 1; }
+  trap 'command rm -f "$namesfile" "$profilesfile"' EXIT
+  while [ "$#" -gt 0 ]; do
+    arg=$1
+    shift
+    case $arg in
+      --all-profiles) all_profiles=1 ;;
+      --)
+        while [ "$#" -gt 0 ]; do
+          printf '%s\n' "$1" >>"$namesfile"
+          shift
+        done
+        ;;
+      -*)
+        _aip_error "unknown remove option '$arg'"
+        _aip_skills_remove_usage
+        return 2
+        ;;
+      *)
+        if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then profile=$arg
+        else printf '%s\n' "$arg" >>"$namesfile"
+        fi
+        ;;
+    esac
+  done
+  if [ -z "$profile" ] && [ "$all_profiles" -eq 0 ]; then
+    _aip_error 'no profile selected; pass a PROFILE or --all-profiles'
+    _aip_skills_remove_usage
+    return 2
+  fi
+  [ -s "$namesfile" ] || { _aip_skills_remove_usage; return 2; }
+  { [ "$all_profiles" -eq 1 ] && [ -n "$profile" ]; } && { _aip_error '--all-profiles conflicts with the PROFILE argument'; return 2; }
+  if [ "$all_profiles" -eq 1 ]; then
+    _aip_list_profile_names | command grep -vx aip >|"$profilesfile" || :
+    if [ ! -s "$profilesfile" ]; then
+      if [ -n "$(_aip_list_profile_names)" ]; then
+        _aip_error 'no user profiles found; --all-profiles skips the aip management profile'
+        return 1
+      fi
+      _aip_error 'no profiles found; create a profile with aip create first'
+      return 1
+    fi
+  else
+    _aip_import_require_profile "$profile" || return
+    printf '%s\n' "$profile" >|"$profilesfile"
+  fi
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    _aip_validate_name "$name" || { _aip_error "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"; return 1; }
+    if [ "$all_profiles" -eq 1 ]; then
+      found=0
+      while IFS= read -r pname; do
+        [ -n "$pname" ] || continue
+        dest=$(_aip_profile_path "$pname")/skills/$name
+        if [ -e "$dest" ] || [ -L "$dest" ]; then
+          _aip_skills_remove_one "$pname" "$name" || return 1
+          found=1
+        fi
+      done <"$profilesfile"
+      [ "$found" -eq 1 ] || { _aip_error "skill '$name' is not installed in any target profile"; return 1; }
+    else
+      _aip_skills_remove_one "$profile" "$name" || return 1
     fi
   done <"$namesfile"
   return 0
