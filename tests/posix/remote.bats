@@ -56,6 +56,13 @@ make_upstream() {
   [[ "$output" == *"aip remote remove"* ]]
 }
 
+@test "remote add clones with core.symlinks at clone time" {
+  # Post-checkout `git config core.symlinks` does not rewrite an already-checked-out
+  # worktree; the clone argv itself must carry -c core.symlinks=true before dest.
+  grep -E 'clone[[:space:]]+-c[[:space:]]+core\.symlinks=true' "$BATS_TEST_DIRNAME/../../aip.sh"
+  grep -E 'clone[[:space:]]+-c[[:space:]]+core\.symlinks=true' "$BATS_TEST_DIRNAME/../../aip.ps1"
+}
+
 @test "remote add on a fresh machine clones the repository and lists every profile" {
   # Machine A
   create_profile work
