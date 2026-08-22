@@ -17,7 +17,7 @@ aip keeps **every profile in one Git repository** — the *profiles repository*,
 
 ## Requirements
 
-- Node.js 18 or newer, needed only for the one-shot npx install and `aip update` — the installed aip itself runs on just Git (and every supported harness depends on Node anyway).
+- Node.js 18 or newer, needed only for the one-shot npx install and `aip update` — the installed aip itself runs on just Git.
 - Git, with `user.name` and `user.email` configured.
 - macOS, Linux or WSL with Bash or Zsh — or native Windows with PowerShell 7.3+, Git for Windows, and Developer Mode enabled (for the relative symbolic links aip creates). aip configures `core.symlinks` and `core.longpaths` itself, so no manual Git setup is needed.
 - Any of `claude`, `codex`, `pi` or `opencode` that you want to use.
@@ -30,7 +30,7 @@ aip is published on npm as `@code-ministry/aip`:
 npx -y @code-ministry/aip install
 ```
 
-Bash, Zsh and PowerShell 7.3+ all use the same command; the platform installer runs automatically. The installer prints both affected paths, copies one integration file into your user data directory, and adds one marked, idempotent source line to your shell profile. It requires no elevation and does not install Git or a harness.
+Bash, Zsh and PowerShell 7.3+ all use the same command; the platform installer runs automatically. The installer prints both affected paths, copies the aip script and a `VERSION` marker into an install root under your user data directory, and adds one marked, idempotent source line to your shell profile. It requires no elevation and does not install Git or a harness.
 
 Prefer to review before installing?
 
@@ -156,10 +156,11 @@ aip default work
 ~/agent-profiles/work/
 ├── AGENTS.md                  # common instructions (the source of truth)
 ├── skills/                    # shared Agent Skills (add files here)
+├── .gitignore                 # aip-managed exclusions + pass-through entries
 ├── claude/CLAUDE.md           # imports ../AGENTS.md, then Claude additions
 ├── codex/instructions.md      # passed as developer_instructions
 ├── pi/APPEND_SYSTEM.md        # Pi additions
-└── opencode/                  # common instructions only in v1
+└── opencode/AGENTS.md         # imports ../AGENTS.md (OpenCode's native path)
 ```
 
 Inside each profile, relative symbolic links expose `AGENTS.md` and `skills/` at each harness's native path (for example `work/codex/skills → ../skills`). You edit the shared files once; every harness sees the change. Clients continue to own settings, plugins, MCP registrations, authentication and other native files; aip does not translate those formats or alter project-local configuration.
@@ -223,11 +224,8 @@ config (`~/.pi/agent/auth.json`, `~/.pi/agent/models.json`, skills) — copy the
 the harness's config directory into one, several, or all profiles:
 
 ```sh
-aip import pi               # interactive: browse ~/.pi/agent, pick files, pick profiles
-# non-interactive:
-aip import pi auth.json models.json --all-profiles
-# or target specific profiles:
-aip import pi auth.json --profile work,suit
+aip import pi auth.json models.json --all-profiles   # copy into every profile
+aip import pi auth.json --profile work,suit          # or target specific profiles
 ```
 
 Each harness has a fixed source directory — the same config directory aip points the
@@ -238,10 +236,10 @@ Files are mirrored into the matching profile subdirectory, so
 variables are deliberately **not** used to find the source: aip itself sets them to a
 profile when launching a harness, so they cannot name your pre-aip global config.
 
-`aip import pi auth.json skills/reviewer/SKILL.md --profile work` copies the named
-files from the harness's machine-local configuration into the named profiles
-(`--all-profiles` targets every profile). Import never commits anything: files land
-on disk, and the next `aip sync` checkpoint handles Git as usual. When a destination
+Relative paths are resolved against the harness's config directory, and skills
+import fine (`aip import pi skills/reviewer/SKILL.md --profile work`). Import never
+commits anything: files land on disk, and the next `aip sync` checkpoint handles
+Git as usual. When a destination
 already exists you are prompted per file (`o` overwrite, `s` skip, `a` all overwrite,
 `n` none skip, `q` quit); `--force` and `--skip-existing` skip the prompts, and
 `--dry-run` shows what would be copied. Destinations that are aip-managed profile
@@ -354,7 +352,7 @@ Tracked filenames must use printable ASCII and avoid Windows-reserved characters
 
 ## Secret boundary
 
-aip **refuses to sync** if known credential, session, transcript, log, cache or database paths are tracked — in the local repository or arriving from the remote. It checks tracked trees on every sync against a denylist covering `.env` files, private keys, Claude credentials/history, Codex `auth.json`/sessions/databases, and equivalent Pi/OpenCode runtime paths. The check is fail-closed: anything it cannot classify as safe blocks the sync.
+aip **refuses to sync** if known credential, session, transcript, log, cache or database paths are tracked — locally, under any profile's `skills/`, or arriving from the remote. Every sync checks the tracked trees against a denylist covering `.env` files, private keys, `.netrc`/`.npmrc`/`.pypirc`, Claude credentials/history, Codex `auth.json`/sessions/databases, and equivalent Pi/OpenCode runtime paths. The symbolic-link policy is the fail-closed half: the only links aip accepts in the tracked tree are its own relative links and the pass-through links below — anything else blocks the sync.
 
 Native settings can still embed secrets. Inspect a file before deliberately tracking it:
 
@@ -367,15 +365,16 @@ A private remote is not a substitute for excluding credentials.
 ## Commands
 
 ```text
-aip                              status
-aip create NAME                create a new profile
-aip list                       list profiles and selection
+aip                                  status
+aip create NAME                    create a new profile
+aip list                           list profiles and selection
 aip which [NAME]                   show the profile that would be selected
 aip default [NAME]                 show or set the default profile
 aip use NAME                       select NAME for this shell only
 aip local [NAME | --remove]        set or clear the per-directory marker
 aip clone SOURCE TARGET            copy a profile into a new profile
 aip delete NAME [--force]          delete a profile
+aip manage HARNESS [ARGS...]       launch a harness with the aip profile
 aip sync                           checkpoint and sync every profile
 aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
