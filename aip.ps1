@@ -2726,7 +2726,7 @@ function Invoke-AipAddClone {
     # Shallow, non-interactive clone of $Url into $Dir (which must not exist yet).
     # core.symlinks=true is required at clone time so Windows materializes
     # tracked symlinks as reparse points; the path-walk rejects them.
-    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dir))
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dir)
     $transport = Get-AipSshTransport $Dir
     if ($null -eq $transport) {
         Write-AipError 'source is unavailable because the configured SSH variant cannot be made non-interactive'
