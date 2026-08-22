@@ -28,15 +28,26 @@ selection.
 **Depends.** `tasks/cuts` (profile layout + help/smoke edits), `tasks/add`
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/smoke.bats`, `tests/posix/wrappers.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T2 — Author `skills/aip/SKILL.md` — S (content; review-gated)
+## T2 — Author `skills/aip/SKILL.md` — S (content; review-gated) ✅
 **Desc.** Write the `aip` management skill per the spec's section list (5-line model ·
 division of labour · first-run setup · skill installs via `aip add` · cross-profile
 copy · conflict resolution · gotchas), pure instructions + shell, no runtime deps,
 harness-agnostic. Author via the `skill-author` skill and pass `adversarial-review`.
 **Acceptance.**
-- [ ] `skills/aip/SKILL.md` exists with frontmatter `name: aip` and a routing description.
-- [ ] skill-author + adversarial-review gates pass (CLEAN).
-- [ ] Instructs CLI-first mutation (`create/clone/delete/add/import`) and never `rm -rf` profiles or hand-edit aip-managed blocks.
+- [x] `skills/aip/SKILL.md` exists with frontmatter `name: aip` and a routing description.
+- [x] skill-author + adversarial-review gates pass (CLEAN).
+- [x] Instructs CLI-first mutation (`create/clone/delete/add/import`) and never `rm -rf` profiles or hand-edit aip-managed blocks.
+
+Review record (fresh-context `pi -p` refute loops, 4 passes over the file):
+pass 1 — 7 findings (1 high: pass-through-dir import "same file" trap; denylist
+glob overclaim; zero-profile first-run branch; cp -r contradiction; layout
+invariant omission; non-TTY rebase editor; hard-coded root). pass 2 — 9/9
+verified fixed, 5 new (5 minor). pass 3 — 5/5 fixed, 5 new (1 high: checkpoint
+stages only shared content — imported native files stay untracked; denylist
+is a blocklist not fail-closed; block message names no path). pass 4 — full
+re-verify, 2 medium (missing write-Git exception for approved tracking;
+"sync tells you what it blocked" false). All fixed; final convergence check
+clean apart from one Low wording gap (rebase --abort exception), also fixed.
 **Verify.** skill-author + adversarial-review verdicts (documented in the PR)
 **Depends.** T1 (content references `aip manage`, `aip add`)
 **Files.** `skills/aip/SKILL.md` (+ `skills/aip/references/*` if split)
