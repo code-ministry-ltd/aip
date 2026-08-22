@@ -2787,6 +2787,7 @@ function Invoke-AipSkills {
     switch -CaseSensitive ($sub) {
         'add' { Invoke-AipAdd $rest }
         'update' { Invoke-AipSkillsUpdate $rest }
+        'remove' { Invoke-AipSkillsRemove $rest }
         default { Write-AipSkillsUsage }
     }
 }
@@ -2979,6 +2980,114 @@ function Write-AipSkillSource {
         Write-AipError "could not write provenance for $(Split-Path -Leaf $Dest)"
         $script:AipCommandStatus = 1
         return $false
+    }
+}
+
+function Write-AipSkillsRemoveUsage {
+    Write-AipError 'usage: aip skills remove PROFILE NAME... | aip skills remove --all-profiles NAME...'
+    $script:AipCommandStatus = 2
+}
+
+function Invoke-AipSkillsRemoveOne {
+    param([Parameter(Mandatory)][string]$ProfileName, [Parameter(Mandatory)][string]$Name)
+    $skills = Join-Path (Get-AipProfilePath $ProfileName) 'skills'
+    $dest = Join-Path $skills $Name
+    $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    if ($null -eq $existing) {
+        Write-AipError "skill '$Name' is not installed in profile $ProfileName"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    if (-not (Test-AipPathUnder -Parent $skills -Child $dest)) {
+        Write-AipError "invalid skill name '$Name'"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    try { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction Stop }
+    catch {
+        Write-AipError "could not remove the skill $Name"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    Write-Output "removed $Name from $ProfileName"
+    return $true
+}
+
+function Invoke-AipSkillsRemove {
+    param([object[]]$Arguments)
+    $profile = $null
+    $allProfiles = $false
+    $names = [System.Collections.Generic.List[string]]::new()
+    $i = 0
+    if ($null -eq $Arguments) { $Arguments = @() }
+    while ($i -lt $Arguments.Count) {
+        $arg = [string]$Arguments[$i]
+        switch ($arg) {
+            '--all-profiles' { $allProfiles = $true }
+            '--' {
+                $i++
+                while ($i -lt $Arguments.Count) { $names.Add([string]$Arguments[$i]); $i++ }
+            }
+            default {
+                if ($arg.StartsWith('-') -and $arg -ne '-') {
+                    Write-AipError "unknown remove option '$arg'"
+                    Write-AipSkillsRemoveUsage
+                    return
+                }
+                if ($null -eq $profile -and -not $allProfiles) { $profile = $arg } else { $names.Add($arg) }
+            }
+        }
+        $i++
+    }
+    if ($null -eq $profile -and -not $allProfiles) {
+        Write-AipError 'no profile selected; pass a PROFILE or --all-profiles'
+        Write-AipSkillsRemoveUsage
+        return
+    }
+    if ($names.Count -eq 0) { Write-AipSkillsRemoveUsage; return }
+    if ($allProfiles -and $null -ne $profile) { Write-AipError '--all-profiles conflicts with the PROFILE argument'; $script:AipCommandStatus = 2; return }
+    $profiles = [System.Collections.Generic.List[string]]::new()
+    if ($allProfiles) {
+        foreach ($n in (Get-AipProfileNames)) { if ($n -cne 'aip') { $profiles.Add($n) } }
+        if ($profiles.Count -eq 0) {
+            if (@(Get-AipProfileNames).Count -gt 0) {
+                Write-AipError 'no user profiles found; --all-profiles skips the aip management profile'
+                $script:AipCommandStatus = 1
+                return
+            }
+            Write-AipError 'no profiles found; create a profile with aip create first'
+            $script:AipCommandStatus = 1
+            return
+        }
+    }
+    else {
+        if (-not (Test-AipImportProfile $profile)) { return }
+        $profiles.Add($profile)
+    }
+    foreach ($name in $names) {
+        if (-not (Test-AipProfileName $name)) {
+            Write-AipError "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if ($allProfiles) {
+            $found = $false
+            foreach ($pname in $profiles) {
+                $dest = Join-Path (Join-Path (Get-AipProfilePath $pname) 'skills') $name
+                if (Test-Path -LiteralPath $dest) {
+                    if (-not (Invoke-AipSkillsRemoveOne -ProfileName $pname -Name $name)) { return }
+                    $found = $true
+                }
+            }
+            if (-not $found) {
+                Write-AipError "skill '$name' is not installed in any target profile"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        else {
+            if (-not (Invoke-AipSkillsRemoveOne -ProfileName $profile -Name $name)) { return }
+        }
     }
 }
 
