@@ -4,7 +4,7 @@ description: >
   Manage aip profiles: guided first-run setup, a profile-management menu, a
   machine audit that finds existing skills and settings (~/.claude, ~/.codex,
   ~/.pi/agent, ~/.config/opencode, ~/.agents/skills) and copies them into
-  profiles, installing skills from git repositories (aip add), importing
+  profiles, installing skills from git repositories (aip skills add), importing
   harness config (aip import), and resolving the Git conflicts that block aip
   syncs and launches. Use when the user asks to set up or manage aip, create
   or clone a profile, audit their machine, install or move an agent skill,
@@ -44,7 +44,7 @@ Reference files live next to this SKILL.md — read them when directed:
   per-directory marker (`aip local`), the
   machine default (`aip default`), else no profile. A running session is
   locked to the profile it launched with.
-- `aip add` and `aip import` commit nothing directly. Skill files are
+- `aip skills add`/`update`/`remove` and `aip import` commit nothing directly. Skill files are
   committed by the next checkpoint (the shared `skills/` tree is
   checkpoint-owned). Imported harness-native files (settings, config) stay
   untracked until someone deliberately `git add`s and commits them — do not
@@ -138,16 +138,16 @@ configured).
 8. **Health check** — `aip doctor [NAME]`; a blocked sync or launch →
    read `conflicts.md`.
 
-After any change that leaves new files on disk (audit copies, `aip add`,
+After any change that leaves new files on disk (audit copies, `aip skills add`,
 imports), offer `aip sync` to publish.
 
-## Installing skills (`aip add`)
+## Installing skills (`aip skills add`)
 
-`aip add` installs from a **git repository**, takes exact paths, and does no
-name search; finding the path is your job.
+`aip skills add` installs from a **git repository**, takes exact paths, and
+does no name search; finding the path is your job.
 
 - Exact source given → call it directly:
-  `aip add work vercel-labs/skills/some/skill`
+  `aip skills add work vercel-labs/skills/some/skill`
   Source forms: GitHub shorthand `owner/repo[/sub/path]`, or a git URL
   (`https://`, `ssh://`, `git@host:…`, `file://…`) with an optional
   `#sub/path` suffix. A source with no path installs the repository root,
@@ -155,15 +155,19 @@ name search; finding the path is your job.
 - Only a skill name and a repo given → find the path: shallow-clone the repo
   into a temporary directory outside the profiles root
   (`git clone --depth 1`), locate the directory whose `SKILL.md` matches the
-  requested skill, call `aip add` with the exact `owner/repo/sub/path`, and
-  delete the temporary clone.
+  requested skill, call `aip skills add` with the exact `owner/repo/sub/path`,
+  and delete the temporary clone.
 - Skill names are the basename of the path, lowercase `[a-z0-9_-]`.
 - If the skill already exists, aip fails by default. Ask the user:
   `--force` replaces it, `--skip-existing` keeps the existing one. Never
   pass `--force` without being asked.
 - `--all-profiles` installs into every *user* profile and skips the `aip`
-  management profile. Explicit `aip add aip SOURCE` still targets it.
+  management profile. Explicit `aip skills add aip SOURCE` still targets it.
 - Installed files are untracked until the next checkpoint; offer `aip sync`.
+- A successful install writes `.aip-source` in the skill directory. Refresh
+  and uninstall take the **local name**: `aip skills update work name`,
+  `aip skills remove work name`. Update always replaces the installed
+  directory from the recorded URL.
 - A skill already on this machine's disk (not in a git repo) is copied, not
   added — see Copying skills.
 
@@ -194,6 +198,9 @@ Copy-Item -LiteralPath "SOURCE_DIR/name" -Destination "$PROFILES/dest-profile/sk
   `cp -RL` onto an existing directory would nest `name/name` instead.
 - After copying, remove any nested Git repository — the sync refuses them:
   `rm -rf "$PROFILES/dest-profile/skills/name/.git"`.
+- Keep `.aip-source` when it is present: update and the next machine need
+  that provenance. Dropping it means the copy can only be removed, not
+  refreshed, until it is installed again with `aip skills add`.
 - Check the copied files for secrets (`.env`, keys, tokens): the skills tree
   syncs, and a denylisted file inside it blocks every sync.
 
