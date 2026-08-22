@@ -85,6 +85,16 @@ setup() {
   [ ! -e "$FAKE_CAPTURE" ]
 }
 
+@test "Codex instructions reject NEL (U+0085) as a control character" {
+  printf 'unsafe \xC2\x85 control\n' >"$_AIP_PROFILE_ROOT/work/codex/instructions.md"
+
+  run codex prompt
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'control character that TOML cannot represent safely'* ]]
+  [ ! -e "$FAKE_CAPTURE" ]
+}
+
 @test "wrapper restores a pre-existing selector and returns the child status" {
   export CLAUDE_CONFIG_DIR='original value'
   export FAKE_EXIT_STATUS=37

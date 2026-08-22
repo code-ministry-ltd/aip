@@ -11,6 +11,14 @@
   [ "$status" -eq 0 ]
   [ "$output" = 'aip 0.5.0' ]
 
+  run bash -c 'source "$0"; aip --version' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'aip 0.5.0' ]
+
+  run bash -c 'source "$0"; aip -v' "$AIP_SOURCE"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'aip 0.5.0' ]
+
   run bash -c 'source "$0"; aip version extra' "$AIP_SOURCE"
   [ "$status" -ne 0 ]
 }
@@ -23,7 +31,7 @@
   run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in add create list which default use local clone delete manage sync remote doctor run update version help; do
+  for cmd in add create list which default use local clone delete manage sync remote doctor run update version help import; do
     [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
   done
   [[ "$output" == *'aip add PROFILE SOURCE...'* ]]

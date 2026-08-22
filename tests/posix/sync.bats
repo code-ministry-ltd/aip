@@ -104,6 +104,30 @@ make_upstream() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/reviewer/id_ed25519)" ]
 }
 
+@test "sync blocks skill-tree .credentials.json even when gitignore allows it" {
+  mkdir -p "$_AIP_PROFILE_ROOT/work/skills/x"
+  printf '!skills/x/.credentials.json\n' >>"$_AIP_PROFILE_ROOT/work/.gitignore"
+  printf 'secret\n' >"$_AIP_PROFILE_ROOT/work/skills/x/.credentials.json"
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'forbidden credential path exists under skills'* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/x/.credentials.json)" ]
+}
+
+@test "sync blocks skill-tree auth.json even when gitignore allows it" {
+  mkdir -p "$_AIP_PROFILE_ROOT/work/skills/x"
+  printf '!skills/x/auth.json\n' >>"$_AIP_PROFILE_ROOT/work/.gitignore"
+  printf 'secret\n' >"$_AIP_PROFILE_ROOT/work/skills/x/auth.json"
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'forbidden credential path exists under skills'* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/skills/x/auth.json)" ]
+}
+
 @test "sync blocks uppercase credential extensions under skills" {
   mkdir -p "$_AIP_PROFILE_ROOT/work/skills/reviewer"
   printf '!skills/reviewer/SECRET.PEM\n' >>"$_AIP_PROFILE_ROOT/work/.gitignore"

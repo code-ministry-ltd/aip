@@ -35,6 +35,16 @@ setup() {
   [ ! -e "$_AIP_PROFILE_ROOT/Work" ]
 }
 
+@test "new profile gitignore matches skill-tree credential basenames" {
+  aip create work >/dev/null
+  grep -F '**/.credentials.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  grep -F '**/auth.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  mkdir -p "$_AIP_PROFILE_ROOT/work/skills/x"
+  printf 'x\n' >"$_AIP_PROFILE_ROOT/work/skills/x/.credentials.json"
+  printf 'x\n' >"$_AIP_PROFILE_ROOT/work/skills/x/auth.json"
+  git -C "$_AIP_PROFILE_ROOT" check-ignore -- work/skills/x/.credentials.json work/skills/x/auth.json
+}
+
 @test "create builds the approved profile atomically with relative links and an initial commit" {
   run aip create work
   [ "$status" -eq 0 ]
