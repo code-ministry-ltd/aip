@@ -228,6 +228,38 @@ copy, aip warns about destinations the next checkpoint would track (i.e. not cov
 by the profile `.gitignore`) — credential files like `pi/auth.json` are already
 ignored by the profile scaffold and stay off the remote.
 
+## Adding skills from a git repository
+
+`aip add` installs a skill — a directory containing a `SKILL.md` — from a git
+repository into a profile's shared `skills/` tree:
+
+```sh
+aip add work vercel-labs/skills/some/skill
+aip add --all-profiles https://github.com/owner/skills.git#skills/some
+```
+
+The source is given as an exact path, in one of two forms:
+
+- **GitHub shorthand** `owner/repo[/sub/path]` — the first two segments are the
+  repository, the rest is the in-repo path;
+- **a git URL** (`https://`, `ssh://`, `git@…`, or `file://`) with an optional
+  `#sub/path` suffix. A source with no path installs the repository root itself,
+  and the skill takes the repository's name.
+
+The path must resolve to a directory containing an ordinary `SKILL.md`; traversal
+(`..`) and symlinked directories are rejected. The skill name is the basename of
+the path (lowercase `[a-z0-9_-]`). aip shallow-clones the default branch into a
+temporary directory — never into the profiles repository — and copies the skill
+into `<profile>/skills/<name>/` for each target profile. As with `aip import`,
+nothing is committed: files land untracked and the next checkpoint or `aip sync`
+handles Git. When the skill already exists, `--force` replaces it, `--skip-existing`
+skips it with a note, and without either the add fails.
+
+`aip add` takes exact paths and does no searching: finding the right skill inside
+a repository (listing what a repo offers, matching a requested skill by name) is
+what the `aip` management skill does — it resolves the name and then calls
+`aip add` with the exact path.
+
 ## Pass-through of machine-local configuration
 
 Launching a harness through aip points it at the profile's harness directory, so
@@ -326,6 +358,7 @@ aip sync                           checkpoint and sync every profile
 aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
 aip remote remove                  disconnect the remote
+aip add PROFILE SOURCE...          install skills from a git repository
 aip import HARNESS [FILE...]       copy config/skills from a harness into profiles
 aip doctor [NAME]                  diagnose the repository and profiles
 aip run [NAME] HARNESS [ARGS...]   launch a harness with a profile
@@ -340,6 +373,10 @@ aip help                           show help (--help and -h work too)
 
 `aip import HARNESS [FILE...]` copies files from a harness's config directory into
 profiles (see [Importing existing config and skills](#importing-existing-config-and-skills)).
+
+`aip add PROFILE SOURCE...` installs skills from a git repository into the
+profiles' shared `skills/` trees (see
+[Adding skills from a git repository](#adding-skills-from-a-git-repository)).
 
 Machine-local config pass-through is automatic and needs no command: every profile
 links the harness's default config directory in unless it defines the path itself

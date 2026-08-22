@@ -2917,6 +2917,7 @@ Commands:
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
+  aip add PROFILE SOURCE...         Install skills from a git repository
   aip import HARNESS [FILE...]      Copy config/skills from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile

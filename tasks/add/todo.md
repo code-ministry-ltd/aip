@@ -32,13 +32,13 @@ stream, so a numeric return would swallow the user-facing note).
 **Depends.** `tasks/cuts` (help text and smoke list are being edited there)
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/add.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T2 — help, README, smoke command-list — XS
+## T2 — help, README, smoke command-list — XS ✅
 **Desc.** Add `aip add` to the help text (both shells), the README (usage + source
 forms + the exact-path/no-search division of labour with the management skill), and
 the smoke command-list test.
 **Acceptance.**
-- [ ] `aip help` lists `aip add PROFILE SOURCE...` with `--all-profiles/--force/--skip-existing`.
-- [ ] README documents the two source forms and states that name search lives in the `aip` skill; smoke command-list includes `add`.
+- [x] `aip help` lists `aip add PROFILE SOURCE...` with `--all-profiles/--force/--skip-existing`.
+- [x] README documents the two source forms and states that name search lives in the `aip` skill; smoke command-list includes `add`.
 **Verify.** `npm run test:posix`; `grep -n 'aip add' README.md`
 **Depends.** T1
 **Files.** `aip.sh`, `aip.ps1`, `README.md`, `tests/posix/smoke.bats`

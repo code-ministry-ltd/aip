@@ -136,9 +136,10 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
+    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
+    $helpOutput | Should -Match ([regex]::Escape('aip add PROFILE SOURCE...'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote add URL'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote show'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote remove'))
@@ -2115,7 +2116,9 @@ Describe 'import' {
     }
 
     It 'appears in help' {
-        aip help | Out-String | Should -Match 'aip import HARNESS'
+        $help = aip help | Out-String
+        $help | Should -Match 'aip import HARNESS'
+        $help | Should -Match 'aip add PROFILE SOURCE...'
     }
 }
 

@@ -23,9 +23,10 @@
   run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in create list which default use local clone delete sync remote doctor run update version help; do
+  for cmd in add create list which default use local clone delete sync remote doctor run update version help; do
     [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
   done
+  [[ "$output" == *'aip add PROFILE SOURCE...'* ]]
   [[ "$output" == *'aip remote add URL'* ]]
   [[ "$output" == *'aip remote show'* ]]
   [[ "$output" == *'aip remote remove'* ]]
