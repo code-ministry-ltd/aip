@@ -1431,7 +1431,7 @@ _aip_is_harness() {
 _aip_is_command() {
     [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
     [ "${1-}" = --version ] || [ "${1-}" = -v ] ||
-    [ "${1-}" = add ] ||
+    [ "${1-}" = skills ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = manage ] || [ "${1-}" = remote ] ||
@@ -2596,8 +2596,34 @@ _aip_import() (
   return 0
 )
 
+_aip_skills_usage() {
+  _aip_error 'usage: aip skills add|update|remove …'
+}
+
+_aip_skills() {
+  local sub=${1-}
+  [ "$#" -gt 0 ] && shift
+  case $sub in
+    add) _aip_add "$@" ;;
+    *) _aip_skills_usage; return 2 ;;
+  esac
+}
+
+_aip_write_skill_source() {
+  # $1 dest skill dir, $2 original source token, $3 clone URL, $4 in-repo path (may be empty).
+  local dest=$1
+  {
+    printf 'source=%s\n' "$2"
+    printf 'url=%s\n' "$3"
+    printf 'path=%s\n' "$4"
+  } >|"$dest/.aip-source" || {
+    _aip_error "could not write provenance for ${dest##*/}"
+    return 1
+  }
+}
+
 _aip_add_usage() {
-  _aip_error 'usage: aip add PROFILE SOURCE... | aip add --all-profiles SOURCE... [--force] [--skip-existing]'
+  _aip_error 'usage: aip skills add PROFILE SOURCE... | aip skills add --all-profiles SOURCE... [--force] [--skip-existing]'
 }
 
 _aip_add_parse_source() {
@@ -2732,7 +2758,6 @@ _aip_add_install_skill() {
     return 1
   fi
   _aip_add_copy_skill "$src" "$dest" "$name" || return 1
-  printf 'added %s to %s\n' "$name" "$pname"
   return 0
 }
 
@@ -2832,13 +2857,22 @@ _aip_add() (
     command rm -f -- "$dir"
     _aip_add_clone "$url" "$dir" || { command rm -rf -- "$dir"; return 1; }
     _aip_add_resolve_skill "$dir" "$path" || { command rm -rf -- "$dir"; return 1; }
-    local skill_dir rc=0
+    local skill_dir dest install_rc rc=0
     skill_dir=$_AIP_ADD_SKILL_DIR
     while IFS= read -r pname; do
       [ -n "$pname" ] || continue
-      _aip_add_install_skill "$skill_dir" "$name" "$pname" "$force" "$skip_existing"
-      case $? in
-        0|3) ;;
+      install_rc=0
+      _aip_add_install_skill "$skill_dir" "$name" "$pname" "$force" "$skip_existing" || install_rc=$?
+      case $install_rc in
+        0)
+          dest=$(_aip_profile_path "$pname")/skills/$name
+          if ! _aip_write_skill_source "$dest" "$src" "$url" "$path"; then
+            rc=1
+            break
+          fi
+          printf 'added %s to %s\n' "$name" "$pname"
+          ;;
+        3) ;;
         *) rc=1; break ;;
       esac
     done <"$profilesfile"
@@ -2873,7 +2907,7 @@ Commands:
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
-  aip add PROFILE SOURCE...         Install skills from a git repository
+  aip skills add|update|remove       Install, refresh, or remove skills
   aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
                                      Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
@@ -3047,7 +3081,7 @@ aip() {
   shift
   _aip_is_command "$command" || { _aip_error "unknown command '$command'"; return 2; }
   case $command in
-    add) _aip_add "$@" ;;
+    skills) _aip_skills "$@" ;;
     create) _aip_create "$@" ;;
     manage) _aip_manage "$@" ;;
     clone) _aip_clone "$@" ;;

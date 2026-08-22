@@ -31,10 +31,11 @@
   run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in add create list which default use local clone delete manage sync remote doctor run update version help import; do
+  for cmd in skills create list which default use local clone delete manage sync remote doctor run update version help import; do
     [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
   done
-  [[ "$output" == *'aip add PROFILE SOURCE...'* ]]
+  [[ "$output" == *'aip skills add|update|remove'* ]]
+  [[ "$output" != *'aip add PROFILE'* ]]
   [[ "$output" == *'aip manage HARNESS [ARGS...]'* ]]
   [[ "$output" == *'aip remote add URL'* ]]
   [[ "$output" == *'aip remote show'* ]]
