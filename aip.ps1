@@ -2823,45 +2823,46 @@ function Write-AipSkillsUpdateUsage {
 }
 
 function Invoke-AipSkillsUpdateOne {
+    # Writes the update line via Write-Output; sets $script:AipCommandStatus on error.
+    # Callers must not wrap this in `if (-not (...))` — that consumes the success line.
     param([Parameter(Mandatory)][string]$ProfileName, [Parameter(Mandatory)][string]$Name)
     $dest = Join-Path (Join-Path (Get-AipProfilePath $ProfileName) 'skills') $Name
     $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
     if ($null -eq $existing) {
         Write-AipError "skill '$Name' is not installed in profile $ProfileName"
         $script:AipCommandStatus = 1
-        return $false
+        return
     }
     $parsed = Read-AipSkillSource $dest
     if ($null -eq $parsed) {
         Write-AipError "skill '$Name' in profile $ProfileName has no recorded source; reinstall it with aip skills add"
         $script:AipCommandStatus = 1
-        return $false
+        return
     }
     $dir = Join-Path ([IO.Path]::GetTempPath()) ('aip-add-' + [guid]::NewGuid().ToString('N'))
     $staging = $null
     try {
-        if (-not (Invoke-AipAddClone -Url $parsed.Url -Dir $dir)) { return $false }
+        if (-not (Invoke-AipAddClone -Url $parsed.Url -Dir $dir)) { return }
         $script:AipAddName = $Name
-        if (-not (Test-AipAddSkillPath -ClonedRoot $dir -Path $parsed.Path)) { return $false }
+        if (-not (Test-AipAddSkillPath -ClonedRoot $dir -Path $parsed.Path)) { return }
         $skillDir = $script:AipAddSkillDir
         $staging = Join-Path ([IO.Path]::GetTempPath()) ('aip-upd-' + [guid]::NewGuid().ToString('N'))
-        if (-not (Copy-AipSkillTree -SkillDir $skillDir -Dest $staging -Name $Name)) { return $false }
-        if (-not (Write-AipSkillSource -Dest $staging -Source $parsed.Source -Url $parsed.Url -Path $parsed.Path)) { return $false }
+        if (-not (Copy-AipSkillTree -SkillDir $skillDir -Dest $staging -Name $Name)) { return }
+        if (-not (Write-AipSkillSource -Dest $staging -Source $parsed.Source -Url $parsed.Url -Path $parsed.Path)) { return }
         try { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction Stop }
         catch {
             Write-AipError "could not remove the existing skill $Name"
             $script:AipCommandStatus = 1
-            return $false
+            return
         }
         try { Move-Item -LiteralPath $staging -Destination $dest -ErrorAction Stop }
         catch {
             Write-AipError "could not replace the skill $Name"
             $script:AipCommandStatus = 1
-            return $false
+            return
         }
         $staging = $null
         Write-Output "updated $Name in $ProfileName"
-        return $true
     }
     finally {
         if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -2872,25 +2873,25 @@ function Invoke-AipSkillsUpdateOne {
 function Invoke-AipSkillsUpdateAll {
     param([Parameter(Mandatory)][string]$ProfileName)
     $skills = Join-Path (Get-AipProfilePath $ProfileName) 'skills'
-    if (-not (Test-Path -LiteralPath $skills -PathType Container)) { return $true }
+    if (-not (Test-Path -LiteralPath $skills -PathType Container)) { return }
     $dirs = @(Get-ChildItem -LiteralPath $skills -Force | Where-Object { $_.PSIsContainer -and $_.Name -cne '.git' } | Sort-Object -Property Name)
     foreach ($item in $dirs) {
         $sidecar = Join-Path $item.FullName '.aip-source'
         if (Test-Path -LiteralPath $sidecar) {
             if ($null -ne (Read-AipSkillSource $item.FullName)) {
-                if (-not (Invoke-AipSkillsUpdateOne -ProfileName $ProfileName -Name $item.Name)) { return $false }
+                Invoke-AipSkillsUpdateOne -ProfileName $ProfileName -Name $item.Name
+                if ($script:AipCommandStatus -ne 0) { return }
             }
             else {
                 Write-AipError "skill '$($item.Name)' in profile $ProfileName has no recorded source; reinstall it with aip skills add"
                 $script:AipCommandStatus = 1
-                return $false
+                return
             }
         }
         else {
             Write-Output "skipped $($item.Name) in $ProfileName (no recorded source)"
         }
     }
-    return $true
 }
 
 function Invoke-AipSkillsUpdate {
@@ -2949,7 +2950,8 @@ function Invoke-AipSkillsUpdate {
     }
     if ($all) {
         foreach ($pname in $profiles) {
-            if (-not (Invoke-AipSkillsUpdateAll -ProfileName $pname)) { return }
+            Invoke-AipSkillsUpdateAll -ProfileName $pname
+            if ($script:AipCommandStatus -ne 0) { return }
         }
         return
     }
@@ -2966,7 +2968,8 @@ function Invoke-AipSkillsUpdate {
                 $sidecar = Join-Path $dest '.aip-source'
                 if (Test-Path -LiteralPath $sidecar) {
                     if ($null -ne (Read-AipSkillSource $dest)) {
-                        if (-not (Invoke-AipSkillsUpdateOne -ProfileName $pname -Name $name)) { return }
+                        Invoke-AipSkillsUpdateOne -ProfileName $pname -Name $name
+                        if ($script:AipCommandStatus -ne 0) { return }
                         $found = $true
                     }
                     else {
@@ -2986,7 +2989,8 @@ function Invoke-AipSkillsUpdate {
             }
         }
         else {
-            if (-not (Invoke-AipSkillsUpdateOne -ProfileName $profile -Name $name)) { return }
+            Invoke-AipSkillsUpdateOne -ProfileName $profile -Name $name
+            if ($script:AipCommandStatus -ne 0) { return }
         }
     }
 }
@@ -3019,6 +3023,8 @@ function Write-AipSkillsRemoveUsage {
 }
 
 function Invoke-AipSkillsRemoveOne {
+    # Writes the remove line via Write-Output; sets $script:AipCommandStatus on error.
+    # Callers must not wrap this in `if (-not (...))` — that consumes the success line.
     param([Parameter(Mandatory)][string]$ProfileName, [Parameter(Mandatory)][string]$Name)
     $skills = Join-Path (Get-AipProfilePath $ProfileName) 'skills'
     $dest = Join-Path $skills $Name
@@ -3026,21 +3032,20 @@ function Invoke-AipSkillsRemoveOne {
     if ($null -eq $existing) {
         Write-AipError "skill '$Name' is not installed in profile $ProfileName"
         $script:AipCommandStatus = 1
-        return $false
+        return
     }
     if (-not (Test-AipPathUnder -Parent $skills -Child $dest)) {
         Write-AipError "invalid skill name '$Name'"
         $script:AipCommandStatus = 1
-        return $false
+        return
     }
     try { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction Stop }
     catch {
         Write-AipError "could not remove the skill $Name"
         $script:AipCommandStatus = 1
-        return $false
+        return
     }
     Write-Output "removed $Name from $ProfileName"
-    return $true
 }
 
 function Invoke-AipSkillsRemove {
@@ -3105,7 +3110,8 @@ function Invoke-AipSkillsRemove {
             foreach ($pname in $profiles) {
                 $dest = Join-Path (Join-Path (Get-AipProfilePath $pname) 'skills') $name
                 if (Test-Path -LiteralPath $dest) {
-                    if (-not (Invoke-AipSkillsRemoveOne -ProfileName $pname -Name $name)) { return }
+                    Invoke-AipSkillsRemoveOne -ProfileName $pname -Name $name
+                    if ($script:AipCommandStatus -ne 0) { return }
                     $found = $true
                 }
             }
@@ -3116,7 +3122,8 @@ function Invoke-AipSkillsRemove {
             }
         }
         else {
-            if (-not (Invoke-AipSkillsRemoveOne -ProfileName $profile -Name $name)) { return }
+            Invoke-AipSkillsRemoveOne -ProfileName $profile -Name $name
+            if ($script:AipCommandStatus -ne 0) { return }
         }
     }
 }
