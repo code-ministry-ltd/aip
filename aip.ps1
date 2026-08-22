@@ -2724,7 +2724,9 @@ function ConvertFrom-AipAddSource {
 
 function Invoke-AipAddClone {
     # Shallow, non-interactive clone of $Url into $Dir (which must not exist yet).
-    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dir)
+    # core.symlinks=true is required at clone time so Windows materializes
+    # tracked symlinks as reparse points; the path-walk rejects them.
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dir))
     $transport = Get-AipSshTransport $Dir
     if ($null -eq $transport) {
         Write-AipError 'source is unavailable because the configured SSH variant cannot be made non-interactive'
@@ -2740,7 +2742,7 @@ function Invoke-AipAddClone {
     $env:GIT_SSH_COMMAND = $transport.Command
     $env:GIT_SSH_VARIANT = $transport.Variant
     try {
-        $null = Invoke-AipGit clone --quiet --depth 1 -- $Url $Dir 2>$null
+        $null = Invoke-AipGit clone -c core.symlinks=true --quiet --depth 1 -- $Url $Dir 2>$null
         if ($LASTEXITCODE -ne 0) {
             Write-AipError "could not clone $Url; the source repository is unreachable or requires interactive credentials"
             $script:AipCommandStatus = 1
