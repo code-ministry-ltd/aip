@@ -14,7 +14,7 @@ demand:
 
 | File | Owns |
 |---|---|
-| `SKILL.md` | The model and safety rules, the entry branch (setup vs menu), the management menu, `aip add`, skill copying, gotchas |
+| `SKILL.md` | The model and safety rules, the entry branch (setup vs menu), the management menu, `aip skills add`, skill copying, gotchas |
 | `setup.md` | First-run walkthrough: the repository question and its failure paths, profile creation |
 | `audit.md` | Machine audit: inventory skills (all harnesses + `~/.agents/skills`) and settings, copy the user's picks into profiles |
 | `conflicts.md` | Resolving blocked syncs and launches, untracking forbidden paths |
