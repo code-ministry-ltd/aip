@@ -57,6 +57,55 @@ else
 fi
 
 printf '%s\n' "$package_version" >"$install_root/VERSION"
+
+# --- aip profile + management skill -------------------------------------------
+# Creates the 'aip' profile (skeleton committed via aip create) and
+# (re)installs the management skill, marker-managed. Never commits, syncs, or
+# pushes: the skill files land untracked and the next checkpoint or 'aip sync'
+# commits them. Skipped with a warning when Git or the identity is missing.
+setup_aip_profile_and_skill() {
+  local profile_root skill_src skill_dest marker
+  if ! command git --version >/dev/null 2>&1; then
+    printf 'aip: warning: Git was not found, so the aip profile and management skill were not set up. Install Git and re-run the installer.\n' >&2
+    return 0
+  fi
+  if [ -z "$(command git config --get user.name 2>/dev/null)" ] || [ -z "$(command git config --get user.email 2>/dev/null)" ]; then
+    printf 'aip: warning: Git has no user.name or user.email, so the aip profile and management skill were not set up. Configure both (git config --global user.name / user.email) and re-run the installer.\n' >&2
+    return 0
+  fi
+  profile_root=${_AIP_PROFILE_ROOT:-$HOME/agent-profiles}
+  skill_src=$script_directory/skills/aip
+  skill_dest=$profile_root/aip/skills/aip
+  marker=$skill_dest/.aip-managed
+  if [ ! -d "$profile_root/aip" ]; then
+    (
+      export _AIP_PROFILE_ROOT=$profile_root
+      . "$installed_file"
+      aip create aip
+    ) || {
+      printf 'aip: warning: could not create the aip profile; run: aip create aip\n' >&2
+      return 0
+    }
+  fi
+  if [ -f "$marker" ]; then
+    # Managed skill: replace the directory contents from the package (user
+    # edits to a managed skill are overwritten — documented behaviour).
+    command rm -rf -- "$skill_dest" || return 0
+  elif [ -e "$skill_dest" ] || [ -L "$skill_dest" ]; then
+    printf 'aip: note: %s exists without the .aip-managed marker; leaving it untouched.\n' "$skill_dest"
+    return 0
+  fi
+  [ -d "$skill_src" ] || {
+    printf 'aip: warning: the aip management skill is missing from the package at %s\n' "$skill_src" >&2
+    return 0
+  }
+  command mkdir -p -- "$skill_dest" || return 0
+  command cp -R -- "$skill_src/." "$skill_dest/" || return 0
+  printf 'aip %s — installed by the aip installer; re-run the installer or aip update to refresh\n' "$package_version" >"$marker"
+  printf 'Set up the aip profile with the aip management skill (untracked until your next aip sync). Launch a harness with it: aip manage pi\n'
+}
+setup_aip_profile_and_skill
+
 if [ -n "$previous_version" ] && [ "$previous_version" != "$package_version" ]; then
   printf 'Updated aip from %s to %s. Restart your shell or run: %s\n' "$previous_version" "$package_version" "$source_line"
 elif [ -n "$previous_version" ]; then

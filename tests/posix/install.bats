@@ -88,3 +88,79 @@ setup() {
   grep -F 'export KEEP_PROFILE=yes' "$HOME/.profile"
   grep -F '# >>> aip >>>' "$HOME/.profile"
 }
+
+# --- aip profile + management skill setup -------------------------------------
+
+setup_git_identity() {
+  export GIT_CONFIG_GLOBAL="$BATS_TEST_TMPDIR/gitconfig"
+  export GIT_CONFIG_NOSYSTEM=1
+  git config --global user.name 'Aip Tests'
+  git config --global user.email 'aip@example.test'
+}
+
+@test "fresh install creates the aip profile with the managed skill, untracked" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md" ]
+  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/.aip-managed" ]
+  # The profile skeleton is committed by aip create; the skill files are not.
+  git -C "$_AIP_PROFILE_ROOT" rev-parse --verify HEAD >/dev/null
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- 'aip/skills/aip/SKILL.md' 'aip/skills/aip/.aip-managed')" ]
+  # No remote is configured or used, and the machine default is untouched.
+  [ "$(git -C "$_AIP_PROFILE_ROOT" remote)" = '' ]
+  [ ! -e "$_AIP_PROFILE_ROOT/.default" ]
+  [[ "$output" == *"aip manage pi"* ]]
+}
+
+@test "re-running the installer with nothing changed leaves the tree byte-identical" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  bash "$BATS_TEST_DIRNAME/../../install.sh" >/dev/null
+  local before after commits
+  before=$( (cd "$_AIP_PROFILE_ROOT/aip/skills/aip" && find . -type f -print0 | sort -z | xargs -0 md5sum) )
+  commits=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)
+  bash "$BATS_TEST_DIRNAME/../../install.sh" >/dev/null
+  after=$( (cd "$_AIP_PROFILE_ROOT/aip/skills/aip" && find . -type f -print0 | sort -z | xargs -0 md5sum) )
+  [ "$before" = "$after" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)" = "$commits" ]
+}
+
+@test "a user-edited managed skill is refreshed on the next install" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  bash "$BATS_TEST_DIRNAME/../../install.sh" >/dev/null
+  printf 'user edit\n' >>"$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md"
+  bash "$BATS_TEST_DIRNAME/../../install.sh" >/dev/null
+  ! grep -q 'user edit' "$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md"
+  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/.aip-managed" ]
+}
+
+@test "a marker-less skill directory is left untouched with a note" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  bash "$BATS_TEST_DIRNAME/../../install.sh" >/dev/null
+  command rm "$_AIP_PROFILE_ROOT/aip/skills/aip/.aip-managed"
+  printf 'user edit\n' >>"$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md"
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'user edit' "$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md"
+  [[ "$output" == *".aip-managed marker"* ]]
+}
+
+@test "install without a git identity warns and skips profile setup" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  export GIT_CONFIG_GLOBAL="$BATS_TEST_TMPDIR/empty-gitconfig"
+  export GIT_CONFIG_NOSYSTEM=1
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_INSTALL_ROOT/aip.sh" ]
+  [ ! -d "$_AIP_PROFILE_ROOT" ]
+  [[ "$output" == *"user.name"* ]]
+}
+
+@test "the packaged skill has the aip frontmatter and package membership" {
+  [[ "$(sed -n 's/^name: //p' "$BATS_TEST_DIRNAME/../../skills/aip/SKILL.md" | head -n 1)" = "aip" ]]
+  grep -q '"skills/aip"' "$BATS_TEST_DIRNAME/../../package.json"
+}

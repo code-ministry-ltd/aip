@@ -1816,6 +1816,21 @@ Describe 'sync output' {
 }
 
 Describe 'installer' {
+    BeforeEach {
+        # Hermetic profile root + git identity for the profile/skill setup.
+        $env:_AIP_PROFILE_ROOT = Join-Path $TestDrive 'agent-profiles'
+        $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+    }
+
+    AfterEach {
+        $env:_AIP_PROFILE_ROOT = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
     It 'installs per-user without duplicating or replacing unrelated profile content' {
         $installRoot = Join-Path $TestDrive 'installed aip'
         $profilePath = Join-Path $TestDrive 'profile.ps1'
@@ -1896,6 +1911,124 @@ It 'returns a nonzero process status when installation fails' {
             $env:_AIP_INSTALL_ROOT = $null
             $env:_AIP_SHELL_PROFILE = $null
         }
+    }
+
+    It 'fresh install creates the aip profile with the managed skill, untracked' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
+            $LASTEXITCODE | Should -Be 0
+            $root = $env:_AIP_PROFILE_ROOT
+            Test-Path -LiteralPath (Join-Path $root 'aip/skills/aip/SKILL.md') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $root 'aip/skills/aip/.aip-managed') | Should -BeTrue
+            & git -C $root rev-parse --verify HEAD 2>$null | Out-Null
+            $global:LASTEXITCODE | Should -Be 0
+            @(& git -C $root ls-files -- 'aip/skills/aip/SKILL.md' 'aip/skills/aip/.aip-managed').Count | Should -Be 0
+            @(& git -C $root remote).Count | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $root '.default') | Should -BeFalse
+            $output | Should -Match 'aip manage pi'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 're-running the installer with nothing changed leaves the tree byte-identical' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $root = $env:_AIP_PROFILE_ROOT
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            $skillDir = Join-Path $root 'aip/skills/aip'
+            $before = @(Get-ChildItem -LiteralPath $skillDir -Recurse -File | Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash })
+            $commits = @(& git -C $root rev-list --count HEAD)[0]
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            $after = @(Get-ChildItem -LiteralPath $skillDir -Recurse -File | Sort-Object Name | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash })
+            $after | Should -Be $before
+            @(& git -C $root rev-list --count HEAD)[0] | Should -Be $commits
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'a user-edited managed skill is refreshed on the next install' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $skillFile = Join-Path $env:_AIP_PROFILE_ROOT 'aip/skills/aip/SKILL.md'
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            Add-Content -LiteralPath $skillFile -Value 'user edit'
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath $skillFile -Raw) | Should -Not -Match 'user edit'
+            Test-Path -LiteralPath (Join-Path (Split-Path $skillFile) '.aip-managed') | Should -BeTrue
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'a marker-less skill directory is left untouched with a note' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $skillFile = Join-Path $env:_AIP_PROFILE_ROOT 'aip/skills/aip/SKILL.md'
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            Remove-Item -LiteralPath (Join-Path (Split-Path $skillFile) '.aip-managed') -Force
+            Add-Content -LiteralPath $skillFile -Value 'user edit'
+            $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath $skillFile -Raw) | Should -Match 'user edit'
+            $output | Should -Match '\.aip-managed marker'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'install without a git identity warns and skips profile setup' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'empty-gitconfig'
+            $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
+            $LASTEXITCODE | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $installRoot 'aip.ps1') | Should -BeTrue
+            Test-Path -LiteralPath $env:_AIP_PROFILE_ROOT | Should -BeFalse
+            $output | Should -Match 'user\.name'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'the packaged skill has the aip frontmatter and package membership' {
+        (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'skills/aip/SKILL.md') -Raw) | Should -Match '(?m)^name: aip$'
+        (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'package.json') -Raw) | Should -Match '"skills/aip"'
     }
 }
 }

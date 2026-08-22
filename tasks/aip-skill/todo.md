@@ -52,16 +52,24 @@ clean apart from one Low wording gap (rebase --abort exception), also fixed.
 **Depends.** T1 (content references `aip manage`, `aip add`)
 **Files.** `skills/aip/SKILL.md` (+ `skills/aip/references/*` if split)
 
-## T3 — Installer profile+skill creation + packaging (both shells) — M
+## T3 — Installer profile+skill creation + packaging (both shells) — M ✅
 **Desc.** Installer: pre-check `git` + identity (else WARN + exit 0, nothing created);
 source the staged script and `aip create aip` if the profile is missing; copy
 `skills/aip/` into `<root>/aip/skills/aip/` and write `.aip-managed` (version +
 origin). Marker present on update → refresh; absent → leave + note. Never commit,
 sync, or push. Add `skills/aip/` to `package.json` `files`.
 **Acceptance.**
-- [ ] Fresh-install fixture (install.bats with `_AIP_PROFILE_ROOT` injected): `aip` profile exists (skeleton committed), `skills/aip/SKILL.md` + `.aip-managed` present and untracked; no remote configured/used; `.default` untouched.
-- [ ] Re-run with nothing changed → working tree byte-identical, no new commit; user-edited managed skill → overwritten; marker deleted → left untouched + note.
-- [ ] No-git-identity install: exit 0, WARN, aip.sh installed, profiles root not created; `package.json` `files` includes `skills/aip/`.
+- [x] Fresh-install fixture (install.bats with `_AIP_PROFILE_ROOT` injected): `aip` profile exists (skeleton committed), `skills/aip/SKILL.md` + `.aip-managed` present and untracked; no remote configured/used; `.default` untouched.
+- [x] Re-run with nothing changed → working tree byte-identical, no new commit; user-edited managed skill → overwritten; marker deleted → left untouched + note.
+- [x] No-git-identity install: exit 0, WARN, aip.sh installed, profiles root not created; `package.json` `files` includes `skills/aip/`.
+
+Notes: bash sources the installed aip.sh in a subshell for `aip create aip`; ps1
+dot-sources it in the throwaway installer process and points
+`$script:AipProfileRoot` at the target root. ps1 installer: functions must be
+defined before the try block (no hoisting), warnings go through `Write-Error`
+(captured on the error stream) inside a local `ErrorActionPreference=Continue`
+scope, and the try-completes contract reasserts `$global:LASTEXITCODE = 0`
+native git probes clobber.
 **Verify.** `npm run test:posix` (install.bats); `pwsh -NoProfile -File tests/run-powershell.ps1` (CI); `grep -n 'skills/aip' package.json`
 **Depends.** T2; `tasks/cuts` (post-cut `create` layout)
 **Files.** `install.sh`, `install.ps1`, `package.json`, `skills/aip/SKILL.md` (packaged), `tests/posix/install.bats`, `tests/powershell/Aip.Tests.ps1`

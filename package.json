@@ -14,7 +14,8 @@
     "aip.ps1",
     "install.sh",
     "install.ps1",
-    "README.md"
+    "README.md",
+    "skills/aip"
   ],
   "engines": {
     "node": ">=18"
