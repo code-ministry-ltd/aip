@@ -2854,6 +2854,22 @@ function Invoke-AipSkillsUpdateOne {
     }
 }
 
+function Invoke-AipSkillsUpdateAll {
+    param([Parameter(Mandatory)][string]$ProfileName)
+    $skills = Join-Path (Get-AipProfilePath $ProfileName) 'skills'
+    if (-not (Test-Path -LiteralPath $skills -PathType Container)) { return $true }
+    $dirs = @(Get-ChildItem -LiteralPath $skills -Force | Where-Object { $_.PSIsContainer -and $_.Name -cne '.git' } | Sort-Object -Property Name)
+    foreach ($item in $dirs) {
+        if ($null -ne (Read-AipSkillSource $item.FullName)) {
+            if (-not (Invoke-AipSkillsUpdateOne -ProfileName $ProfileName -Name $item.Name)) { return $false }
+        }
+        else {
+            Write-Output "skipped $($item.Name) in $ProfileName (no recorded source)"
+        }
+    }
+    return $true
+}
+
 function Invoke-AipSkillsUpdate {
     param([object[]]$Arguments)
     $profile = $null
@@ -2890,19 +2906,57 @@ function Invoke-AipSkillsUpdate {
     if ($allProfiles -and $null -ne $profile) { Write-AipError '--all-profiles conflicts with the PROFILE argument'; $script:AipCommandStatus = 2; return }
     if ($all -and $names.Count -gt 0) { Write-AipError '--all conflicts with NAME arguments'; Write-AipSkillsUpdateUsage; return }
     if (-not $all -and $names.Count -eq 0) { Write-AipSkillsUpdateUsage; return }
-    if ($all -or $allProfiles) {
-        Write-AipError 'usage: aip skills update PROFILE NAME...'
-        $script:AipCommandStatus = 2
+    $profiles = [System.Collections.Generic.List[string]]::new()
+    if ($allProfiles) {
+        foreach ($n in (Get-AipProfileNames)) { if ($n -cne 'aip') { $profiles.Add($n) } }
+        if ($profiles.Count -eq 0) {
+            if (@(Get-AipProfileNames).Count -gt 0) {
+                Write-AipError 'no user profiles found; --all-profiles skips the aip management profile'
+                $script:AipCommandStatus = 1
+                return
+            }
+            Write-AipError 'no profiles found; create a profile with aip create first'
+            $script:AipCommandStatus = 1
+            return
+        }
+    }
+    else {
+        if (-not (Test-AipImportProfile $profile)) { return }
+        $profiles.Add($profile)
+    }
+    if ($all) {
+        foreach ($pname in $profiles) {
+            if (-not (Invoke-AipSkillsUpdateAll -ProfileName $pname)) { return }
+        }
         return
     }
-    if (-not (Test-AipImportProfile $profile)) { return }
     foreach ($name in $names) {
         if (-not (Test-AipProfileName $name)) {
             Write-AipError "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"
             $script:AipCommandStatus = 1
             return
         }
-        if (-not (Invoke-AipSkillsUpdateOne -ProfileName $profile -Name $name)) { return }
+        if ($allProfiles) {
+            $found = $false
+            foreach ($pname in $profiles) {
+                $dest = Join-Path (Join-Path (Get-AipProfilePath $pname) 'skills') $name
+                if ($null -ne (Read-AipSkillSource $dest)) {
+                    if (-not (Invoke-AipSkillsUpdateOne -ProfileName $pname -Name $name)) { return }
+                    $found = $true
+                }
+                elseif (Test-Path -LiteralPath $dest) {
+                    Write-Output "skipped $name in $pname (no recorded source)"
+                }
+            }
+            if (-not $found) {
+                Write-AipError "skill '$name' has no recorded source in any target profile"
+                $script:AipCommandStatus = 1
+                return
+            }
+        }
+        else {
+            if (-not (Invoke-AipSkillsUpdateOne -ProfileName $profile -Name $name)) { return }
+        }
     }
 }
 

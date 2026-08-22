@@ -3135,3 +3135,98 @@ Describe 'skills update' {
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
     }
 }
+
+Describe 'skills update --all' {
+    BeforeAll {
+        function Get-AddFileUrl {
+            param([Parameter(Mandatory)][string]$Path)
+            $p = $Path.Replace('\', '/')
+            if ($p -match '^[A-Za-z]:/') { return "file:///$p" }
+            return "file://$p"
+        }
+    }
+
+    BeforeEach {
+        $script:AddRoot = Join-Path $TestDrive ('upda-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AddRoot -Force | Out-Null
+        $script:AipProfileRoot = Join-Path $script:AddRoot 'profile root'
+        $script:FakeBin = Join-Path $script:AddRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:AddRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:AIP_PROFILE = $null
+        $env:CLAUDE_CONFIG_DIR = $null
+        $env:CODEX_HOME = $null
+        $env:PI_CODING_AGENT_DIR = $null
+        $env:OPENCODE_CONFIG_DIR = $null
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:AddRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        New-TestProfile work
+        New-TestProfile suit
+        $script:AddSrc = Join-Path $script:AddRoot 'source'
+        & git init -q $script:AddSrc
+        $null = New-Item -ItemType Directory -Path (Join-Path $script:AddSrc 'alpha'), (Join-Path $script:AddSrc 'beta') -Force
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'beta/SKILL.md') -Value "---`nname: beta`n---`n# Beta`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc add -A
+        & git -C $script:AddSrc commit -q -m 'source'
+    }
+
+    AfterEach {
+        $env:AIP_PROFILE = $null
+        $env:FAKE_CAPTURE = $null
+        $env:FAKE_EXIT_STATUS = $null
+        $env:GIT_CONFIG_GLOBAL = $null
+        $env:GIT_CONFIG_NOSYSTEM = $null
+    }
+
+    It 'refreshes sidecar-backed skills and notes a bare directory' {
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#beta" *> $null
+        $orphan = Join-Path $script:AipProfileRoot 'work/skills/orphan'
+        $null = New-Item -ItemType Directory -Path $orphan -Force
+        Set-Content -LiteralPath (Join-Path $orphan 'SKILL.md') -Value "---`nname: orphan`n---`n# Orphan`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha v2`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'beta/SKILL.md') -Value "---`nname: beta`n---`n# Beta v2`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc commit -q -am 'v2'
+        $out = (aip skills update work --all 2>&1) -join "`n"
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/beta/SKILL.md') -Raw) | Should -Match 'Beta v2'
+        (Get-Content -LiteralPath (Join-Path $orphan 'SKILL.md') -Raw) | Should -Match 'Orphan'
+        $out | Should -Match 'orphan'
+    }
+
+    It 'is sidecar-keyed for --all-profiles NAME' {
+        New-TestProfile extra
+        aip skills add work "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        aip skills add suit "$(Get-AddFileUrl $script:AddSrc)#alpha" *> $null
+        $extra = Join-Path $script:AipProfileRoot 'extra/skills/alpha'
+        $null = New-Item -ItemType Directory -Path $extra -Force
+        Set-Content -LiteralPath (Join-Path $extra 'SKILL.md') -Value "---`nname: alpha`n---`n# Extra`n" -Encoding utf8NoBOM
+        Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha v2`n" -Encoding utf8NoBOM
+        & git -C $script:AddSrc commit -q -am 'v2'
+        aip skills update --all-profiles alpha *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'suit/skills/alpha/SKILL.md') -Raw) | Should -Match 'Alpha v2'
+        (Get-Content -LiteralPath (Join-Path $extra 'SKILL.md') -Raw) | Should -Match 'Extra'
+    }
+
+    It 'errors when --all-profiles NAME finds no sidecar' {
+        $dest = Join-Path $script:AipProfileRoot 'work/skills/alpha'
+        $null = New-Item -ItemType Directory -Path $dest -Force
+        Set-Content -LiteralPath (Join-Path $dest 'SKILL.md') -Value "---`nname: alpha`n---`n# Local`n" -Encoding utf8NoBOM
+        aip skills update --all-profiles alpha *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        (Get-Content -LiteralPath (Join-Path $dest 'SKILL.md') -Raw) | Should -Match 'Local'
+    }
+
+    It 'rejects --all plus a NAME as usage' {
+        aip skills update work --all alpha *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match 'usage: aip skills update'
+    }
+}
