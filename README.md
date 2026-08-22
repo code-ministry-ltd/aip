@@ -17,7 +17,7 @@ aip keeps **every profile in one Git repository** — the *profiles repository*,
 
 ## Requirements
 
-- Node.js 18 or newer (aip is distributed through npm; every supported harness already depends on Node).
+- Node.js 18 or newer, needed only for the one-shot npx install and `aip update` — the installed aip itself runs on just Git (and every supported harness depends on Node anyway).
 - Git, with `user.name` and `user.email` configured.
 - macOS, Linux or WSL with Bash or Zsh — or native Windows with PowerShell 7.3+, Git for Windows, and Developer Mode enabled (for the relative symbolic links aip creates). aip configures `core.symlinks` and `core.longpaths` itself, so no manual Git setup is needed.
 - Any of `claude`, `codex`, `pi` or `opencode` that you want to use.
@@ -77,7 +77,7 @@ bash install.sh
 Create a profile and make it your everyday profile:
 
 ```sh
-aip create work --outfit suit   # AGENTS.md + skills/ + per-harness settings
+aip create work                 # AGENTS.md + skills/ + per-harness settings
 aip default work                # used when nothing more specific is selected
 ```
 
@@ -137,8 +137,7 @@ aip default work
 ├── claude/CLAUDE.md           # imports ../AGENTS.md, then Claude additions
 ├── codex/instructions.md      # passed as developer_instructions
 ├── pi/APPEND_SYSTEM.md        # Pi additions
-├── opencode/                  # common instructions only in v1
-└── .aip/outfit                # the label shown by aip list
+└── opencode/                  # common instructions only in v1
 ```
 
 Inside each profile, relative symbolic links expose `AGENTS.md` and `skills/` at each harness's native path (for example `work/codex/skills → ../skills`). You edit the shared files once; every harness sees the change. Clients continue to own settings, plugins, MCP registrations, authentication and other native files; aip does not translate those formats or alter project-local configuration.
@@ -169,7 +168,7 @@ With nothing selected, aip tells you what to run instead of guessing:
 no profile selected; run 'aip create NAME' then 'aip use NAME'
 ```
 
-`aip` (no arguments) shows the resolved profile, which rule selected it, the outfit, the path, the repository's Git state, and harness availability.
+`aip` (no arguments) shows the resolved profile, which rule selected it, the path, the repository's Git state, and harness availability.
 
 ## Git synchronisation
 
@@ -179,8 +178,6 @@ aip checkpoints before every harness launch and after every harness exit, and al
 - if a remote is connected, it fetches, rebases, and pushes the profiles repository;
 - if the remote is unreachable, it **warns and still launches** from your committed local profile — the next invocation retries;
 - if the remote contains a conflict, aip **blocks the launch** and tells you exactly which profile and paths conflict. It never auto-resolves.
-
-While a sync is talking to the remote, a small spinner (`|`, `/`, `-`, `\`) animates on terminals so you can see it working; it is cleared before the result line. The spinner only runs on a terminal — set `AIP_ANIMATION=always` to force it when output is redirected, or `AIP_ANIMATION=off` to disable it entirely.
 
 Because all profiles share one repository, `aip sync` has no profile argument — it syncs everything. (Passing a profile name is a hard error with a hint, so a muscle-memory `aip sync work` fails loudly.)
 
@@ -219,10 +216,10 @@ Files are mirrored into the matching profile subdirectory, so
 variables are deliberately **not** used to find the source: aip itself sets them to a
 profile when launching a harness, so they cannot name your pre-aip global config.
 
-In a terminal, `aip import pi` opens an interactive picker (arrow keys move, spacebar
-toggles files, enter confirms) that lets you navigate subdirectories and select files,
-then choose which profiles to copy into. Import never commits anything: files land on
-disk, and the next `aip sync` checkpoint handles Git as usual. When a destination
+`aip import pi auth.json skills/reviewer/SKILL.md --profile work` copies the named
+files from the harness's machine-local configuration into the named profiles
+(`--all-profiles` targets every profile). Import never commits anything: files land
+on disk, and the next `aip sync` checkpoint handles Git as usual. When a destination
 already exists you are prompted per file (`o` overwrite, `s` skip, `a` all overwrite,
 `n` none skip, `q` quit); `--force` and `--skip-existing` skip the prompts, and
 `--dry-run` shows what would be copied. Destinations that are aip-managed profile
@@ -230,9 +227,6 @@ links (`pi/AGENTS.md`, `skills`, and equivalents) are never overwritten. After t
 copy, aip warns about destinations the next checkpoint would track (i.e. not covered
 by the profile `.gitignore`) — credential files like `pi/auth.json` are already
 ignored by the profile scaffold and stay off the remote.
-
-The interactive picker requires Node.js (already present if you installed via npm);
-the non-interactive form works with just Git.
 
 ## Pass-through of machine-local configuration
 
@@ -320,13 +314,12 @@ A private remote is not a substitute for excluding credentials.
 
 ```text
 aip                              status
-aip create NAME [--outfit OUTFIT]  create a new profile
-aip list                           list profiles, outfits, and selection
+aip create NAME                create a new profile
+aip list                       list profiles and selection
 aip which [NAME]                   show the profile that would be selected
 aip default [NAME]                 show or set the default profile
 aip use NAME                       select NAME for this shell only
 aip local [NAME | --remove]        set or clear the per-directory marker
-aip outfit NAME OUTFIT             set a profile's outfit (label)
 aip clone SOURCE TARGET            copy a profile into a new profile
 aip delete NAME [--force]          delete a profile
 aip sync                           checkpoint and sync every profile
@@ -386,8 +379,8 @@ The two implementations (`aip.sh`, `aip.ps1`) are required to be behaviourally i
 
 Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed directory:
 
-- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh`, `VERSION`, and `bin/aip-picker.js`)
-- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1`, `VERSION`, and `bin/aip-picker.js`)
+- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`)
+- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
 - PowerShell on macOS/Linux: `~/.local/share/aip/`
 
 The profiles repository in `~/agent-profiles` is yours — keep it, move it, or delete it.

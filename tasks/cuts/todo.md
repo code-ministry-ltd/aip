@@ -64,13 +64,13 @@ CI build + node-test steps; remove the picker copy blocks in `install.sh`/`insta
 **Depends.** T3
 **Files.** `src/picker.mjs`, `src/picker-state.mjs`, `bin/aip-picker.js`, `tests/node/picker-state.test.mjs`, `package.json`, `.github/workflows/test.yml`, `install.sh`, `install.ps1`
 
-## T5 — README cleanup — XS
+## T5 — README cleanup — XS ✅
 **Desc.** Remove every outfit/spinner/picker mention from the README; update
 "Requirements" (Node no longer required for installed use) and the import section
 (explicit files only, no interactive picker).
 **Acceptance.**
-- [ ] `grep -rin 'picker\|spinner\|outfit\|AIP_ANIMATION' aip.sh aip.ps1 install.sh install.ps1 README.md` → zero matches.
-- [ ] README Requirements states Node is needed only for npx one-shot use and `aip update`.
+- [x] `grep -rin 'picker\|spinner\|outfit\|AIP_ANIMATION' aip.sh aip.ps1 install.sh install.ps1 README.md` → zero matches.
+- [x] README Requirements states Node is needed only for npx one-shot use and `aip update`.
 **Verify.** `grep -rin 'picker\|spinner\|outfit\|AIP_ANIMATION' aip.sh aip.ps1 install.sh install.ps1 README.md`
 **Depends.** T4
 **Files.** `README.md`
