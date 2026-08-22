@@ -226,6 +226,10 @@ name: beta
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not clone"* ]]
   [[ "$output" != *s3cret* ]]
+  run aip add work "http://user:s3cret@example.test/nope.git"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unsupported source URL"* ]]
+  [[ "$output" != *s3cret* ]]
 }
 
 @test "add --all-profiles skips the aip management profile" {
