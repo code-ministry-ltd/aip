@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.4.0'
+_AIP_VERSION='0.5.0'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2

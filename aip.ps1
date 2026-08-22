@@ -9,7 +9,7 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = $HOME
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.4.0'
+$script:AipVersion = '0.5.0'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 

@@ -74,16 +74,19 @@ native git probes clobber.
 **Depends.** T2; `tasks/cuts` (post-cut `create` layout)
 **Files.** `install.sh`, `install.ps1`, `package.json`, `skills/aip/SKILL.md` (packaged), `tests/posix/install.bats`, `tests/powershell/Aip.Tests.ps1`
 
-## T4 — README + install message + version bump `0.5.0` — S
+## T4 — README + install message + version bump `0.5.0` — S ✅
 **Desc.** README: `aip manage` as optional post-install step, the `aip` profile +
 managed-skill behavior, and the requirements note (already updated in cuts). Install
 output (both installers) mentions `aip manage pi` as an optional next step. Bump
 `0.4.0` → `0.5.0` in `aip.sh:4`, `aip.ps1:12`, `package.json`, and the drift
 assertions (`tests/posix/smoke.bats:12`, `tests/posix/npm.bats`, `Aip.Tests.ps1:104`).
 **Acceptance.**
-- [ ] `aip version` → `aip 0.5.0` in both shells; drift assertions updated and green.
-- [ ] Install output mentions `aip manage pi`; README documents the `aip` profile and skill refresh contract.
-- [ ] Full suite green (bats + Pester).
+- [x] `aip version` → `aip 0.5.0` in both shells; drift assertions updated and green.
+- [x] Install output mentions `aip manage pi`; README documents the `aip` profile and skill refresh contract.
+- [x] Full suite green (bats + Pester).
+
+Note: the `aip manage pi` mention ships in the installer's profile/skill setup
+line (both shells, T3), so it appears exactly when the setup actually ran.
 **Verify.** `npm run test:posix`; `pwsh -NoProfile -File tests/run-powershell.ps1` (CI); `grep -rn "0\.5\.0" aip.sh aip.ps1 package.json tests/posix/smoke.bats tests/posix/npm.bats tests/powershell/Aip.Tests.ps1`
 **Depends.** T3
 **Files.** `aip.sh`, `aip.ps1`, `install.sh`, `install.ps1`, `package.json`, `README.md`, `tests/posix/smoke.bats`, `tests/posix/npm.bats`, `tests/powershell/Aip.Tests.ps1`

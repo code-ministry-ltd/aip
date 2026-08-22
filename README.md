@@ -41,13 +41,35 @@ npx -y @code-ministry/aip version   # confirms the package resolves
 
 Restart your shell, and you're ready. Every command supports `aip help` (or `aip --help`, `aip -h`) for the full reference.
 
+### The aip profile
+
+If Git is installed and has a `user.name`/`user.email` identity, the installer
+does one more thing: it creates an `aip` profile in your profiles repository
+and installs the **aip management skill** into it. The skill directory carries
+a `.aip-managed` marker; re-running the installer refreshes the skill from the
+package (marker present → refreshed; absent → left untouched with a note). The
+skill files land untracked, like `aip import` output — your next `aip sync`
+commits them. The installer never commits, syncs, or pushes, and never sets
+`aip` as your default profile.
+
+The `aip` profile is for agents: a harness launched from it works from the
+management skill, which guides first-run setup, skill installs, and conflict
+resolution by calling the CLI:
+
+```sh
+aip manage pi     # launch pi (or claude/codex/opencode) with the aip profile
+```
+
+Without Git or a Git identity, the installer warns and skips this step; fix
+the identity and re-run the installer.
+
 ### Updating
 
 ```sh
 aip update
 ```
 
-Re-runs the idempotent installer against the latest published version and reports the version change (for example `Updated aip from 0.2.0 to 0.3.0`). The installed copy keeps working offline until you update it.
+Re-runs the idempotent installer against the latest published version and reports the version change (for example `Updated aip from 0.2.0 to 0.3.0`), including a refresh of the `aip` profile's management skill when it is marker-managed. The installed copy keeps working offline until you update it.
 
 ### Without installing
 
