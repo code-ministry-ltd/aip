@@ -9,6 +9,7 @@ setup() {
   # A skill-source repository, cloned via file:// (the local-skill test vector).
   export TEST_SRC="$BATS_TEST_TMPDIR/source"
   git init -q "$TEST_SRC"
+  git -C "$TEST_SRC" config core.symlinks true
   mkdir -p "$TEST_SRC/alpha" "$TEST_SRC/pack/beta" "$TEST_SRC/gamma" "$TEST_SRC/dup/alpha" "$TEST_SRC/Bad-Name"
   printf -- '---\nname: alpha\n---\n# Alpha\n' >"$TEST_SRC/alpha/SKILL.md"
   printf 'helper\n' >"$TEST_SRC/alpha/helper.sh"
@@ -45,7 +46,7 @@ name: beta
   aip add work "file://$TEST_SRC#alpha" >/dev/null
   [ -f "$_AIP_PROFILE_ROOT/work/skills/alpha/SKILL.md" ]
   [ -f "$_AIP_PROFILE_ROOT/work/skills/alpha/helper.sh" ]
-  [ "$(stat -c '%a' "$_AIP_PROFILE_ROOT/work/skills/alpha/helper.sh")" = '755' ]
+  [ "$(stat -c '%a' "$_AIP_PROFILE_ROOT/work/skills/alpha/helper.sh" 2>/dev/null || stat -f '%Lp' "$_AIP_PROFILE_ROOT/work/skills/alpha/helper.sh")" = '755' ]
 }
 
 @test "add with a repo-root source names the skill after the repository" {

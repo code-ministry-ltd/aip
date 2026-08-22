@@ -2568,13 +2568,14 @@ _aip_add_parse_source() {
 }
 
 _aip_add_clone() {
-  # $1 url, $2 directory (must not exist yet)
+  # $1 url, $2 directory (must not exist yet). core.symlinks=true at clone
+  # time so Windows materializes tracked symlinks for the path-walk reject.
   local url=$1 dir=$2
   if ! _aip_prepare_ssh_transport "$dir"; then
     _aip_error 'source is unavailable because the configured SSH variant cannot be made non-interactive'
     return 1
   fi
-  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone --quiet --depth 1 -- "$url" "$dir" 2>/dev/null; then
+  if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone -c core.symlinks=true --quiet --depth 1 -- "$url" "$dir" 2>/dev/null; then
     _aip_error "could not clone $url; the source repository is unreachable or requires interactive credentials"
     return 1
   fi

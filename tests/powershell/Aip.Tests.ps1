@@ -2027,7 +2027,8 @@ It 'returns a nonzero process status when installation fails' {
     }
 
     It 'the packaged skill has the aip frontmatter and package membership' {
-        (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'skills/aip/SKILL.md') -Raw) | Should -Match '(?m)^name: aip$'
+        # Line-wise so a Windows CRLF checkout still matches; (?m)$ does not.
+        (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'skills/aip/SKILL.md')) | Should -Contain 'name: aip'
         (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'package.json') -Raw) | Should -Match '"skills/aip"'
     }
 }
@@ -2295,6 +2296,7 @@ Describe 'add' {
             # The skill-source repository, cloned via file:// (the local-skill test vector).
             $script:AddSrc = Join-Path $script:AddRoot 'source'
             & git init -q $script:AddSrc
+            & git -C $script:AddSrc config core.symlinks true
             $null = New-Item -ItemType Directory -Path (Join-Path $script:AddSrc 'alpha'), (Join-Path $script:AddSrc 'pack/beta'), (Join-Path $script:AddSrc 'gamma'), (Join-Path $script:AddSrc 'dup/alpha'), (Join-Path $script:AddSrc 'Bad-Name') -Force
             Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/SKILL.md') -Value "---`nname: alpha`n---`n# Alpha`n" -Encoding utf8NoBOM
             Set-Content -LiteralPath (Join-Path $script:AddSrc 'alpha/helper.sh') -Value 'helper' -Encoding utf8NoBOM
@@ -2359,7 +2361,10 @@ Describe 'add' {
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/SKILL.md') | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh') | Should -BeTrue
         if (-not $IsWindows) {
-            & stat -c '%a' (Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh') | Should -Be '755'
+            $helper = Join-Path $script:AipProfileRoot 'work/skills/alpha/helper.sh'
+            $mode = & stat -c '%a' $helper 2>$null
+            if ($LASTEXITCODE -ne 0) { $mode = & stat -f '%Lp' $helper }
+            $mode | Should -Be '755'
         }
     }
 
