@@ -86,41 +86,130 @@ doubt, call the CLI instead of improvising.
 ## First-run setup
 
 Run this when the user just installed aip, or when `aip list` shows no
-profiles, or only the `aip` profile.
+profiles, or only the `aip` profile. If user profiles already exist (for
+example a reinstall), skip the profile-creation steps and continue at the
+audit (step 5).
 
-1. `aip list` — show what exists and what is selected.
-2. If no user profiles exist (zero profiles, or only `aip`), propose two
-   profiles (for example `work` and `personal`), create them with
-   `aip create work` / `aip create personal`, or whatever names the user
-   prefers.
-3. Audit the machine's existing harness config without reading secrets —
+1. `aip list` and `aip remote show` — show what exists, what is selected, and
+   whether a remote is already connected.
+2. If no user profiles exist (zero profiles, or only `aip`) and step 1's
+   `aip remote show` printed no URL, ask *before creating anything* whether
+   the user already has a shared profiles repository — from another machine of
+   theirs — or whether they would like to start from a new empty repository.
+   If a remote is already connected, skip the question and go to step 3's
+   "remote is already connected" bullet.
+3. Resolve the remote question before creating anything — a connection brings
+   existing profiles, and local profiles created first would shadow them:
+   - They give a URL and no remote is connected → run `aip remote add <url>`.
+     The installer already created the profiles repository (with the `aip`
+     profile), so this usually attaches origin and syncs — every profile on
+     the remote then appears locally; a new empty remote is instead published
+     from this machine (only when the profiles repository already exists
+     locally — the usual case; see the failure note below). It only *clones*
+     when the repository is missing for any reason (the installer skips it
+     without Git or a Git identity — with no Git at all, install or repair
+     Git first; `aip remote add` needs it too).
+   - A remote is already connected, or `aip remote add` refuses with "origin
+     is already configured" → confirm which remote they want. If it is the
+     same, first check whether a previous attach completed: `git -C <profiles
+     root> rev-parse --abbrev-ref '@{upstream}'` — if it succeeds, run
+     `aip sync` to finish (if a rebase is in progress, resolve it per
+     Resolving conflicts first — that procedure finishes the rebase and then
+     runs `aip sync`); if it fails, the attach was incomplete — but if the
+     repository has no commits yet (`git -C <profiles root> rev-parse
+     --verify HEAD` fails), do not re-add now, continue to step 4 and re-add
+     after the first profile is created, otherwise `aip remote remove` (with
+     their approval) and `aip remote add` the URL again. If the remote
+     changes, `aip remote remove` (with their approval) and `aip remote add`
+     the new URL. Do not retry `aip remote add` blindly — a failed run can
+     leave `origin` half-set, which is exactly this refusal.
+   - A repository may exist (for example on their other machine) but they
+     don't have its URL → tell them how to find it (`aip remote show` on the
+     other machine, `git -C <that machine's profiles root> remote get-url
+     origin` — read-only and always fine — or the remote host's web UI), then
+     end the setup here: do not create profiles now, fresh ones would diverge
+     from the existing ones. When they have the URL, resume at this step.
+   - No repository at all, or they decline → continue to step 4.
+   - If `aip remote add` reports a conflict or leaves a rebase in progress,
+     stop and resolve it (see Resolving conflicts) before continuing.
+   - If it fails on a URL for a repository they are creating new: show the
+     user the error first (a broken key or token needs repair before any
+     retry), then check `git -C <profiles root> rev-parse --abbrev-ref
+     '@{upstream}'`: if it succeeds, recovery is `aip sync` (or any later
+     checkpoint); if it fails, the attach was incomplete — if the repository
+     has no commits yet (`rev-parse --verify HEAD` fails), continue to step 4
+     and re-add after the first profile is created, otherwise `aip remote
+     remove` (with their approval) and `aip remote add <url>` again; if that
+     fails with the same error again, stop and report it rather than looping.
+     If the clone path ran because the URL pointed at a repository that does
+     not exist, nothing was configured (the root is a plain empty directory)
+     — fix the URL or create the remote and retry `aip remote add`. Continue
+     to step 4 either way — the profiles are published once the connection
+     works.
+   - If it fails on their existing shared repository, show the user the error
+     first — a fetch/permission failure usually means the URL, an SSH key, or a
+     token needs repair, and once origin is set see the refusal bullet above —
+     then, if they want to proceed without it, ask whether they want
+     local-only profiles: on yes, `aip remote remove` (with their approval)
+     so the machine is genuinely local-only, then continue to step 4; do not
+     create profiles while a known-bad origin is still set, because the new
+     profiles would diverge from the remote's.
+4. Re-run `aip list`. If the profiles root is missing or not a Git repository
+   (check `<profiles root>/.git`), diagnose before creating anything: with
+   Git or the Git identity missing, install or repair them and re-run the
+   installer (`aip update` — it creates the repository and the `aip` profile);
+   if an `aip remote add` was just attempted, its clone failed — fix the URL
+   or the remote and retry it (it configured nothing); if none was attempted,
+   no repair is needed — `aip create` initialises the repository itself. If
+   still no user profiles exist (zero, or only `aip`) and step 3 did not end
+   the setup, propose two profiles (for example `work` and `personal`), create
+   them with `aip create work` / `aip create personal`, or whatever names the
+   user prefers. If `aip create` fails on a missing Git identity, stop and
+   tell the user to configure `user.name`/`user.email`, then re-run
+   `aip create` (`aip create` itself initialises the repository, so nothing
+   else is missing).
+5. Audit the machine's existing harness config without reading secrets —
    list names only, one level deep: `ls ~/.claude ~/.codex ~/.pi/agent
-   ~/.config/opencode`. Never open auth, credentials, history, session, or log
-   files.
-4. Offer to import what is worth sharing: settings files and instruction files
-   (custom commands/agents/prompts usually live under the pass-through-linked
-   directories below and are already shared machine-locally). `aip import`
-   takes explicit file paths, not whole directories. Always dry-run first,
-   then copy for real:
+   ~/.config/opencode`. An error on one of these paths just means that
+   harness is not installed. Never open auth, credentials, history, session,
+   or log files.
+6. Offer to import what is worth sharing: settings files (for example
+   `settings.json`, `config.toml`, `opencode.json`) — but not the per-harness
+   instruction files (`CLAUDE.md`, `instructions.md`, `APPEND_SYSTEM.md`):
+   those are profile-owned; `claude/CLAUDE.md` in particular must start with
+   `@../AGENTS.md` or every later checkpoint fails, so importing a user's real
+   `CLAUDE.md` silently breaks every launch until it is fixed — fold shared
+   instructions into the profile's `AGENTS.md` and edit the per-harness files
+   directly; if the user insists on importing one, do it and then restore that
+   first line. (Custom commands/agents/prompts usually live in directories aip
+   pass-through-links, for example `~/.claude/commands/`, and are already
+   shared machine-locally.) `aip import` takes file paths relative to the
+   harness's config directory. Always dry-run first, then copy for real — the
+   `work` in these examples is any profile that exists (`aip list`; use
+   `--all-profiles` or `--profile work,personal` for several):
    `aip import claude settings.json --profile work --dry-run`
    `aip import claude settings.json --profile work`
    Two cautions: files that live *under a directory aip pass-through-links*
-   (for example `~/.claude/commands/…` or `~/.claude/agents/…`) are already
-   visible to every profile through that link — do not import them (an
-   overwrite through such a link fails with a "same file" copy error, because
-   the destination resolves to the machine-local source); and for other
-   existing destinations, ask the user, then use `--force` (overwrite — over a
+   (for example `~/.claude/commands/foo.md`) resolve through that link to the
+   machine-local source, so importing one fails with a "same file" copy error
+   — do not import them, the link already shares them. And for other existing
+   destinations, ask the user, then use `--force` (overwrite — over a
    pass-through *file* link this replaces the link with a profile-owned copy)
    or `--skip-existing` (keep).
    aip refuses to overwrite its own managed links and warns about imported
-   files the profile `.gitignore` does not cover — those stay untracked until
+   files the profile `.gitignore` does not cover — those only sync once
    deliberately tracked; credential files like `pi/auth.json` are gitignored by
    the profile scaffold and stay machine-local.
-5. Set the everyday profile: `aip default work` (or whatever the user picks).
-6. If the user has a shared repository, offer `aip remote add <url>` — an
-   empty remote works, and a fresh machine with the same URL clones all
-   profiles.
-7. Remind them that harnesses are launched through the wrappers (`claude`,
+7. Set the everyday profile: `aip default NAME`, where NAME is the profile the
+   user picks from `aip list` (`work` above is just an example name). If no
+   profile was created, the only selectable one is `aip` — say so, and that
+   this setup can be re-run later.
+   If a remote is connected, offer `aip sync` to publish what was just
+   created. If no remote is connected yet and the user wants their profiles on
+   other machines, offer `aip remote add <url>` — a new empty remote works,
+   and a machine without a profiles repository yet gets every profile from the
+   same URL.
+8. Remind them that harnesses are launched through the wrappers (`claude`,
    `codex`, `pi`, `opencode`) or `aip run [NAME] HARNESS [ARGS...]`.
 
 ## Installing skills (`aip add`)
@@ -163,11 +252,13 @@ creating a whole new profile from an existing one.
 ## Resolving conflicts
 
 aip blocks a launch or sync when the remote and local changed the same path.
-Its message names the repository — call that path `<root>` below.
+Its message names the repository — call that path `<root>` below. If there is
+no block message to read (for example you were told a rebase is in progress),
+`<root>` is the profiles root itself.
 
-1. Read the block message, then inspect read-only: `git -C <root> status` — a
-   rebase conflict leaves the rebase in progress with the conflicted files
-   listed.
+1. Read the block message if there is one, then inspect read-only:
+   `git -C <root> status` — a rebase conflict leaves the rebase in progress
+   with the conflicted files listed.
 2. Show the user the differing content of each conflicted file (local vs
    remote) and explain in plain terms what each side changed.
 3. Ask which outcome they want per file: keep local, take remote, or a merge
