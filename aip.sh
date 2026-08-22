@@ -2830,7 +2830,7 @@ _aip_remote_add() {
       _aip_error 'remote is unavailable because the configured SSH variant cannot be made non-interactive'
       return 1
     fi
-    if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone --quiet -- "$url" "$root" 2>/dev/null; then
+    if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone -c core.symlinks=true --quiet -- "$url" "$root" 2>/dev/null; then
       _aip_error "could not clone $url into $root; the remote must be a profiles repository created by aip"
       return 1
     fi

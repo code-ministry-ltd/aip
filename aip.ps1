@@ -1992,7 +1992,7 @@ function Invoke-AipRemoteAdd {
         $env:GIT_SSH_COMMAND = $transport.Command
         $env:GIT_SSH_VARIANT = $transport.Variant
         try {
-            $null = Invoke-AipGit clone --quiet -- $Url $root
+            $null = Invoke-AipGit clone -c core.symlinks=true --quiet -- $Url $root
             if ($LASTEXITCODE -ne 0) {
                 Write-AipError "could not clone $Url into $root; the remote must be a profiles repository created by aip"
                 $script:AipCommandStatus = 1
