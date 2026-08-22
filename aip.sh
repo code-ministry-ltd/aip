@@ -290,8 +290,38 @@ _aip_validate_name() {
   local value=${1-}
   [ -n "$value" ] || return 1
   case $value in *$'\n'*|*$'\r'*) return 1 ;; esac
-  LC_ALL=C printf '%s\n' "$value" | command grep -Eq '^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$' || return 1
+  printf '%s\n' "$value" | LC_ALL=C command grep -Eq '^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$' || return 1
   case $value in con|prn|aux|nul|com[1-9]|lpt[1-9]) return 1 ;; esac
+}
+
+_aip_delete_confirm_accepts() {
+  case ${1-} in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+_aip_has_disallowed_control() {
+  # Reject U+0000–U+001F, U+007F, U+0080–U+009F by decoded UTF-8 codepoint.
+  # Continuation bytes such as 0x85 inside emoji must not match.
+  printf '%s' "$1" | LC_ALL=C command od -An -t u1 -v | command awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        b = $i + 0
+        if (need == 0) {
+          if (b <= 127) { cp = b; need = 0 }
+          else if (b >= 194 && b <= 223) { cp = b - 192; need = 1 }
+          else if (b >= 224 && b <= 239) { cp = b - 224; need = 2 }
+          else if (b >= 240 && b <= 244) { cp = b - 240; need = 3 }
+          else { invalid = 1 }
+        } else {
+          if (b < 128 || b > 191) { invalid = 1 }
+          else { cp = cp * 64 + (b - 128); need-- }
+        }
+        if (need == 0) {
+          if (cp <= 31 || cp == 127 || (cp >= 128 && cp <= 159)) invalid = 1
+        }
+      }
+    }
+    END { if (invalid) exit 0; exit 1 }
+  '
 }
 
 _aip_find_utf8_locale() {
@@ -428,6 +458,30 @@ _aip_normalize_path() {
     fi
   done
   printf '/%s\n' "$out"
+}
+
+_aip_path_is_under() {
+  # $1 root, $2 candidate. Both must be absolute. Lexical only — no filesystem access.
+  local root candidate
+  root=$(_aip_normalize_path "$1") || return 1
+  candidate=$(_aip_normalize_path "$2") || return 1
+  case $candidate in
+    "$root"|"$root"/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_aip_redact_url() {
+  # Display-only: strip user:pass@ / URL userinfo. scp-style git@host: is left alone.
+  local url=$1
+  case $url in
+    *://*:*@*)
+      printf '%s\n' "$url" | command sed -E 's#(://)[^/@]+:[^/@]*@#\1#'
+      ;;
+    *)
+      printf '%s\n' "$url"
+      ;;
+  esac
 }
 
 _aip_resolve_path() {
@@ -727,6 +781,7 @@ _aip_write_profile_files() {
     '# aip-managed credential and runtime exclusions' \
     '.env' '.env.*' '!.env.example' '*.pem' '*.key' '*.p12' '*.pfx' \
     '.netrc' '.npmrc' '.pypirc' 'id_rsa' 'id_dsa' 'id_ecdsa' 'id_ed25519' 'node_modules/' \
+    '**/.credentials.json' '**/auth.json' \
     'claude/.credentials.json' 'claude/history.jsonl' 'claude/projects/' 'claude/session-env/' 'claude/shell-snapshots/' 'claude/statsig/' 'claude/todos/' 'claude/debug/' 'claude/cache/' 'claude/logs/' 'claude/file-history/' \
     'codex/auth.json' 'codex/history.jsonl' 'codex/sessions/' 'codex/archived_sessions/' 'codex/log/' 'codex/logs/' 'codex/cache/' 'codex/*.db' 'codex/*.db-*' 'codex/*.sqlite' 'codex/*.sqlite-*' \
     'pi/auth.json' 'pi/sessions/' 'pi/logs/' 'pi/cache/' \
@@ -1043,7 +1098,7 @@ _aip_delete() (
     printf "Delete profile '%s' at %s%s? [y/N] " "$name" "$profile_path" "${risks:+ ($risks)}" >&2
     local answer
     IFS= read -r answer || return 1
-    case $answer in y|Y|yes|YES) ;; *) _aip_error 'deletion cancelled'; return 1 ;; esac
+    _aip_delete_confirm_accepts "$answer" || { _aip_error 'deletion cancelled'; return 1; }
   fi
 
   default_name=$(_aip_read_name_file "$_AIP_PROFILE_ROOT/.default" 2>/dev/null) || default_name=
@@ -1374,7 +1429,8 @@ _aip_is_harness() {
 }
 
 _aip_is_command() {
-  [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
+    [ "${1-}" = --help ] || [ "${1-}" = -h ] || [ "${1-}" = help ] ||
+    [ "${1-}" = --version ] || [ "${1-}" = -v ] ||
     [ "${1-}" = add ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
@@ -1439,6 +1495,7 @@ _aip_is_forbidden_path() {
   case $lower in
     .env.example|*/.env.example) return 1 ;;
     .env|.env.*|*/.env|*/.env.*|*.pem|*.key|*.p12|*.pfx|.netrc|*/.netrc|.npmrc|*/.npmrc|.pypirc|*/.pypirc|id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519) return 0 ;;
+    .credentials.json|*/.credentials.json|auth.json|*/auth.json) return 0 ;;
     claude/.credentials.json|claude/history.jsonl|claude/projects|claude/projects/*|claude/session-env|claude/session-env/*|claude/shell-snapshots|claude/shell-snapshots/*|claude/statsig|claude/statsig/*|claude/todos|claude/todos/*|claude/debug|claude/debug/*|claude/cache|claude/cache/*|claude/logs|claude/logs/*|claude/file-history|claude/file-history/*) return 0 ;;
     codex/auth.json|codex/history.jsonl|codex/sessions|codex/sessions/*|codex/archived_sessions|codex/archived_sessions/*|codex/log|codex/log/*|codex/logs|codex/logs/*|codex/cache|codex/cache/*|codex/*.db|codex/*.db-*|codex/*.sqlite|codex/*.sqlite-*) return 0 ;;
     pi/auth.json|pi/sessions|pi/sessions/*|pi/logs|pi/logs/*|pi/cache|pi/cache/*) return 0 ;;
@@ -2122,7 +2179,7 @@ _aip_toml_string() {
   printable=${printable//$'\n'/}
   printable=${printable//$'\f'/}
   printable=${printable//$'\r'/}
-  if LC_ALL=C printf '%s' "$printable" | command grep -q '[[:cntrl:]]'; then
+  if _aip_has_disallowed_control "$printable"; then
     _aip_error 'Codex instructions contain a control character that TOML cannot represent safely'
     return 1
   fi
@@ -2257,13 +2314,38 @@ _aip_import_harness_root() {
 }
 
 _aip_import_usage() {
-  _aip_error 'usage: aip import HARNESS [FILE...] [--profile NAME[,NAME...]] [--all-profiles] [--force] [--skip-existing] [--dry-run]'
+  _aip_error 'usage: aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles [--force] [--skip-existing] [--dry-run]'
+}
+
+_aip_import_blocked_by_passthrough_dir() {
+  # $1 dest, $2 profile_path, $3 harness, $4 rel. Returns 0 when a prefix of dest
+  # (not dest itself) is a pass-through directory link. Managed skills/AGENTS.md
+  # links are not pass-through and are left alone.
+  local dest=$1 profile_path=$2 harness=$3 rel=$4
+  local remaining=$rel prefix='' part candidate
+  remaining=$rel
+  while :; do
+    case $remaining in
+      */*) part=${remaining%%/*}; remaining=${remaining#*/} ;;
+      *) break ;;
+    esac
+    if [ -n "$prefix" ]; then prefix=$prefix/$part; else prefix=$part; fi
+    candidate=$profile_path/$harness/$prefix
+    if [ -L "$candidate" ] && [ -d "$candidate" ]; then
+      _aip_import_is_managed_link "$candidate" && continue
+      if _aip_is_passthrough_link "$harness/$prefix" "$profile_path"; then
+        return 0
+      fi
+    fi
+  done
+  return 1
 }
 
 _aip_import_validate_rel() {
   local rel=${1-}
   [ -n "$rel" ] || return 1
   case $rel in
+    *\\*) return 1 ;;
     /*|*'/'|.|..|*/..|../*|*/../*) return 1 ;;
   esac
   return 0
@@ -2374,6 +2456,14 @@ _aip_import_run_copy() {
     while IFS= read -r -d '' rel; do
       [ -n "$rel" ] || continue
       dest=$profile_path/$harness/$rel
+      if ! _aip_path_is_under "$profile_path" "$dest"; then
+        _aip_error "invalid file path: $rel"
+        return 1
+      fi
+      if _aip_import_blocked_by_passthrough_dir "$dest" "$profile_path" "$harness" "$rel"; then
+        _aip_error "refusing to import through a pass-through directory: $name/$rel"
+        return 1
+      fi
       case $_AIP_IMPORT_OVERWRITE in
         force) overwrite=force ;;
         skip) overwrite=skip ;;
@@ -2488,11 +2578,19 @@ _aip_import() (
   done <"$filelist"
   [ "$valid" -eq 1 ] || return 1
   if [ "$all_profiles" -eq 1 ]; then
-    _aip_list_profile_names >|"$profilesfile"
+    _aip_list_profile_names | command grep -vx aip >|"$profilesfile" || :
+    if [ ! -s "$profilesfile" ]; then
+      if [ -n "$(_aip_list_profile_names)" ]; then
+        _aip_error 'no user profiles found; --all-profiles skips the aip management profile'
+        return 1
+      fi
+      _aip_error 'no profiles selected; nothing to do'
+      return 1
+    fi
   else
     _aip_import_write_profiles "$profiles_opt" "$profilesfile" || return
+    [ -s "$profilesfile" ] || { _aip_error 'no profiles selected; nothing to do'; return 1; }
   fi
-  [ -s "$profilesfile" ] || { _aip_error 'no profiles selected; nothing to do'; return 1; }
   _aip_import_run_copy "$harness" "$source_root" "$dry_run" "$filelist" "$profilesfile" "$force" "$skip_existing" || return
   [ "$dry_run" -eq 1 ] || _aip_import_warn_tracked "$harness" "$filelist" "$profilesfile"
   return 0
@@ -2522,7 +2620,7 @@ _aip_add_parse_source() {
     case $source in *'#'*) path=${source#*#} ;; esac
     case $url in
       https://*|ssh://*|file://*) ;;
-      *) _aip_error "unsupported source URL: $source; expected https://, ssh://, git@, or file://"; return 2 ;;
+      *) _aip_error "unsupported source URL: $(_aip_redact_url "$source"); expected https://, ssh://, git@, or file://"; return 2 ;;
     esac
   elif [[ $source == *'@'* ]]; then
     # scp-style ssh: user@host:owner/repo[.git]
@@ -2576,7 +2674,7 @@ _aip_add_clone() {
     return 1
   fi
   if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone -c core.symlinks=true --quiet --depth 1 -- "$url" "$dir" 2>/dev/null; then
-    _aip_error "could not clone $url; the source repository is unreachable or requires interactive credentials"
+    _aip_error "could not clone $(_aip_redact_url "$url"); the source repository is unreachable or requires interactive credentials"
     return 1
   fi
   return 0
@@ -2629,8 +2727,37 @@ _aip_add_install_skill() {
     fi
   fi
   command mkdir -p -- "$skills" || { _aip_error "could not create $skills"; return 1; }
-  command cp -Rp -- "$src" "$dest" || { _aip_error "could not copy the skill $name"; return 1; }
+  if ! _aip_path_is_under "$skills" "$dest"; then
+    _aip_error "invalid source path: $name"
+    return 1
+  fi
+  _aip_add_copy_skill "$src" "$dest" "$name" || return 1
   printf 'added %s to %s\n' "$name" "$pname"
+  return 0
+}
+
+_aip_add_copy_skill() {
+  # $1 source skill dir, $2 dest (must not exist), $3 display name.
+  # Walk the source first: any symlink fails (dest absent). Then copy excluding .git.
+  local src=$1 dest=$2 name=$3 found entry
+  found=$(command find "$src" \( -name .git -type d -prune \) -o -type l -print) || return 1
+  if [ -n "$found" ]; then
+    _aip_error "skill '$name' contains a nested symlink; dest is not created"
+    return 1
+  fi
+  command mkdir -p -- "$dest" || { _aip_error "could not copy the skill $name"; return 1; }
+  for entry in "$src"/.* "$src"/*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    case ${entry##*/} in
+      .|..) continue ;;
+      .git) continue ;;
+    esac
+    if ! command cp -Rp -- "$entry" "$dest/"; then
+      command rm -rf -- "$dest"
+      _aip_error "could not copy the skill $name"
+      return 1
+    fi
+  done
   return 0
 }
 
@@ -2676,8 +2803,15 @@ _aip_add() (
   { [ "$force" -eq 1 ] && [ "$skip_existing" -eq 1 ]; } && { _aip_error '--force and --skip-existing conflict'; return 2; }
   { [ "$all_profiles" -eq 1 ] && [ -n "$profile" ]; } && { _aip_error '--all-profiles conflicts with the PROFILE argument'; return 2; }
   if [ "$all_profiles" -eq 1 ]; then
-    _aip_list_profile_names >|"$profilesfile"
-    [ -s "$profilesfile" ] || { _aip_error 'no profiles found; create a profile with aip create first'; return 1; }
+    _aip_list_profile_names | command grep -vx aip >|"$profilesfile" || :
+    if [ ! -s "$profilesfile" ]; then
+      if [ -n "$(_aip_list_profile_names)" ]; then
+        _aip_error 'no user profiles found; --all-profiles skips the aip management profile'
+        return 1
+      fi
+      _aip_error 'no profiles found; create a profile with aip create first'
+      return 1
+    fi
   else
     _aip_import_require_profile "$profile" || return
     printf '%s\n' "$profile" >|"$profilesfile"
@@ -2740,7 +2874,8 @@ Commands:
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
   aip add PROFILE SOURCE...         Install skills from a git repository
-  aip import HARNESS [FILE...]      Copy config/skills from a harness into profiles
+  aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
+                                     Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Update the aip npm package
@@ -2771,7 +2906,7 @@ EOF
 _aip_remote_show() {
   local root=$_AIP_PROFILE_ROOT url
   if [ -d "$root/.git" ] && [ ! -L "$root/.git" ] && url=$(_aip_git -C "$root" remote get-url origin 2>/dev/null); then
-    printf '%s\n' "$url"
+    printf '%s\n' "$(_aip_redact_url "$url")"
     return 0
   fi
   printf 'no remote is configured\n'
@@ -2800,16 +2935,16 @@ _aip_remote_add() {
   local url=$1 root=$_AIP_PROFILE_ROOT existing_origin
   [ -n "$url" ] || { _aip_error 'usage: aip remote add URL'; return 2; }
   case $url in
-    *' '*|*$'\n'*) _aip_error "invalid remote URL: $url"; return 2 ;;
+    *' '*|*$'\n'*) _aip_error "invalid remote URL: $(_aip_redact_url "$url")"; return 2 ;;
   esac
   if [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; then
     existing_origin=$(_aip_git -C "$root" remote get-url origin 2>/dev/null) || existing_origin=
     if [ -n "$existing_origin" ]; then
-      _aip_error "origin is already configured ($existing_origin); run 'aip remote remove' first"
+      _aip_error "origin is already configured ($(_aip_redact_url "$existing_origin")); run 'aip remote remove' first"
       return 1
     fi
     _aip_git -C "$root" remote add origin "$url" 2>/dev/null || {
-      _aip_error "could not configure origin: $url"
+      _aip_error "could not configure origin: $(_aip_redact_url "$url")"
       return 1
     }
   else
@@ -2831,7 +2966,7 @@ _aip_remote_add() {
       return 1
     fi
     if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git clone -c core.symlinks=true --quiet -- "$url" "$root" 2>/dev/null; then
-      _aip_error "could not clone $url into $root; the remote must be a profiles repository created by aip"
+      _aip_error "could not clone $(_aip_redact_url "$url") into $root; the remote must be a profiles repository created by aip"
       return 1
     fi
     _aip_git -C "$root" config core.symlinks true || { _aip_error 'could not configure symbolic-link checkout'; return 1; }
@@ -2843,7 +2978,7 @@ _aip_remote_add() {
         return 1
       }
     fi
-    printf 'Cloned profiles from %s.\n' "$url"
+    printf 'Cloned profiles from %s.\n' "$(_aip_redact_url "$url")"
   fi
   local branch
   branch=$(_aip_git -C "$root" branch --show-current 2>/dev/null) || branch=
@@ -2924,6 +3059,8 @@ aip() {
     help) _aip_help "$@" ;;
     --help) _aip_help ;;
     -h) _aip_help ;;
+    --version) _aip_version "$@" ;;
+    -v) _aip_version "$@" ;;
     remote) _aip_remote "$@" ;;
     import) _aip_import "$@" ;;
     run) _aip_run "$@" ;;

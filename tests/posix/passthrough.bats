@@ -181,6 +181,18 @@ setup() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
 }
 
+@test "import refuses children of a pass-through directory" {
+  mkdir -p "$HOME/.claude/plugins"
+  printf '{"hook":true}\n' >"$HOME/.claude/plugins/hook.json"
+  create_profile claudy
+  [ -L "$_AIP_PROFILE_ROOT/claudy/claude/plugins" ]
+  run aip import claude plugins/hook.json --profile claudy --force
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pass-through directory"* ]]
+  [ "$(cat "$HOME/.claude/plugins/hook.json")" = '{"hook":true}' ]
+  [ -L "$_AIP_PROFILE_ROOT/claudy/claude/plugins" ]
+}
+
 @test "convergence: claude entries survive pi maintenance" {
   mkdir -p "$HOME/.claude"
   printf '{"permissions":{}}\n' >"$HOME/.claude/settings.json"

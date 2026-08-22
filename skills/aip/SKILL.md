@@ -126,7 +126,8 @@ configured).
 2. **Install a skill from a git repository** → "Installing skills" below.
 3. **Copy skills between profiles** → "Copying skills" below.
 4. **Create, clone, or delete a profile** — `aip create NAME`,
-   `aip clone SRC DST`, `aip delete NAME` (never raw directory operations).
+   `aip clone SRC DST`, `aip delete NAME --force` after the user approves
+  (never raw directory operations; do not wait on the TTY prompt).
 5. **Edit instructions** — the shared `AGENTS.md` or a per-harness
    instruction file (see Editing content above).
 6. **Remote and sync** — `aip remote show`/`add`/`remove`, `aip sync` to
@@ -160,6 +161,8 @@ name search; finding the path is your job.
 - If the skill already exists, aip fails by default. Ask the user:
   `--force` replaces it, `--skip-existing` keeps the existing one. Never
   pass `--force` without being asked.
+- `--all-profiles` installs into every *user* profile and skips the `aip`
+  management profile. Explicit `aip add aip SOURCE` still targets it.
 - Installed files are untracked until the next checkpoint; offer `aip sync`.
 - A skill already on this machine's disk (not in a git repo) is copied, not
   added — see Copying skills.
@@ -175,8 +178,14 @@ profile or from a machine directory (`PROFILES` = the profiles root):
 cp -RL "SOURCE_DIR/name" "$PROFILES/dest-profile/skills/"
 ```
 
-- `-L` dereferences symlinks into real files — the sync rejects symlinks
-  inside the tracked tree, and machine skill directories are often links.
+```powershell
+Copy-Item -LiteralPath "SOURCE_DIR/name" -Destination "$PROFILES/dest-profile/skills/" -Recurse
+```
+
+- `-L` / an explicit dereference copies through symlinks into real files —
+  the sync rejects symlinks inside the tracked tree, and machine skill
+  directories are often links. On Windows, copy file contents, not reparse
+  points.
 - Always copy into the profile's top-level `skills/` — never into
   `<profile>/<harness>/skills/` (those are links to the same tree).
 - If the destination name already exists, ask the user; on approval remove
@@ -193,16 +202,16 @@ the CLI operation for a whole new profile from an existing one.
 
 ## Gotchas
 
-- Use `aip create`, `aip clone`, `aip delete` — never `mkdir`, `cp -r`, or
-  `rm -rf` on a profile directory. `aip delete` refuses the active session's
-  profile and asks for confirmation unless `--force`.
+- Use `aip create`, `aip clone`, `aip delete NAME --force` — never `mkdir`,
+  `cp -r`, or `rm -rf` on a profile directory. After the user approves a
+  delete, pass `--force`; do not rely on the TTY prompt. `aip delete` refuses
+  the active session's profile.
 - A session is locked to its launch profile. `aip use NAME` changes only
   *future* launches in this shell; `aip manage HARNESS` launches with the
   `aip` profile specifically.
 - Pass-through: aip links each harness's machine-local config into every
   profile automatically, so that config is already shared machine-locally
-  with no import needed (the allowlist is in the project README; `audit.md`
-  explains what this means for importing).
+  with no import needed (the allowlist table is in `audit.md`).
 - The `# aip pass-through` entries in the profile `.gitignore` are
   aip-managed and re-converged on every create/clone/launch while the links
   exist — do not hand-edit them. The credential/runtime exclusion block in

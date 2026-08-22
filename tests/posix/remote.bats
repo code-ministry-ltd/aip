@@ -45,6 +45,35 @@ make_upstream() {
   [ "$(git -C "$_AIP_PROFILE_ROOT" config --get branch.main.remote)" = "origin" ]
 }
 
+@test "remote add never prints URL userinfo on an unreachable clone" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/fresh-secret"
+  run aip remote add "https://user:s3cret@example.test/nope.git"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not clone"* ]]
+  [[ "$output" != *s3cret* ]]
+}
+
+@test "remote add redacts userinfo when origin is already configured" {
+  create_profile work
+  git -C "$_AIP_PROFILE_ROOT" remote add origin "https://user:s3cret@example.test/repo.git"
+  run aip remote add "https://example.test/other.git"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"origin is already configured"* ]]
+  [[ "$output" != *s3cret* ]]
+}
+
+@test "remote add redacts userinfo on a successful fresh-machine clone" {
+  create_profile work
+  make_upstream
+  aip remote add "$TEST_REMOTE" >/dev/null
+  git config --global "url.file://$TEST_REMOTE.insteadOf" "https://user:s3cret@example.test/repo.git"
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/fresh-userinfo"
+  run aip remote add "https://user:s3cret@example.test/repo.git"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Cloned profiles from https://example.test/repo.git."* ]]
+  [[ "$output" != *s3cret* ]]
+}
+
 @test "remote add with an existing origin is a hard error" {
   create_profile work
   make_upstream

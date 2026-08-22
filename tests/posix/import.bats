@@ -24,7 +24,7 @@ setup() {
   [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/auth.json")" = '{"token":"secret"}' ]
   [ "$(cat "$_AIP_PROFILE_ROOT/suit/pi/models.json")" = '{"models":[]}' ]
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/pi/auth.json work/pi/models.json suit/pi/models.json)" ]
-  [ "$(ls -l "$_AIP_PROFILE_ROOT/work/pi/auth.json" | awk '{print $1}')" = '-rw-------' ]
+  [ "$(stat -c '%a' "$_AIP_PROFILE_ROOT/work/pi/auth.json" 2>/dev/null || stat -f '%Lp' "$_AIP_PROFILE_ROOT/work/pi/auth.json")" = '600' ]
 }
 
 @test "import --profile targets exactly those profiles" {
@@ -92,6 +92,31 @@ setup() {
   run aip import pi ../secret.json --all-profiles
   [ "$status" -eq 1 ]
   [[ "$output" == *"invalid file path: ../secret.json"* ]]
+}
+
+@test "import rejects a rel containing a backslash" {
+  run aip import pi 'foo\bar' --all-profiles
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid file path"* ]]
+}
+
+@test "import --all-profiles skips the aip management profile" {
+  create_profile aip
+  run aip import pi auth.json --all-profiles --force
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/work/pi/auth.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/work/pi/auth.json" ]
+  # create seeds a pass-through link under aip/; import must not replace it.
+  [ -L "$_AIP_PROFILE_ROOT/aip/pi/auth.json" ]
+}
+
+@test "import --all-profiles with only aip is a distinct error" {
+  command rm -rf "$_AIP_PROFILE_ROOT"
+  command mkdir -p "$_AIP_PROFILE_ROOT"
+  create_profile aip
+  run aip import pi auth.json --all-profiles --force
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"skips the aip management profile"* ]]
 }
 
 @test "import overwrite prompt: o overwrites, s skips, a and n persist" {
