@@ -1882,6 +1882,26 @@ function Invoke-AipRun {
     $script:AipCommandStatus = $global:LASTEXITCODE
 }
 
+function Invoke-AipManage {
+    param([object[]]$Arguments)
+    if ($Arguments.Count -eq 0) { Write-AipError 'usage: aip manage HARNESS [ARGS...]'; $script:AipCommandStatus = 2; return }
+    $harness = [string]$Arguments[0]
+    $rest = @($Arguments | Select-Object -Skip 1)
+    if ($harness -notin @('claude', 'codex', 'pi', 'opencode')) {
+        Write-AipError "unknown harness '$harness'; expected claude, codex, pi, or opencode"
+        $script:AipCommandStatus = 2
+        return
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'aip') -PathType Container)) {
+        Write-AipError "the 'aip' profile does not exist; run 'aip create aip' first (the aip installer creates it)"
+        $script:AipCommandStatus = 1
+        return
+    }
+    $env:AIP_PROFILE = 'aip'
+    try { Invoke-AipRun (@('aip', $harness) + @($rest)) }
+    finally { $env:AIP_PROFILE = $null }
+}
+
 function Invoke-AipRemoteShow {
     $root = $script:AipProfileRoot
     $url = @()
@@ -2913,6 +2933,7 @@ Commands:
   aip local [NAME | --remove]        Set or clear the per-directory marker
   aip clone SOURCE TARGET            Copy a profile into a new profile
   aip delete NAME [--force]          Delete a profile
+  aip manage HARNESS [ARGS...]       Launch a harness with the aip profile
   aip sync                           Checkpoint and sync every profile
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
@@ -2958,6 +2979,7 @@ function aip {
         switch -CaseSensitive ($command) {
             'add' { Invoke-AipWithoutGitRouting { Invoke-AipAdd $rest } }
             'create' { Invoke-AipWithoutGitRouting { Invoke-AipCreate $rest } }
+            'manage' { Invoke-AipManage $rest }
             'clone' { Invoke-AipWithoutGitRouting { Invoke-AipClone $rest } }
             'default' { Invoke-AipDefault $rest }
             'delete' { Invoke-AipWithoutGitRouting { Invoke-AipDelete $rest } }

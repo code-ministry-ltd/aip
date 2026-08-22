@@ -136,10 +136,11 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
+    foreach ($command in 'add', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
     $helpOutput | Should -Match ([regex]::Escape('aip add PROFILE SOURCE...'))
+    $helpOutput | Should -Match ([regex]::Escape('aip manage HARNESS [ARGS...]'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote add URL'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote show'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote remove'))
@@ -469,6 +470,31 @@ Describe 'harness wrappers' {
         $capture | Should -Match 'harness=codex'
         $capture | Should -Match ([regex]::Escape("CODEX_HOME=$(Join-Path $script:AipProfileRoot 'claude/codex')"))
         $capture | Should -Match '(?m)^arg=prompt\r?$'
+    }
+
+    It 'manage launches the harness with the aip profile and forwards arguments' {
+        New-TestProfile aip
+        aip manage pi 'one two' '--flag' *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $capture = Get-Content $script:FakeCapture -Raw
+        $capture | Should -Match 'harness=pi'
+        $capture | Should -Match ([regex]::Escape("PI_CODING_AGENT_DIR=$(Join-Path $script:AipProfileRoot 'aip/pi')"))
+        $capture | Should -Match '(?m)^arg=one two\r?$'
+        $capture | Should -Match '(?m)^arg=--flag\r?$'
+    }
+
+    It 'manage validates the harness name' {
+        aip manage bogus *> $null
+        $global:LASTEXITCODE | Should -Be 2
+        $script:AipLastError | Should -Match "unknown harness 'bogus'"
+    }
+
+    It 'manage requires the aip profile with a fix hint' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'aip') -Recurse -Force -ErrorAction SilentlyContinue
+        aip manage pi *> $null
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match "the 'aip' profile does not exist"
+        $script:AipLastError | Should -Match 'aip create aip'
     }
 
     It 'fails closed for an explicit empty profile without launching a harness' {

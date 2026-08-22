@@ -10,15 +10,20 @@ syncs, or pushes.
 
 ---
 
-## T1 — `aip manage` command (both shells) — M
+## T1 — `aip manage` command (both shells) — M ✅
 **Desc.** New `_aip_manage` (+ ps1 equivalent) and `manage` dispatch entry:
 `aip manage HARNESS [ARGS...]`. Validate the harness (`_aip_is_harness`, else exit 2),
 require the `aip` profile to exist (else exit 1 with a fix hint), `_aip_use aip`, then
 `_aip_run_harness 0 '' HARNESS "$@"`. Update help and the smoke command-list.
 **Acceptance.**
-- [ ] Fake-harness fixture: `aip manage pi` capture shows `PI_CODING_AGENT_DIR` pointing at the `aip` profile and args passed through.
-- [ ] `aip manage bogus` → exit 2; `aip manage pi` with the `aip` profile deleted → exit 1 with fix hint.
-- [ ] Full suite green (bats + Pester); `aip help` and smoke command-list include `manage`.
+- [x] Fake-harness fixture: `aip manage pi` capture shows `PI_CODING_AGENT_DIR` pointing at the `aip` profile and args passed through.
+- [x] `aip manage bogus` → exit 2; `aip manage pi` with the `aip` profile deleted → exit 1 with fix hint.
+- [x] Full suite green (bats + Pester); `aip help` and smoke command-list include `manage`.
+
+Note: bash exports `AIP_PROFILE=aip` and calls `_aip_run_harness 0 '' HARNESS`; ps1
+calls `Invoke-AipRun` with the explicit profile `aip` (same resolution outcome).
+Neither prints `_aip_use`'s "Using profile" line — manage is a launch, not a shell
+selection.
 **Verify.** `npm run test:posix`; `pwsh -NoProfile -File tests/run-powershell.ps1` (CI)
 **Depends.** `tasks/cuts` (profile layout + help/smoke edits), `tasks/add`
 **Files.** `aip.sh`, `aip.ps1`, `tests/posix/smoke.bats`, `tests/posix/wrappers.bats`, `tests/powershell/Aip.Tests.ps1`

@@ -203,3 +203,26 @@ setup() {
   [ "$status" -eq 37 ]
   [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/AGENTS.md | tail -1)" = 'changed under errexit' ]
 }
+
+@test "manage launches the harness with the aip profile and forwards arguments" {
+  create_profile aip
+  aip manage pi 'one two' --flag >/dev/null
+  [ "$?" -eq 0 ]
+  grep -F 'harness=pi' "$FAKE_CAPTURE"
+  grep -F "PI_CODING_AGENT_DIR=$_AIP_PROFILE_ROOT/aip/pi" "$FAKE_CAPTURE"
+  grep -F 'arg=one two' "$FAKE_CAPTURE"
+  grep -F 'arg=--flag' "$FAKE_CAPTURE"
+}
+
+@test "manage validates the harness name" {
+  run aip manage bogus
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown harness 'bogus'"* ]]
+}
+
+@test "manage requires the aip profile with a fix hint" {
+  run aip manage pi
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the 'aip' profile does not exist"* ]]
+  [[ "$output" == *"aip create aip"* ]]
+}

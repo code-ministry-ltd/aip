@@ -1378,7 +1378,7 @@ _aip_is_command() {
     [ "${1-}" = add ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
-    [ "${1-}" = local ] || [ "${1-}" = remote ] ||
+    [ "${1-}" = local ] || [ "${1-}" = manage ] || [ "${1-}" = remote ] ||
     [ "${1-}" = import ] || [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
@@ -2229,6 +2229,23 @@ _aip_run() {
   _aip_run_harness "$explicit_supplied" "$explicit" "$harness" "$@"
 }
 
+_aip_manage() (
+  local harness=${1-}
+  [ -n "$harness" ] || { _aip_error 'usage: aip manage HARNESS [ARGS...]'; return 2; }
+  _aip_is_harness "$harness" || {
+    _aip_error "unknown harness '$harness'; expected claude, codex, pi, or opencode"
+    return 2
+  }
+  shift
+  if [ ! -d "$(_aip_profile_path aip)" ]; then
+    _aip_error "the 'aip' profile does not exist; run 'aip create aip' first (the aip installer creates it)"
+    return 1
+  fi
+  AIP_PROFILE=aip
+  export AIP_PROFILE
+  _aip_run_harness 0 '' "$harness" "$@"
+)
+
 _aip_import_harness_root() {
   case ${1-} in
     pi) printf '%s\n' "${HOME}/.pi/agent" ;;
@@ -2716,6 +2733,7 @@ Commands:
   aip local [NAME | --remove]        Set or clear the per-directory marker
   aip clone SOURCE TARGET            Copy a profile into a new profile
   aip delete NAME [--force]          Delete a profile
+  aip manage HARNESS [ARGS...]       Launch a harness with the aip profile
   aip sync                           Checkpoint and sync every profile
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
@@ -2895,6 +2913,7 @@ aip() {
   case $command in
     add) _aip_add "$@" ;;
     create) _aip_create "$@" ;;
+    manage) _aip_manage "$@" ;;
     clone) _aip_clone "$@" ;;
     default) _aip_default "$@" ;;
     delete) _aip_delete "$@" ;;
