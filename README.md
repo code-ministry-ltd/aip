@@ -237,7 +237,7 @@ variables are deliberately **not** used to find the source: aip itself sets them
 profile when launching a harness, so they cannot name your pre-aip global config.
 
 Relative paths are resolved against the harness's config directory. Import is
-for settings and config files — install skills with `aip add`, or copy a local
+for settings and config files — install skills with `aip skills add`, or copy a local
 skill directory into `<profile>/skills/` (see the packaged skill). Import never
 commits anything: files land on disk, and the next `aip sync` checkpoint handles
 Git as usual. When a destination
@@ -251,12 +251,12 @@ ignored by the profile scaffold and stay off the remote.
 
 ## Adding skills from a git repository
 
-`aip add` installs a skill — a directory containing a `SKILL.md` — from a git
+`aip skills add` installs a skill — a directory containing a `SKILL.md` — from a git
 repository into a profile's shared `skills/` tree:
 
 ```sh
-aip add work vercel-labs/skills/some/skill
-aip add --all-profiles https://github.com/owner/skills.git#skills/some
+aip skills add work vercel-labs/skills/some/skill
+aip skills add --all-profiles https://github.com/owner/skills.git#skills/some
 ```
 
 The source is given as an exact path, in one of two forms:
@@ -276,10 +276,24 @@ nothing is committed: files land untracked and the next checkpoint or `aip sync`
 handles Git. When the skill already exists, `--force` replaces it, `--skip-existing`
 skips it with a note, and without either the add fails.
 
-`aip add` takes exact paths and does no searching: finding the right skill inside
-a repository (listing what a repo offers, matching a requested skill by name) is
-what the `aip` management skill does — it resolves the name and then calls
-`aip add` with the exact path.
+Each successful install writes a `.aip-source` sidecar next to the skill files,
+recording the original token and the clone URL. Refresh and uninstall use the
+**local skill name**, not the git source:
+
+```sh
+aip skills update work some
+aip skills update work --all
+aip skills remove work some
+```
+
+`aip skills update` always replaces the installed directory from that recorded
+URL. If you intend to edit a skill, copy it and rename the copy first — an
+update from source overwrites the installed directory.
+
+`aip skills add` takes exact paths and does no searching: finding the right skill
+inside a repository (listing what a repo offers, matching a requested skill by
+name) is what the `aip` management skill does — it resolves the name and then
+calls `aip skills add` with the exact path.
 
 ## Pass-through of machine-local configuration
 
@@ -380,7 +394,7 @@ aip sync                           checkpoint and sync every profile
 aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
 aip remote remove                  disconnect the remote
-aip add PROFILE SOURCE...          install skills from a git repository
+aip skills add|update|remove       install, refresh, or remove skills
 aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
                                    copy config from a harness into profiles
 aip doctor [NAME]                  diagnose the repository and profiles
@@ -399,8 +413,9 @@ files from a harness's config directory into profiles (see
 [Importing existing config and skills](#importing-existing-config-and-skills)).
 `--all-profiles` skips the `aip` management profile; pass it by name to target it.
 
-`aip add PROFILE SOURCE...` installs skills from a git repository into the
-profiles' shared `skills/` trees (see
+`aip skills add PROFILE SOURCE...` installs skills from a git repository into
+the profiles' shared `skills/` trees; `update` and `remove` take the local
+skill name (see
 [Adding skills from a git repository](#adding-skills-from-a-git-repository)).
 
 Machine-local config pass-through is automatic and needs no command: every profile
