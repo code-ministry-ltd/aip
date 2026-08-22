@@ -2786,7 +2786,123 @@ function Invoke-AipSkills {
     $rest = @(if ($null -ne $Arguments) { $Arguments | Select-Object -Skip 1 })
     switch -CaseSensitive ($sub) {
         'add' { Invoke-AipAdd $rest }
+        'update' { Invoke-AipSkillsUpdate $rest }
         default { Write-AipSkillsUsage }
+    }
+}
+
+function Read-AipSkillSource {
+    param([Parameter(Mandatory)][string]$Dest)
+    $file = Join-Path $Dest '.aip-source'
+    $item = Get-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+        return $null
+    }
+    $lines = @(Get-Content -LiteralPath $file)
+    if ($lines.Count -ne 3) { return $null }
+    if (-not $lines[0].StartsWith('source=')) { return $null }
+    if (-not $lines[1].StartsWith('url=')) { return $null }
+    if (-not $lines[2].StartsWith('path=')) { return $null }
+    $url = $lines[1].Substring(4)
+    if ([string]::IsNullOrEmpty($url)) { return $null }
+    return @{
+        Source = $lines[0].Substring(7)
+        Url = $url
+        Path = $lines[2].Substring(5)
+    }
+}
+
+function Write-AipSkillsUpdateUsage {
+    Write-AipError 'usage: aip skills update PROFILE NAME... | aip skills update --all-profiles NAME... | aip skills update PROFILE --all | aip skills update --all-profiles --all'
+    $script:AipCommandStatus = 2
+}
+
+function Invoke-AipSkillsUpdateOne {
+    param([Parameter(Mandatory)][string]$ProfileName, [Parameter(Mandatory)][string]$Name)
+    $dest = Join-Path (Join-Path (Get-AipProfilePath $ProfileName) 'skills') $Name
+    $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    if ($null -eq $existing) {
+        Write-AipError "skill '$Name' is not installed in profile $ProfileName"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    $parsed = Read-AipSkillSource $dest
+    if ($null -eq $parsed) {
+        Write-AipError "skill '$Name' in profile $ProfileName has no recorded source; reinstall it with aip skills add"
+        $script:AipCommandStatus = 1
+        return $false
+    }
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('aip-add-' + [guid]::NewGuid().ToString('N'))
+    if (-not (Invoke-AipAddClone -Url $parsed.Url -Dir $dir)) { return $false }
+    try {
+        $script:AipAddName = $Name
+        if (-not (Test-AipAddSkillPath -ClonedRoot $dir -Path $parsed.Path)) { return $false }
+        $skillDir = $script:AipAddSkillDir
+        try { Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction Stop }
+        catch {
+            Write-AipError "could not remove the existing skill $Name"
+            $script:AipCommandStatus = 1
+            return $false
+        }
+        if (-not (Copy-AipSkillTree -SkillDir $skillDir -Dest $dest -Name $Name)) { return $false }
+        if (-not (Write-AipSkillSource -Dest $dest -Source $parsed.Source -Url $parsed.Url -Path $parsed.Path)) { return $false }
+        Write-Output "updated $Name in $ProfileName"
+        return $true
+    }
+    finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-AipSkillsUpdate {
+    param([object[]]$Arguments)
+    $profile = $null
+    $allProfiles = $false
+    $all = $false
+    $names = [System.Collections.Generic.List[string]]::new()
+    $i = 0
+    if ($null -eq $Arguments) { $Arguments = @() }
+    while ($i -lt $Arguments.Count) {
+        $arg = [string]$Arguments[$i]
+        switch ($arg) {
+            '--all-profiles' { $allProfiles = $true }
+            '--all' { $all = $true }
+            '--' {
+                $i++
+                while ($i -lt $Arguments.Count) { $names.Add([string]$Arguments[$i]); $i++ }
+            }
+            default {
+                if ($arg.StartsWith('-') -and $arg -ne '-') {
+                    Write-AipError "unknown update option '$arg'"
+                    Write-AipSkillsUpdateUsage
+                    return
+                }
+                if ($null -eq $profile -and -not $allProfiles) { $profile = $arg } else { $names.Add($arg) }
+            }
+        }
+        $i++
+    }
+    if ($null -eq $profile -and -not $allProfiles) {
+        Write-AipError 'no profile selected; pass a PROFILE or --all-profiles'
+        Write-AipSkillsUpdateUsage
+        return
+    }
+    if ($allProfiles -and $null -ne $profile) { Write-AipError '--all-profiles conflicts with the PROFILE argument'; $script:AipCommandStatus = 2; return }
+    if ($all -and $names.Count -gt 0) { Write-AipError '--all conflicts with NAME arguments'; Write-AipSkillsUpdateUsage; return }
+    if (-not $all -and $names.Count -eq 0) { Write-AipSkillsUpdateUsage; return }
+    if ($all -or $allProfiles) {
+        Write-AipError 'usage: aip skills update PROFILE NAME...'
+        $script:AipCommandStatus = 2
+        return
+    }
+    if (-not (Test-AipImportProfile $profile)) { return }
+    foreach ($name in $names) {
+        if (-not (Test-AipProfileName $name)) {
+            Write-AipError "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"
+            $script:AipCommandStatus = 1
+            return
+        }
+        if (-not (Invoke-AipSkillsUpdateOne -ProfileName $profile -Name $name)) { return }
     }
 }
 
