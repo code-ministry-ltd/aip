@@ -274,7 +274,7 @@ _aip_ensure_root_repo() {
   fi
   if [ ! -d "$root/.git" ]; then
     if ! _aip_git -C "$root" init -q -b main ||
-       ! _aip_git -C "$root" config core.symlinks true ||
+       ! _aip_git -C "$root" config --replace-all core.symlinks true ||
        ! _aip_git -C "$root" config core.longpaths true; then
       return 1
     fi
@@ -2969,7 +2969,7 @@ _aip_remote_add() {
       _aip_error "could not clone $(_aip_redact_url "$url") into $root; the remote must be a profiles repository created by aip"
       return 1
     fi
-    _aip_git -C "$root" config core.symlinks true || { _aip_error 'could not configure symbolic-link checkout'; return 1; }
+    _aip_git -C "$root" config --replace-all core.symlinks true || { _aip_error 'could not configure symbolic-link checkout'; return 1; }
     _aip_git -C "$root" config core.longpaths true 2>/dev/null || :
     if ! _aip_git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1 &&
        _aip_git -C "$root" rev-parse --verify refs/remotes/origin/main >/dev/null 2>&1; then

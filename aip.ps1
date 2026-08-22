@@ -392,7 +392,7 @@ function Invoke-AipEnsureRootRepo {
     if ($null -eq $gitItem) {
         Invoke-AipGit -C $root init -q -b main
         if ($LASTEXITCODE -ne 0) { Write-AipError 'could not initialise the profiles repository'; $script:AipCommandStatus = 1; return $false }
-        Invoke-AipGit -C $root config core.symlinks true
+        Invoke-AipGit -C $root config --replace-all core.symlinks true
         if ($LASTEXITCODE -ne 0) { Write-AipError 'could not configure symbolic-link checkout'; $script:AipCommandStatus = 1; return $false }
         Invoke-AipGit -C $root config core.longpaths true
         if ($LASTEXITCODE -ne 0) { Write-AipError 'could not configure long-path support'; $script:AipCommandStatus = 1; return $false }
@@ -2070,7 +2070,7 @@ function Invoke-AipRemoteAdd {
             if ($null -eq $oldSsh) { Remove-Item Env:GIT_SSH_COMMAND -ErrorAction SilentlyContinue } else { $env:GIT_SSH_COMMAND = $oldSsh }
             if ($null -eq $oldVariant) { Remove-Item Env:GIT_SSH_VARIANT -ErrorAction SilentlyContinue } else { $env:GIT_SSH_VARIANT = $oldVariant }
         }
-        $null = Invoke-AipGit -C $root config core.symlinks true
+        $null = Invoke-AipGit -C $root config --replace-all core.symlinks true
         if ($LASTEXITCODE -ne 0) {
             Write-AipError 'could not configure symbolic-link checkout'
             $script:AipCommandStatus = 1

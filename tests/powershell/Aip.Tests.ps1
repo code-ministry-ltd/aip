@@ -53,7 +53,7 @@ exit "${FAKE_EXIT_STATUS:-0}"
     }
 
     function Initialize-TestUpstream {
-        $script:TestRemote = Join-Path $TestDrive 'profile.git'
+        $script:TestRemote = Join-Path $TestDrive ('profile-' + [guid]::NewGuid().ToString('N') + '.git')
         & git init -q --bare $script:TestRemote
         & git -C $script:AipProfileRoot remote add origin $script:TestRemote
         & git -C $script:AipProfileRoot push -q -u origin main
@@ -507,7 +507,6 @@ Describe 'harness wrappers' {
 
     It 'manage restores a prior AIP_PROFILE and leaves unset unset' {
         New-TestProfile aip
-        New-TestProfile work
         $env:AIP_PROFILE = 'work'
         aip manage pi *> $null
         $env:AIP_PROFILE | Should -Be 'work'
@@ -2391,7 +2390,7 @@ Describe 'import' {
 
     It 'rejects backslash and mixed-separator traversal' {
         $outside = Join-Path $script:AipProfileRoot 'outside.txt'
-        Set-Content -LiteralPath $outside -Value 'keep' -Encoding utf8NoBOM
+        Set-Content -LiteralPath $outside -Value 'keep' -Encoding utf8NoBOM -NoNewline
         aip import pi '..\..\outside.txt' --profile work --force *> $null
         $global:LASTEXITCODE | Should -Be 1
         $script:AipLastError | Should -Match 'invalid file path'
