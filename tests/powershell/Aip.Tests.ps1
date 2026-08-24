@@ -106,7 +106,7 @@ AfterEach {
 
 It 'reports the embedded version and rejects extra arguments' {
     $versionSource = Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Raw
-    $expectedVersion = 'aip ' + ($versionSource -match '(?m)^# Version: (\S+)$' | ForEach-Object { $Matches[1] })
+    $expectedVersion = 'aip ' + ($versionSource -match "(?m)^\`$script:AipVersion = '([^']+)$" | ForEach-Object { $Matches[1] })
     aip version | Should -Be $expectedVersion
     $global:LASTEXITCODE | Should -Be 0
     aip --version | Should -Be $expectedVersion
