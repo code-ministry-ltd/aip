@@ -106,7 +106,8 @@ AfterEach {
 
 It 'reports the embedded version and rejects extra arguments' {
     $versionSource = Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Raw
-    $expectedVersion = 'aip ' + ($versionSource -match "(?m)^\`$script:AipVersion = '([^']+)$" | ForEach-Object { $Matches[1] })
+    # \r? keeps the match working on CRLF checkouts (Windows CI).
+    $expectedVersion = 'aip ' + ($versionSource -match "(?m)^\`$script:AipVersion = '([^']+)'\r?$" | ForEach-Object { $Matches[1] })
     aip version | Should -Be $expectedVersion
     $global:LASTEXITCODE | Should -Be 0
     aip --version | Should -Be $expectedVersion
