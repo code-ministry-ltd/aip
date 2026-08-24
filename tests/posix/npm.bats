@@ -7,6 +7,7 @@ SHIM="$BATS_TEST_DIRNAME/../../bin/aip.js"
 setup() {
   setup_aip_test
   make_fake_harness npx
+  _AIP_EXPECTED_VERSION="aip $(sed -n "s/^_AIP_VERSION='\(.*\)'$/\1/p" "$BATS_TEST_DIRNAME/../../aip.sh" | head -n 1)"
 }
 
 @test "the npm shim runs aip one-shot without installing" {
@@ -15,15 +16,15 @@ setup() {
 
   run node "$SHIM" version
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$_AIP_EXPECTED_VERSION" ]
 
   run node "$SHIM" --version
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$_AIP_EXPECTED_VERSION" ]
 
   run node "$SHIM" -v
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$_AIP_EXPECTED_VERSION" ]
 }
 
 @test "the npm shim propagates aip usage errors" {
@@ -50,7 +51,7 @@ setup() {
 
   run bash -c 'source "$1"; aip version' _ "$_AIP_INSTALL_ROOT/aip.sh"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$_AIP_EXPECTED_VERSION" ]
 
   run node "$SHIM" update
   [ "$status" -eq 0 ]
