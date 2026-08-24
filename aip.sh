@@ -877,7 +877,15 @@ _aip_create() (
   fi
   command rmdir "$stage" || return
   _aip_passthrough_profile "$name"
-  _aip_git -C "$_AIP_PROFILE_ROOT" add .gitignore "$name" || {
+  # Add only the profile's owned paths, never the whole directory: pass-through
+  # links exist on disk at this point (machine-local, untracked by design) and a
+  # broad add would track any that reconciliation failed to ignore.
+  _aip_git -C "$_AIP_PROFILE_ROOT" add \
+    .gitignore \
+    "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
+    "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
+    "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
+    "$name/opencode/AGENTS.md" "$name/opencode/skills" || {
     _aip_error "could not commit profile '$name'; check Git identity and hooks"
     return 1
   }
@@ -1025,6 +1033,22 @@ _aip_clone() (
     _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
     return 1
   }
+  # A broad add must not track pass-through links (machine-local, untracked by
+  # design); unstage any that reconciliation failed to ignore.
+  local clone_harness clone_rel clone_dest
+  for clone_harness in pi claude codex opencode; do
+    while IFS= read -r clone_rel; do
+      [ -n "$clone_rel" ] || continue
+      clone_dest="$target_path/$clone_harness/$clone_rel"
+      if [ -L "$clone_dest" ] && _aip_is_passthrough_link "$clone_harness/$clone_rel" "$target_path" &&
+         _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$target_name/$clone_harness/$clone_rel" >/dev/null 2>&1; then
+        _aip_git -C "$_AIP_PROFILE_ROOT" rm -q --cached -- "$target_name/$clone_harness/$clone_rel" || {
+          _aip_error "could not commit clone of profile '$source_name'; check Git identity and hooks"
+          return 1
+        }
+      fi
+    done < <(_aip_passthrough_rels "$clone_harness")
+  done
   # Executable bits do not survive tar extraction on platforms without file modes
   # (e.g. Windows); restore them from the source profile's committed modes.
   local clone_path chmod_failed=0
@@ -1689,20 +1713,35 @@ _aip_validate_git_tree() {
     _aip_error 'remote profile contains an unsupported Git submodule'
     return 1
   fi
+  # Marker-free, like the local tracked-link check: a remote 120000 entry is
+  # accepted only when it is a profile-prefixed required link whose stored
+  # target is exactly the target aip creates.
   # Cleanup unlinks the name; the loop keeps its already-open descriptor.
   # shellcheck disable=SC2094
   while IFS= read -r entry; do
     mode=${entry%% *}
+    [ "$mode" = 120000 ] || continue
     relative=${entry#*$'\t'}
-    if [ "$mode" = 120000 ]; then
-      if ! _aip_under_profile "$relative" "$profiles" ||
-         ! _aip_is_required_profile_link "${relative#*/}"; then
-        command rm -f "$profiles"
-        command rm -f "$_AIP_TEMP_PATHS"
-        _AIP_TEMP_PATHS=
-        _aip_error "remote profile contains an unsupported symbolic link: $relative"
-        return 1
-      fi
+    if ! expected=$(_aip_required_link_target "$relative"); then
+      command rm -f "$profiles"
+      command rm -f "$_AIP_TEMP_PATHS"
+      _AIP_TEMP_PATHS=
+      _aip_error "remote profile contains an unsupported symbolic link: $relative"
+      return 1
+    fi
+    if ! target=$(_aip_git -C "$root" show "$tree:$relative" 2>/dev/null); then
+      command rm -f "$profiles"
+      command rm -f "$_AIP_TEMP_PATHS"
+      _AIP_TEMP_PATHS=
+      _aip_error "could not read the stored target of remote link: $relative"
+      return 1
+    fi
+    if [ "$target" != "$expected" ]; then
+      command rm -f "$profiles"
+      command rm -f "$_AIP_TEMP_PATHS"
+      _AIP_TEMP_PATHS=
+      _aip_error "remote profile link has an unexpected target: $relative"
+      return 1
     fi
   done <"$_AIP_TEMP_PATHS"
 
