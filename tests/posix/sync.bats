@@ -338,6 +338,38 @@ make_upstream() {
   [ "$(cat "$external")" = outside ]
 }
 
+@test "sync tolerates a profile whose tracked .gitignore is missing when its links are intact" {
+  git -C "$_AIP_PROFILE_ROOT" rm -q --cached work/.gitignore
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'drop tracked gitignore'
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  [ -n "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/.gitignore)" ]
+}
+
+@test "sync rejects a tracked required link with an unexpected target" {
+  local evil
+  evil=$(printf '%s' '../../..' | git -C "$_AIP_PROFILE_ROOT" hash-object --stdin -w)
+  git -C "$_AIP_PROFILE_ROOT" update-index --add --cacheinfo 120000,"$evil",work/codex/skills
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'unexpected target'* ]]
+}
+
+@test "sync rejects a tracked optional link even under a healthy profile" {
+  local hash
+  hash=$(printf '%s' 'outside' | git -C "$_AIP_PROFILE_ROOT" hash-object --stdin -w)
+  git -C "$_AIP_PROFILE_ROOT" update-index --add --cacheinfo 120000,"$hash",work/claude/settings.json
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'unsupported symbolic link'* ]]
+}
+
 @test "a no-op sync does not create another commit" {
   local before
   before=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)
