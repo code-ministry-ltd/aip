@@ -9,7 +9,7 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = $HOME
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.5.0'
+$script:AipVersion = '0.6.0'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 
@@ -594,7 +594,11 @@ function Invoke-AipCreate {
         return
     }
     Invoke-AipPassthroughProfile $name
-    Invoke-AipGit -C $script:AipProfileRoot add .gitignore $name
+    # Add only the profile's owned paths, never the whole directory: pass-through
+    # links exist on disk at this point (machine-local, untracked by design) and a
+    # broad add would track any that reconciliation failed to ignore.
+    $owned = @('.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    Invoke-AipGit -C $script:AipProfileRoot add .gitignore @($owned | ForEach-Object { "$($name)/$_" })
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
     Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
     if ($LASTEXITCODE -ne 0) {
@@ -663,6 +667,18 @@ function Invoke-AipClone {
     Invoke-AipPassthroughProfile $targetName
     Invoke-AipGit -C $script:AipProfileRoot add $targetName
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+    # A broad add must not track pass-through links (machine-local, untracked by
+    # design); unstage any that reconciliation failed to ignore.
+    foreach ($harness in @('pi', 'claude', 'codex', 'opencode')) {
+        foreach ($rel in (Get-AipPassthroughRel $harness)) {
+            if (-not (Test-AipPassthroughLink "$harness/$rel" $targetPath)) { continue }
+            $trackedPath = "$($targetName)/$harness/$rel"
+            Invoke-AipGit -C $script:AipProfileRoot ls-files --error-unmatch -- $trackedPath 2>$null
+            if ($LASTEXITCODE -ne 0) { continue }
+            Invoke-AipGit -C $script:AipProfileRoot rm -q --cached -- $trackedPath
+            if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit clone of profile '$sourceName'; check Git identity and hooks"; return }
+        }
+    }
     # Executable bits do not survive tar extraction on platforms without file modes
     # (e.g. Windows); restore them from the source profile's committed modes.
     foreach ($trackedPath in $executablePaths) {
@@ -1170,6 +1186,28 @@ function Test-AipPathUnderProfile {
     return @($ProfilePrefixes) -contains $first
 }
 
+function Get-AipRequiredLinkTarget {
+    # $Path = a full relative path (e.g. work/claude/skills). Returns the exact
+    # target aip creates for its fixed required profile links, requiring a profile
+    # prefix so root-level lookalikes are rejected; $null for any path aip does not
+    # link.
+    param([Parameter(Mandatory)][string]$Path)
+    $normalized = [string]$Path.Replace('\', '/')
+    $slashIndex = $normalized.IndexOf('/')
+    if ($slashIndex -lt 1) { return $null }
+    $relative = $normalized.Substring($slashIndex + 1)
+    switch -CaseSensitive ($relative) {
+        'claude/skills' { return '../skills' }
+        'codex/skills' { return '../skills' }
+        'pi/skills' { return '../skills' }
+        'opencode/skills' { return '../skills' }
+        'codex/AGENTS.md' { return '../AGENTS.md' }
+        'pi/AGENTS.md' { return '../AGENTS.md' }
+        'opencode/AGENTS.md' { return '../AGENTS.md' }
+        default { return $null }
+    }
+}
+
 function Test-AipTrackedPathsSafe {
     param([Parameter(Mandatory)][string]$Root)
     $raw = (Invoke-AipGit -C $Root ls-files -z) -join "`n"
@@ -1186,15 +1224,27 @@ function Test-AipTrackedPathsSafe {
             return $false
         }
     }
-    $requiredLinks = @('claude/skills', 'codex/AGENTS.md', 'codex/skills', 'pi/AGENTS.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    # Marker-free, like the remote-tree scan: a tracked 120000 entry is accepted
+    # only when it is a profile-prefixed required link whose stored target is
+    # exactly the target aip creates.
     $stagedEntries = @(Invoke-AipGit -C $Root ls-files --stage)
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect tracked profile modes'; return $false }
     foreach ($entry in $stagedEntries) {
         if ([string]$entry -match '^120000 [0-9a-f]+ \d+\t(.+)$') {
             $relative = ([string]$Matches[1]).Replace('\', '/')
-            if (-not (Test-AipPathUnderProfile $relative $prefixes) -or
-                $relative.Substring($relative.IndexOf('/') + 1) -cnotin $requiredLinks) {
+            $expected = Get-AipRequiredLinkTarget $relative
+            if ($null -eq $expected) {
                 Write-AipError "tracked profile contains an unsupported symbolic link: $relative"
+                return $false
+            }
+            $hash = ([string]$entry -split ' ')[1]
+            $target = [string](Invoke-AipGit -C $Root cat-file blob $hash 2>$null)
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not read the stored target of tracked link: $relative"
+                return $false
+            }
+            if ($target -cne $expected) {
+                Write-AipError "tracked profile link has an unexpected target: $relative"
                 return $false
             }
         }
@@ -1302,13 +1352,24 @@ function Test-AipGitTree {
         }
     }
     $profilePrefixList = @($prefixes)
-    $requiredLinks = @('claude/skills', 'codex/AGENTS.md', 'codex/skills', 'pi/AGENTS.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    # Marker-free, like the local tracked-link check: a remote 120000 entry is
+    # accepted only when it is a profile-prefixed required link whose stored
+    # target is exactly the target aip creates.
     foreach ($entry in @($remoteTree -split "`n")) {
         if ($entry -match '^120000 (?:blob )?[0-9a-f]+\t(.+)$') {
             $relative = ([string]$Matches[1]).Replace('\', '/')
-            if (-not (Test-AipPathUnderProfile $relative $profilePrefixList) -or
-                $relative.Substring($relative.IndexOf('/') + 1) -cnotin $requiredLinks) {
+            $expected = Get-AipRequiredLinkTarget $relative
+            if ($null -eq $expected) {
                 Write-AipError "remote profile contains an unsupported symbolic link: $relative"
+                return $false
+            }
+            $target = [string](Invoke-AipGit -C $Root show "$Tree`:$relative" 2>$null)
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not read the stored target of remote link: $relative"
+                return $false
+            }
+            if ($target -cne $expected) {
+                Write-AipError "remote profile link has an unexpected target: $relative"
                 return $false
             }
         }
@@ -1386,6 +1447,71 @@ function Test-AipGitTree {
         return $false
     }
     return $true
+}
+
+function Invoke-AipUninstall {
+    param([object[]]$Arguments)
+    $force = $false
+    $others = 0
+    foreach ($arg in $Arguments) {
+        if ([string]$arg -eq '--force') { $force = $true } else { $others++ }
+    }
+    if ($others -ne 0) { Write-AipError 'usage: aip uninstall [--force]'; $script:AipCommandStatus = 2; return }
+    $installRoot = if ($env:_AIP_INSTALL_ROOT) {
+        $env:_AIP_INSTALL_ROOT
+    } elseif ($IsWindows) {
+        Join-Path $env:LOCALAPPDATA 'aip'
+    } else {
+        Join-Path $HOME '.local/share/aip'
+    }
+    $shellProfile = if ($env:_AIP_SHELL_PROFILE) { $env:_AIP_SHELL_PROFILE } else { $PROFILE.CurrentUserAllHosts }
+    $hasRoot = $false
+    if (Test-Path -LiteralPath $installRoot -PathType Container) {
+        foreach ($marker in @('aip.sh', 'aip.ps1', 'VERSION')) {
+            if (Test-Path -LiteralPath (Join-Path $installRoot $marker) -PathType Leaf) { $hasRoot = $true; break }
+        }
+    }
+    $hasBlock = $false
+    if (Test-Path -LiteralPath $shellProfile -PathType Leaf) {
+        $hasBlock = ([IO.File]::ReadAllText($shellProfile) -match '(?m)^# >>> aip >>>\s*$')
+    }
+    if (-not $hasRoot -and -not $hasBlock) {
+        Write-Output "Nothing to uninstall (no aip install at $installRoot and no aip block in $shellProfile)."
+        return
+    }
+    if (-not $force) {
+        $prompt = if ($hasRoot -and $hasBlock) { 'Remove the aip installation root and the shell profile block? [y/N]' } elseif ($hasRoot) { 'Remove the aip installation root? [y/N]' } else { 'Remove the aip block from your shell profile? [y/N]' }
+        $answer = $null
+        try { $answer = Read-Host $prompt }
+        catch {
+            Write-AipError 'uninstall requires confirmation; rerun with --force for non-interactive use'
+            return
+        }
+        if (-not (Test-AipDeleteConfirm $answer)) { Write-AipError 'uninstall cancelled; rerun with --force for non-interactive use'; return }
+    }
+    if ($hasBlock) {
+        $raw = [IO.File]::ReadAllText($shellProfile)
+        # Drops the marked block and the separator newline the installer adds
+        # before it; every other line is preserved verbatim.
+        $removed = [regex]::Replace($raw, '(?:\r?\n)?# >>> aip >>>\r?\n(?:.*?\r?\n)?# <<< aip <<<\r?\n', '', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+        try {
+            [IO.File]::WriteAllText($shellProfile, $removed)
+        }
+        catch {
+            Write-AipError "could not update the shell profile: $shellProfile"
+            return
+        }
+    }
+    if ($hasRoot) {
+        try {
+            Remove-Item -LiteralPath $installRoot -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-AipError "could not remove the install root: $installRoot"
+            return
+        }
+    }
+    Write-Output "Uninstalled aip. Your profiles repository at $($script:AipProfileRoot) and your harness configuration are untouched; restart your shell to finish."
 }
 
 function Remove-AipStaleLock {
@@ -3518,6 +3644,7 @@ Quick start:
   aip create work                 create your first profile
   aip remote add <git-url>        connect a shared remote (empty remote ok)
   aip default work                choose your everyday profile
+  aip uninstall [--force]         remove the aip installation (not your profiles)
   cd my-project && claude         work with your profile
 
 On a second machine:
@@ -3557,6 +3684,7 @@ function aip {
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSyncCommand $rest }
             'use' { Invoke-AipUse $rest }
+            'uninstall' { Invoke-AipUninstall $rest }
             'update' { Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }
             'version' { Invoke-AipVersion $rest }
             'which' { Invoke-AipWhich $rest }

@@ -168,3 +168,55 @@ setup_git_identity() {
   [[ "$(sed -n 's/^name: //p' "$BATS_TEST_DIRNAME/../../skills/aip/SKILL.md" | head -n 1)" = "aip" ]]
   grep -q '"skills/aip"' "$BATS_TEST_DIRNAME/../../package.json"
 }
+
+# --- uninstall -----------------------------------------------------------------
+
+@test "uninstall removes the install root and restores the shell profile" {
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_INSTALL_ROOT/aip.sh" ]
+  [ -n "$(grep -a 'aip' "$_AIP_SHELL_PROFILE")" ]
+
+  run bash -c '. "$1"; aip uninstall --force' _ "$_AIP_INSTALL_ROOT/aip.sh"
+  [ "$status" -eq 0 ]
+  [ ! -d "$_AIP_INSTALL_ROOT" ]
+  [ "$(cat "$_AIP_SHELL_PROFILE")" = 'export KEEP_THIS=yes' ]
+}
+
+@test "uninstall is a no-op with a note when nothing is installed" {
+  run bash -c '. "$1"; aip uninstall --force' _ "$BATS_TEST_DIRNAME/../../aip.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Nothing to uninstall'* ]]
+  [ "$(cat "$_AIP_SHELL_PROFILE")" = 'export KEEP_THIS=yes' ]
+}
+
+@test "uninstall without --force outside a terminal requires force" {
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+
+  run bash -c '. "$1"; aip uninstall' _ "$_AIP_INSTALL_ROOT/aip.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'requires confirmation'* ]]
+  [ -d "$_AIP_INSTALL_ROOT" ]
+}
+
+@test "uninstall removes a leftover shell block when the install root is gone" {
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+  [ "$status" -eq 0 ]
+  command rm -rf -- "$_AIP_INSTALL_ROOT"
+
+  run bash -c '. "$1"; aip uninstall --force' _ "$BATS_TEST_DIRNAME/../../aip.sh"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$_AIP_SHELL_PROFILE")" = 'export KEEP_THIS=yes' ]
+}
+
+@test "uninstall removes an install root left without a shell block" {
+  mkdir -p "$_AIP_INSTALL_ROOT"
+  printf 'fake aip script\n' >"$_AIP_INSTALL_ROOT/aip.sh"
+  printf '0.5.0\n' >"$_AIP_INSTALL_ROOT/VERSION"
+
+  run bash -c '. "$1"; aip uninstall --force' _ "$BATS_TEST_DIRNAME/../../aip.sh"
+  [ "$status" -eq 0 ]
+  [ ! -d "$_AIP_INSTALL_ROOT" ]
+  [ "$(cat "$_AIP_SHELL_PROFILE")" = 'export KEEP_THIS=yes' ]
+}
