@@ -1179,7 +1179,10 @@ function Get-AipTrackedProfilePrefixes {
 }
 
 function Test-AipPathUnderProfile {
-    param([Parameter(Mandatory)][string]$RelativePath, [Parameter(Mandatory)][string[]]$ProfilePrefixes)
+    # $ProfilePrefixes may be $null or empty (a repo with no tracked .gitignore
+    # files); Mandatory rejects both, so it is optional and a missing prefix
+    # list simply means nothing is under a profile prefix.
+    param([Parameter(Mandatory)][string]$RelativePath, [string[]]$ProfilePrefixes = @())
     $normalized = [string]$RelativePath.Replace('\', '/')
     $first = $normalized.Split('/')[0]
     if ($normalized -eq $first) { return $false }

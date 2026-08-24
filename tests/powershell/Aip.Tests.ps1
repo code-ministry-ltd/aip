@@ -105,11 +105,13 @@ AfterEach {
 }
 
 It 'reports the embedded version and rejects extra arguments' {
-    aip version | Should -Be 'aip 0.5.0'
+    $versionSource = Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Raw
+    $expectedVersion = 'aip ' + ($versionSource -match '(?m)^# Version: (\S+)$' | ForEach-Object { $Matches[1] })
+    aip version | Should -Be $expectedVersion
     $global:LASTEXITCODE | Should -Be 0
-    aip --version | Should -Be 'aip 0.5.0'
+    aip --version | Should -Be $expectedVersion
     $global:LASTEXITCODE | Should -Be 0
-    aip -v | Should -Be 'aip 0.5.0'
+    aip -v | Should -Be $expectedVersion
     $global:LASTEXITCODE | Should -Be 0
     aip version extra *> $null
     $global:LASTEXITCODE | Should -Not -Be 0
