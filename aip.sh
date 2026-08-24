@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.6.0'
+_AIP_VERSION='0.6.1'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
@@ -395,6 +395,12 @@ _aip_check_live_profile_links() {
   # shellcheck disable=SC2094
   while IFS= read -r -d '' link_path; do
     relative=${link_path#"$profile"/}
+    # node_modules is machine-local and forbidden from ever being tracked
+    # (see _aip_is_forbidden_path); the links npm creates inside it are
+    # npm's, not the profile's, so they are exempt from this check.
+    case $relative in
+      node_modules|node_modules/*|*/node_modules|*/node_modules/*) continue ;;
+    esac
     if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
       command rm -f "$entries"
       _aip_error "profile contains an unsupported symbolic link that could escape its boundary: $relative"

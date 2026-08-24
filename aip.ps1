@@ -9,7 +9,7 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = $HOME
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.6.0'
+$script:AipVersion = '0.6.1'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 
@@ -789,6 +789,10 @@ function Test-AipProfileReparsePoints {
                 if ([IO.Path]::GetFullPath($item.FullName) -eq $gitPath) { continue }
                 $relative = [IO.Path]::GetRelativePath($ProfilePath, $item.FullName).Replace('\', '/')
                 if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                    # node_modules is machine-local and forbidden from ever being
+                    # tracked (see Test-AipForbiddenPath); the links npm creates
+                    # inside it are npm's, not the profile's.
+                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*') { continue }
                     if ($item.LinkType -ne 'SymbolicLink' -or (-not $required.Contains($relative) -and -not (Test-AipPassthroughLink $relative $ProfilePath))) {
                         $script:AipProfileBoundaryError = "profile contains an unsupported symbolic link, junction, or mount that could escape its boundary: $relative"
                         return $false
