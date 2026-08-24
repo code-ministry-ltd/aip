@@ -635,8 +635,36 @@ make_upstream() {
   run aip sync
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *'remote profile has an invalid required link'* ]]
+  [[ "$output" == *'unexpected target'* ]]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = '../skills' ]
+}
+
+@test "sync tolerates a remote profile whose .gitignore is missing when its links are intact" {
+  make_upstream
+  git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
+  git -C "$BATS_TEST_TMPDIR/other" rm -q work/.gitignore
+  git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'drop tracked gitignore'
+  git -C "$BATS_TEST_TMPDIR/other" push -q
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+}
+
+@test "sync rejects a remote required link with a foreign target even when the profile prefix is incomplete" {
+  make_upstream
+  git clone -q "$TEST_REMOTE" "$BATS_TEST_TMPDIR/other"
+  git -C "$BATS_TEST_TMPDIR/other" rm -q work/.gitignore
+  rm "$BATS_TEST_TMPDIR/other/work/codex/skills"
+  ln -s ../other "$BATS_TEST_TMPDIR/other/work/codex/skills"
+  git -C "$BATS_TEST_TMPDIR/other" add work/codex/skills
+  git -C "$BATS_TEST_TMPDIR/other" commit -q -m 'corrupt remote link'
+  git -C "$BATS_TEST_TMPDIR/other" push -q
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'unexpected target'* ]]
 }
 
 @test "sync rejects optional remote links before they enter a harness directory" {

@@ -161,6 +161,35 @@ setup() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
 }
 
+@test "create never tracks pass-through links when the gitignore block cannot be written" {
+  # Simulates the broken-link case: reconciliation ran but could not protect the
+  # links, so at add time they exist on disk un-ignored. Create must still refuse
+  # to track them.
+  _aip_gitignore_set_passthrough_block() { return 1; }
+
+  run aip create unguarded
+
+  [ "$status" -eq 0 ]
+  [ -L "$_AIP_PROFILE_ROOT/unguarded/pi/models.json" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files --stage -- unguarded/pi/models.json unguarded/pi/auth.json unguarded/pi/themes)" ]
+}
+
+@test "clone never tracks pass-through links when the source carries no gitignore block" {
+  _aip_gitignore_set_passthrough_block() { return 1; }
+  # Strip the pass-through block from the source profile's committed gitignore so
+  # the archive carries no protection and the broad add would track the links.
+  sed -i.bak '/aip pass-through (machine-local, do not sync) BEGIN/,/aip pass-through END/d' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  command rm -f "$_AIP_PROFILE_ROOT/work/.gitignore.bak"
+  git -C "$_AIP_PROFILE_ROOT" add work/.gitignore
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'strip block'
+
+  run aip clone work unguarded-clone
+
+  [ "$status" -eq 0 ]
+  [ -L "$_AIP_PROFILE_ROOT/unguarded-clone/pi/models.json" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files --stage -- unguarded-clone/pi/models.json unguarded-clone/pi/auth.json unguarded-clone/pi/themes)" ]
+}
+
 @test "import --force over a pass-through link replaces it and clears the entry" {
   run aip import pi models.json --profile work --force
   [ "$status" -eq 0 ]
