@@ -372,6 +372,21 @@ _aip_is_required_profile_link() {
   esac
 }
 
+_aip_required_link_target() {
+  # $1 = a full tracked/remote relative path (e.g. work/claude/skills). Prints the
+  # exact target aip creates for its fixed required profile links, requiring a
+  # profile prefix, so root-level lookalikes are rejected. Returns 1 for any path
+  # aip does not link.
+  local path=${1-} rel
+  [ "$path" = "${path%%/*}" ] && return 1
+  rel=${path#*/}
+  case $rel in
+    claude/skills|codex/skills|pi/skills|opencode/skills) printf '%s\n' '../skills' ;;
+    codex/AGENTS.md|pi/AGENTS.md|opencode/AGENTS.md) printf '%s\n' '../AGENTS.md' ;;
+    *) return 1 ;;
+  esac
+}
+
 _aip_check_live_profile_links() {
   local profile=$1 entries link_path relative
   entries=$(command mktemp "${TMPDIR:-/tmp}/aip-links.XXXXXX") || return
@@ -1951,28 +1966,40 @@ _aip_check_skill_repositories() {
 }
 
 _aip_check_tracked_links() {
-  local root=$1 entries record mode relative profiles
+  # Every tracked symbolic link must be one of aip's fixed required profile links
+  # (profile prefix plus one of seven paths) whose stored target is exactly the
+  # target aip creates. The rule is marker-free on purpose: it must hold even when
+  # a profile's tracked .gitignore is missing (a half-present profile must never
+  # brick every launch), and the target check closes the hole where a required
+  # link name with a hostile target passed on its name alone.
+  local root=$1 entries record mode rest hash relative expected target
   entries=$(command mktemp "${TMPDIR:-/tmp}/aip-index.XXXXXX") || return
-  profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || { command rm -f "$entries"; return; }
-  _aip_git -C "$root" ls-files --stage -z >|"$entries" || { command rm -f "$entries" "$profiles"; return 1; }
-  while IFS= read -r -d '' record; do
-    case ${record%% *} in 100644) ;; *) continue ;; esac
-    relative=${record#*$'\t'}
-    case $relative in */.gitignore) printf '%s\n' "${relative%%/*}" >>"$profiles" ;; esac
-  done <"$entries"
+  _aip_git -C "$root" ls-files --stage -z >|"$entries" || { command rm -f "$entries"; return 1; }
   # Cleanup unlinks the name; the loop keeps its already-open descriptor.
   # shellcheck disable=SC2094
   while IFS= read -r -d '' record; do
     mode=${record%% *}
+    [ "$mode" = 120000 ] || continue
     relative=${record#*$'\t'}
-    if [ "$mode" = 120000 ] &&
-       { ! _aip_under_profile "$relative" "$profiles" || ! _aip_is_required_profile_link "${relative#*/}"; }; then
-      command rm -f "$entries" "$profiles"
+    if ! expected=$(_aip_required_link_target "$relative"); then
+      command rm -f "$entries"
       _aip_error "tracked profile contains an unsupported symbolic link: $relative"
       return 1
     fi
+    rest=${record#* }
+    hash=${rest%% *}
+    if ! target=$(_aip_git -C "$root" cat-file blob "$hash" 2>/dev/null); then
+      command rm -f "$entries"
+      _aip_error "could not read the stored target of tracked link: $relative"
+      return 1
+    fi
+    if [ "$target" != "$expected" ]; then
+      command rm -f "$entries"
+      _aip_error "tracked profile link has an unexpected target: $relative"
+      return 1
+    fi
   done <"$entries"
-  command rm -f "$entries" "$profiles"
+  command rm -f "$entries"
 }
 
 _aip_require_no_linked_profiles() {
