@@ -1,6 +1,6 @@
 {
   "name": "@code-ministry/aip",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "AI profiles shared across agentic harnesses",
   "repository": {
     "type": "git",

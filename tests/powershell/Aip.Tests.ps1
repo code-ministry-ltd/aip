@@ -1316,6 +1316,22 @@ Describe 'Git checkpoint and sync' {
         (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'outside'
     }
 
+    It 'tolerates npm-managed symlinks under node_modules' {
+        $profile = Join-Path $script:AipProfileRoot 'work'
+        $bin = Join-Path $profile 'pi/npm/node_modules/.bin'
+        New-Item -ItemType Directory -Path $bin -Force | Out-Null
+        $external = Join-Path $TestDrive 'external-bin'
+        'outside' | Set-Content -LiteralPath $external
+        # Deliberately points outside the profile: the exemption is the
+        # node_modules location, not where the link happens to point.
+        New-Item -ItemType SymbolicLink -Path (Join-Path $bin 'anthropic-ai-sdk') -Target $external | Out-Null
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'outside'
+    }
+
     It 'tolerates a profile whose tracked .gitignore is missing when its links are intact' {
         $root = $script:AipProfileRoot
         & git -C $root rm -q --cached work/.gitignore

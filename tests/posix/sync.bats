@@ -338,6 +338,20 @@ make_upstream() {
   [ "$(cat "$external")" = outside ]
 }
 
+@test "sync tolerates npm-managed symlinks under node_modules" {
+  local external="$BATS_TEST_TMPDIR/external-bin"
+  mkdir -p "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules/.bin"
+  printf 'outside\n' >"$external"
+  # Deliberately points outside the profile: the exemption is the
+  # node_modules location, not where the link happens to point.
+  ln -s "$external" "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules/.bin/anthropic-ai-sdk"
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  [ "$(cat "$external")" = outside ]
+}
+
 @test "sync tolerates a profile whose tracked .gitignore is missing when its links are intact" {
   git -C "$_AIP_PROFILE_ROOT" rm -q --cached work/.gitignore
   git -C "$_AIP_PROFILE_ROOT" commit -q -m 'drop tracked gitignore'
