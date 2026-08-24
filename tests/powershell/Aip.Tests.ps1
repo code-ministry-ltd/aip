@@ -2277,6 +2277,7 @@ It 'returns a nonzero process status when installation fails' {
         }
     }
 }
+}
 
 Describe 'import' {
     BeforeAll {
