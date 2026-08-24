@@ -400,6 +400,7 @@ aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
 aip doctor [NAME]                  diagnose the repository and profiles
 aip run [NAME] HARNESS [ARGS...]   launch a harness with a profile
 aip update                         update the aip npm package
+aip uninstall [--force]            remove the aip installation (not your profiles)
 aip version                        show the aip version
 aip help                           show help (--help and -h work too)
 ```
@@ -454,10 +455,18 @@ The two implementations (`aip.sh`, `aip.ps1`) are required to be behaviourally i
 
 ## Uninstall
 
-Profiles are retained. Remove only the marked block between `# >>> aip >>>` and `# <<< aip <<<` from `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile, then delete the installed directory:
+```sh
+aip uninstall
+```
 
-- POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`)
-- Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
+Removes the aip installation without touching your data:
+
+- the marked block between `# >>> aip >>>` and `# <<< aip <<<` in `.bashrc`, `.bash_profile`, `.bash_login`, `.profile`, `.zshrc` or your PowerShell profile
+- the installed directory — POSIX: `${XDG_DATA_HOME:-$HOME/.local/share}/aip/` (`aip.sh` and `VERSION`); Windows: `$env:LOCALAPPDATA\aip\` (`aip.ps1` and `VERSION`)
+
+Your profiles repository (at `~/agent-profiles` by default) and your harness configuration (`~/.claude`, `~/.codex`, `~/.pi/agent`, `~/.config/opencode`) are **untouched**. Restart your shell afterwards; the shell functions disappear.
+
+Outside a terminal, `aip uninstall` refuses without `--force`. If you ever have to uninstall by hand (for example after the install root was deleted but the shell block remains), remove the marked block as above and delete the installed directory yourself. To come back, re-run `npx -y @code-ministry/aip@latest install`.
 - PowerShell on macOS/Linux: `~/.local/share/aip/`
 - The managed skill, if you installed aip: `<profiles-root>/aip/skills/aip/` (including `.aip-managed`)
 

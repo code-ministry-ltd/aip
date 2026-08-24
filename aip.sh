@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.5.0'
+_AIP_VERSION='0.6.0'
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
@@ -1473,7 +1473,7 @@ _aip_is_command() {
     [ "${1-}" = skills ] ||
     [ "${1-}" = create ] || [ "${1-}" = clone ] || [ "${1-}" = default ] ||
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
-    [ "${1-}" = local ] || [ "${1-}" = manage ] || [ "${1-}" = remote ] ||
+    [ "${1-}" = local ] || [ "${1-}" = manage ] || [ "${1-}" = remote ] || [ "${1-}" = uninstall ] ||
     [ "${1-}" = import ] || [ "${1-}" = run ] ||
     [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
@@ -3260,6 +3260,7 @@ Commands:
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Update the aip npm package
+  aip uninstall [--force]            Remove the aip installation (not your profiles)
   aip version                        Show the aip version
   aip help                           Show this help
 
@@ -3447,10 +3448,107 @@ aip() {
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
     use) _aip_use "$@" ;;
+    uninstall) _aip_uninstall "$@" ;;
     update) _aip_update "$@" ;;
     version) _aip_version "$@" ;;
     which) _aip_which "$@" ;;
   esac
+}
+
+_aip_shell_profile_path() {
+  # The shell profile the installer marks, resolved the same way install.sh does.
+  if [ -n "${_AIP_SHELL_PROFILE-}" ]; then
+    printf '%s\n' "$_AIP_SHELL_PROFILE"
+    return 0
+  fi
+  case ${SHELL##*/} in
+    bash)
+      if [ "$(command uname -s 2>/dev/null)" = Darwin ]; then
+        for candidate in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+          [ -e "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+        done
+        printf '%s\n' "$HOME/.bash_profile"
+      else
+        printf '%s\n' "$HOME/.bashrc"
+      fi
+      return 0
+      ;;
+    zsh)
+      printf '%s\n' "$HOME/.zshrc"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_aip_uninstall() {
+  local force=0
+  if [ "${1-}" = --force ] && [ "$#" -eq 1 ]; then force=1; shift; fi
+  [ "$#" -eq 0 ] || {
+    _aip_error 'usage: aip uninstall [--force]'
+    return 2
+  }
+  local install_root shell_profile has_root=0 has_block=0 temporary answer
+  install_root=${_AIP_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/aip}
+  if ! shell_profile=$(_aip_shell_profile_path); then
+    _aip_error 'supported login shells are Bash and Zsh; set SHELL correctly and retry'
+    return 1
+  fi
+  { [ -d "$install_root" ] && {
+      [ -f "$install_root/aip.sh" ] || [ -f "$install_root/aip.ps1" ] || [ -f "$install_root/VERSION" ]
+    }; } && has_root=1
+  if [ -f "$shell_profile" ] && command grep -Fqx '# >>> aip >>>' "$shell_profile"; then has_block=1; fi
+  if [ "$has_root" -eq 0 ] && [ "$has_block" -eq 0 ]; then
+    printf 'Nothing to uninstall (no aip install at %s and no aip block in %s).\n' "$install_root" "$shell_profile"
+    return 0
+  fi
+  local prompt
+  if [ "$has_root" -eq 1 ] && [ "$has_block" -eq 1 ]; then
+    prompt='Remove the aip installation root and the shell profile block? [y/N] '
+  elif [ "$has_root" -eq 1 ]; then
+    prompt='Remove the aip installation root? [y/N] '
+  else
+    prompt='Remove the aip block from your shell profile? [y/N] '
+  fi
+  if [ "$force" -ne 1 ]; then
+    if [ ! -t 0 ]; then
+      _aip_error 'uninstall requires confirmation; rerun with --force'
+      return 1
+    fi
+    printf '%s' "$prompt"
+    IFS= read -r answer || return 1
+    _aip_delete_confirm_accepts "$answer" || { _aip_error 'uninstall cancelled'; return 1; }
+  fi
+  if [ "$has_block" -eq 1 ]; then
+    temporary=$(command mktemp "${shell_profile}.XXXXXX") || return 1
+    # Drops the marked block and the blank separator line the installer adds
+    # before it; every other line is preserved verbatim.
+    if ! command awk '
+      in_block { if ($0 == "# <<< aip <<<") in_block = 0; next }
+      $0 == "# >>> aip >>>" { if (have && held == "") have = 0; in_block = 1; next }
+      { if (have) print held; held = $0; have = 1 }
+      END { if (have) print held }
+    ' "$shell_profile" >"$temporary"; then
+      command rm -f "$temporary"
+      _aip_error "could not update the shell profile: $shell_profile"
+      return 1
+    fi
+    if ! command cat "$temporary" >"$shell_profile"; then
+      command rm -f "$temporary"
+      _aip_error "could not update the shell profile: $shell_profile"
+      return 1
+    fi
+    command rm -f "$temporary"
+  fi
+  if [ "$has_root" -eq 1 ]; then
+    if ! command rm -rf -- "$install_root"; then
+      _aip_error "could not remove the install root: $install_root"
+      return 1
+    fi
+  fi
+  printf 'Uninstalled aip. Your profiles repository at %s and your harness configuration are untouched; restart your shell to finish.\n' "$_AIP_PROFILE_ROOT"
 }
 
 claude() {

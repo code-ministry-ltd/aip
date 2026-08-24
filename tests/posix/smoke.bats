@@ -6,18 +6,20 @@
 
 @test "version reports the embedded version and rejects extra arguments" {
   export AIP_SOURCE="$BATS_TEST_DIRNAME/../../aip.sh"
+  local expected
+  expected="aip $(sed -n "s/^_AIP_VERSION='\(.*\)'$/\1/p" "$AIP_SOURCE" | head -n 1)"
 
   run bash -c 'source "$0"; aip version' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$expected" ]
 
   run bash -c 'source "$0"; aip --version' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$expected" ]
 
   run bash -c 'source "$0"; aip -v' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
-  [ "$output" = 'aip 0.5.0' ]
+  [ "$output" = "$expected" ]
 
   run bash -c 'source "$0"; aip version extra' "$AIP_SOURCE"
   [ "$status" -ne 0 ]
@@ -31,7 +33,7 @@
   run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in skills create list which default use local clone delete manage sync remote doctor run update version help import; do
+  for cmd in skills create list which default use local clone delete manage sync remote doctor run update uninstall version help import; do
     [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
   done
   [[ "$output" == *'aip skills add|update|remove'* ]]

@@ -140,7 +140,7 @@ It 'update rejects extra arguments without invoking npx' {
 It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput = aip help | Out-String
     $global:LASTEXITCODE | Should -Be 0
-    foreach ($command in 'skills', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'version', 'help', 'import') {
+    foreach ($command in 'skills', 'create', 'list', 'which', 'default', 'use', 'local', 'clone', 'delete', 'manage', 'sync', 'remote', 'doctor', 'run', 'update', 'uninstall', 'version', 'help', 'import') {
         $helpOutput | Should -Match ([regex]::Escape("aip $command"))
     }
     $helpOutput | Should -Match ([regex]::Escape('aip skills add|update|remove'))
@@ -1313,6 +1313,43 @@ Describe 'Git checkpoint and sync' {
         (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'outside'
     }
 
+    It 'tolerates a profile whose tracked .gitignore is missing when its links are intact' {
+        $root = $script:AipProfileRoot
+        & git -C $root rm -q --cached work/.gitignore
+        & git -C $root commit -q -m 'drop tracked gitignore'
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $root ls-files -- work/.gitignore) | Should -Not -BeNullOrEmpty
+    }
+
+    It 'rejects a tracked required link with an unexpected target' {
+        $root = $script:AipProfileRoot
+        $evil = Join-Path $TestDrive 'evil-target'
+        '../../..' | Set-Content -LiteralPath $evil -NoNewline
+        $hash = & git -C $root hash-object -w $evil
+        & git -C $root update-index --add --cacheinfo "120000,$hash,work/codex/skills"
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'unexpected target'
+    }
+
+    It 'rejects a tracked optional link even under a healthy profile' {
+        $root = $script:AipProfileRoot
+        $blob = Join-Path $TestDrive 'optional-target'
+        'outside' | Set-Content -LiteralPath $blob -NoNewline
+        $hash = & git -C $root hash-object -w $blob
+        & git -C $root update-index --add --cacheinfo "120000,$hash,work/claude/settings.json"
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'unsupported symbolic link'
+    }
+
     It 'pulls and pushes through a local bare upstream' {
         Initialize-TestUpstream
         $other = Join-Path $TestDrive 'other'
@@ -1564,8 +1601,39 @@ exit 1
         $profile = Join-Path $script:AipProfileRoot 'work'
         aip sync *> $null
         $global:LASTEXITCODE | Should -Not -Be 0
-        $script:AipLastError | Should -Match 'remote profile has an invalid required link'
+        $script:AipLastError | Should -Match 'unexpected target'
         [string](Get-Item (Join-Path $profile 'codex/skills')).Target -replace '\\', '/' | Should -Be '../skills'
+    }
+
+    It 'tolerates a remote profile whose .gitignore is missing when its links are intact' {
+        Initialize-TestUpstream
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        & git -C $other rm -q work/.gitignore
+        & git -C $other commit -q -m 'drop tracked gitignore'
+        & git -C $other push -q
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'rejects a remote required link with a foreign target even when the profile prefix is incomplete' {
+        Initialize-TestUpstream
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        & git -C $other rm -q work/.gitignore
+        $link = Join-Path $other 'work/codex/skills'
+        Remove-Item -LiteralPath $link -Force
+        New-Item -ItemType SymbolicLink -Path $link -Target '../other' | Out-Null
+        & git -C $other add work/codex/skills
+        & git -C $other commit -q -m 'corrupt remote link'
+        & git -C $other push -q
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'unexpected target'
     }
 
     It 'rejects optional remote links before they enter a harness directory' {
@@ -2148,7 +2216,66 @@ It 'returns a nonzero process status when installation fails' {
         (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'skills/aip/SKILL.md')) | Should -Contain 'name: aip'
         (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'package.json') -Raw) | Should -Match '"skills/aip"'
     }
-}
+
+    It 'uninstall removes the install root and the shell profile block' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        'Set-Variable KeepThis yes' | Set-Content -LiteralPath $profilePath
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $installRoot 'aip.ps1') | Should -BeTrue
+            (Get-Content -LiteralPath $profilePath -Raw) | Should -Match '# >>> aip >>>'
+
+            aip uninstall --force
+            $global:LASTEXITCODE | Should -Be 0
+            Test-Path -LiteralPath $installRoot | Should -BeFalse
+            (Get-Content -LiteralPath $profilePath -Raw).Trim() | Should -Be 'Set-Variable KeepThis yes'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'uninstall is a no-op with a note when nothing is installed' {
+        $env:_AIP_INSTALL_ROOT = Join-Path $TestDrive 'never installed'
+        $profilePath = Join-Path $TestDrive 'plain.ps1'
+        'keep' | Set-Content -LiteralPath $profilePath
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            $output = (aip uninstall --force) | Out-String
+            $global:LASTEXITCODE | Should -Be 0
+            $output | Should -Match 'Nothing to uninstall'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'uninstall without --force does not remove anything non-interactively' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        'Set-Variable KeepThis yes' | Set-Content -LiteralPath $profilePath
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        try {
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            aip uninstall *> $null
+            $global:LASTEXITCODE | Should -Not -Be 0
+            Test-Path -LiteralPath $installRoot | Should -BeTrue
+            (Get-Content -LiteralPath $profilePath -Raw) | Should -Match '# >>> aip >>>'
+        }
+        finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
 }
 
 Describe 'import' {
