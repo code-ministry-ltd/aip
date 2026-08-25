@@ -89,6 +89,72 @@ zeta	$(cd "$tree/c/pi/skills/zeta" && pwd -P)" ]
   [ -z "$output" ]
 }
 
+@test "selected create skills copy as owned content into the staged shared skills directory" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  local stage="$BATS_TEST_TMPDIR/stage"
+  local selection="$BATS_TEST_TMPDIR/selection"
+  mkdir -p "$tree/profile/pi/skills/alpha" "$stage/skills"
+  printf 'name: alpha\n' >"$tree/profile/pi/skills/alpha/SKILL.md"
+  printf '1\n' >"$selection"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+
+  run _aip_copy_selected_create_skills "$stage" "$selection"
+
+  [ "$status" -eq 0 ]
+  [ "$(cat "$stage/skills/alpha/SKILL.md")" = 'name: alpha' ]
+  [ ! -L "$stage/skills/alpha" ]
+}
+
+@test "selected create skills reject a source containing a symbolic link" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  local stage="$BATS_TEST_TMPDIR/stage"
+  local selection="$BATS_TEST_TMPDIR/selection"
+  mkdir -p "$tree/profile/pi/skills/alpha" "$stage/skills"
+  touch "$tree/profile/pi/skills/alpha/SKILL.md"
+  ln -s /etc/passwd "$tree/profile/pi/skills/alpha/escape"
+  printf '1\n' >"$selection"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+
+  run _aip_copy_selected_create_skills "$stage" "$selection"
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$stage/skills/alpha" ]
+}
+
+@test "create stages selected skills in the shared root and commits them" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  mkdir -p "$tree/profile/pi/skills/alpha"
+  printf 'name: alpha\n' >"$tree/profile/pi/skills/alpha/SKILL.md"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+  _aip_prompt_create_skill_selection() { printf '1\n'; }
+
+  run aip create picked
+
+  [ "$status" -eq 0 ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/picked/skills/alpha/SKILL.md")" = 'name: alpha' ]
+  [ -L "$_AIP_PROFILE_ROOT/picked/pi/skills" ]
+  [ "$(readlink "$_AIP_PROFILE_ROOT/picked/pi/skills")" = '../skills' ]
+  [ -n "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- picked/skills/alpha/SKILL.md)" ]
+}
+
+@test "create rolls back when a selected skill cannot be copied safely" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  mkdir -p "$tree/profile/pi/skills/alpha"
+  touch "$tree/profile/pi/skills/alpha/SKILL.md"
+  ln -s /etc/passwd "$tree/profile/pi/skills/alpha/escape"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+  _aip_prompt_create_skill_selection() { printf '1\n'; }
+
+  run aip create rejected
+
+  [ "$status" -ne 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/rejected" ]
+}
+
 @test "default sets and shows the fallback profile" {
   run aip default work
   [ "$status" -eq 0 ]
