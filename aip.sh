@@ -534,17 +534,17 @@ _aip_resolve_path() {
   # symlink chain (bounded, so loops cannot hang) then normalises lexically. Broken
   # links resolve to their lexical target, which is exactly what the pass-through
   # boundary needs to accept or reject them.
-  local path=$1 link depth=0
-  case $path in /*) ;; *) path=$PWD/$path ;; esac
-  while [ -L "$path" ] && [ "$depth" -lt 40 ]; do
-    link=$(command readlink "$path") || return 1
+  local source_path=$1 link depth=0
+  case $source_path in /*) ;; *) source_path=$PWD/$source_path ;; esac
+  while [ -L "$source_path" ] && [ "$depth" -lt 40 ]; do
+    link=$(command readlink "$source_path") || return 1
     case $link in
-      /*) path=$link ;;
-      *) path=${path%/*}/$link ;;
+      /*) source_path=$link ;;
+      *) source_path=${source_path%/*}/$link ;;
     esac
     depth=$((depth + 1))
   done
-  _aip_normalize_path "$path"
+  _aip_normalize_path "$source_path"
 }
 
 
@@ -3252,7 +3252,7 @@ _aip_skills_update_usage() {
 
 _aip_skills_update_one() (
   # $1 profile, $2 name. Sidecar-keyed: missing dest or sidecar is an error.
-  local pname=$1 name=$2 dest url path source dir skill_dir staging
+  local pname=$1 name=$2 dest url source_path source dir skill_dir staging
   dest=$(_aip_profile_path "$pname")/skills/$name
   if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
     _aip_error "skill '$name' is not installed in profile $pname"
@@ -3264,14 +3264,14 @@ _aip_skills_update_one() (
   fi
   source=$_AIP_SKILL_SOURCE
   url=$_AIP_SKILL_URL
-  path=$_AIP_SKILL_PATH
+  source_path=$_AIP_SKILL_PATH
   dir=$(command mktemp "${TMPDIR:-/tmp}/aip-add.XXXXXX") || { _aip_error 'could not create a temporary directory'; return 1; }
   command rm -f -- "$dir"
   trap 'command rm -rf -- "$dir"; [ -n "${staging-}" ] && command rm -rf -- "$staging"' EXIT
   if ! _aip_add_clone "$url" "$dir"; then
     return 1
   fi
-  if ! _aip_add_resolve_skill "$dir" "$path"; then
+  if ! _aip_add_resolve_skill "$dir" "$source_path"; then
     return 1
   fi
   skill_dir=$_AIP_ADD_SKILL_DIR
@@ -3280,7 +3280,7 @@ _aip_skills_update_one() (
   if ! _aip_add_copy_skill "$skill_dir" "$staging" "$name"; then
     return 1
   fi
-  if ! _aip_write_skill_source "$staging" "$source" "$url" "$path"; then
+  if ! _aip_write_skill_source "$staging" "$source" "$url" "$source_path"; then
     return 1
   fi
   if ! command rm -rf -- "$dest"; then
@@ -3507,7 +3507,7 @@ _aip_add_usage() {
 _aip_add_parse_source() {
   # $1 source. Sets _AIP_ADD_URL, _AIP_ADD_PATH ('' = repository root), _AIP_ADD_NAME.
   # Returns 0 ok, 2 usage error (message printed), 1 invalid in-repo path.
-  local source=$1 url path name rest second
+  local source=$1 url source_path name rest second
   case $source in
     ''|*$'\n'*|*"*"*|*'\\'*|*' '*|*$'\t'*)
       _aip_error "invalid source: $(_aip_redact_url "$source")"
@@ -3520,8 +3520,8 @@ _aip_add_parse_source() {
   esac
   if [[ $source == *'://'* ]]; then
     url=${source%%#*}
-    path=''
-    case $source in *'#'*) path=${source#*#} ;; esac
+    source_path=''
+    case $source in *'#'*) source_path=${source#*#} ;; esac
     case $url in
       https://*|ssh://*|file://*) ;;
       *) _aip_error "unsupported source URL: $(_aip_redact_url "$source"); expected https://, ssh://, git@, or file://"; return 2 ;;
@@ -3529,34 +3529,34 @@ _aip_add_parse_source() {
   elif [[ $source == *'@'* ]]; then
     # scp-style ssh: user@host:owner/repo[.git]
     url=${source%%#*}
-    path=''
-    case $source in *'#'*) path=${source#*#} ;; esac
+    source_path=''
+    case $source in *'#'*) source_path=${source#*#} ;; esac
   else
-    # GitHub shorthand: owner/repo[/sub/path]
+    # GitHub shorthand: owner/repo[/sub/source_path]
     case $source in
       */*) ;;
       *) _aip_error "unsupported source: $source; plain local paths need a file:// URL, or use owner/repo[/path] or a git URL"; return 2 ;;
     esac
     rest=${source#*/}
     second=${rest%%/*}
-    path=''
-    case $rest in */*) path=${rest#*/} ;; esac
+    source_path=''
+    case $rest in */*) source_path=${rest#*/} ;; esac
     url="https://github.com/${source%%/*}/$second.git"
   fi
-  case $path in
-    ''|'/') path='' ;;
+  case $source_path in
+    ''|'/') source_path='' ;;
   esac
   local p seg
-  p=$path
+  p=$source_path
   while [ -n "$p" ]; do
     seg=${p%%/*}
     case $seg in
-      ''|.|..|/*) _aip_error "invalid source path: $path"; return 1 ;;
+      ''|.|..|/*) _aip_error "invalid source path: $source_path"; return 1 ;;
     esac
     case $p in */*) p=${p#*/} ;; *) p='' ;; esac
   done
-  if [ -n "$path" ]; then
-    name=${path##*/}
+  if [ -n "$source_path" ]; then
+    name=${source_path##*/}
   else
     name=${url##*/}
     name=${name##*:}
@@ -3564,7 +3564,7 @@ _aip_add_parse_source() {
   fi
   [ -n "$name" ] || { _aip_error "unsupported source: $(_aip_redact_url "$source"); cannot determine the skill name"; return 2; }
   _AIP_ADD_URL=$url
-  _AIP_ADD_PATH=$path
+  _AIP_ADD_PATH=$source_path
   _AIP_ADD_NAME=$name
   return 0
 }
@@ -3586,33 +3586,33 @@ _aip_add_clone() {
 
 _aip_add_resolve_skill() {
   # $1 cloned root, $2 in-repo path ('' = root). Sets _AIP_ADD_SKILL_DIR.
-  local root=$1 path=$2 prefix='' seg dir=$1
-  if [ -n "$path" ]; then
-    local p=$path
+  local root=$1 source_path=$2 prefix='' seg dir=$1
+  if [ -n "$source_path" ]; then
+    local p=$source_path
     while [ -n "$p" ]; do
       seg=${p%%/*}
       case $seg in
-        ''|.|..|/*) _aip_error "invalid source path: $path"; return 1 ;;
+        ''|.|..|/*) _aip_error "invalid source path: $source_path"; return 1 ;;
       esac
       if [ ! -e "$root/$prefix$seg" ] || [ -L "$root/$prefix$seg" ]; then
         if [ -e "$root/$prefix$seg" ] && [ -L "$root/$prefix$seg" ]; then
-          _aip_error "source path follows a symlink: $path"
+          _aip_error "source path follows a symlink: $source_path"
         else
-          _aip_error "no such path in the source repository: $path"
+          _aip_error "no such path in the source repository: $source_path"
         fi
         return 1
       fi
-      [ -d "$root/$prefix$seg" ] || { _aip_error "no such path in the source repository: $path"; return 1; }
+      [ -d "$root/$prefix$seg" ] || { _aip_error "no such path in the source repository: $source_path"; return 1; }
       prefix=$prefix$seg/
       case $p in */*) p=${p#*/} ;; *) p='' ;; esac
     done
     dir="$root/$prefix"
   fi
   if ! _aip_path_is_under "$root" "$dir"; then
-    _aip_error "invalid source path: ${path:-$_AIP_ADD_NAME}"
+    _aip_error "invalid source path: ${source_path:-$_AIP_ADD_NAME}"
     return 1
   fi
-  [ -f "$dir/SKILL.md" ] || { _aip_error "no SKILL.md in the source path: ${path:-$_AIP_ADD_NAME}"; return 1; }
+  [ -f "$dir/SKILL.md" ] || { _aip_error "no SKILL.md in the source path: ${source_path:-$_AIP_ADD_NAME}"; return 1; }
   _AIP_ADD_SKILL_DIR=$dir
   return 0
 }
@@ -3650,6 +3650,9 @@ _aip_add_copy_skill() {
   # $1 source skill dir, $2 dest (must not exist), $3 display name.
   # Walk the source first: any symlink fails (dest absent). Then copy excluding .git.
   local src=$1 dest=$2 name=$3 found entry
+  # zsh's NOMATCH option errors on the empty hidden-file glob below; scope the
+  # portable no-match behaviour to this function without changing caller options.
+  if [ -n "${ZSH_VERSION-}" ]; then setopt localoptions nonomatch; fi
   found=$(command find "$src" \( -name .git -type d -prune \) -o -type l -print) || return 1
   if [ -n "$found" ]; then
     _aip_error "skill '$name' contains a nested symlink; dest is not created"
@@ -3674,7 +3677,7 @@ _aip_add_copy_skill() {
 _aip_add() (
   _aip_clear_git_routing
   local profile='' all_profiles=0 force=0 skip_existing=0
-  local arg sourcesfile installedfile profilesfile src name url path pname rc
+  local arg sourcesfile installedfile profilesfile src name url source_path pname rc
   sourcesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-sources.XXXXXX") || return 1
   installedfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-installed.XXXXXX") || { command rm -f "$sourcesfile"; return 1; }
   profilesfile=$(command mktemp "${TMPDIR:-/tmp}/aip-add-profiles.XXXXXX") || { command rm -f "$sourcesfile" "$installedfile"; return 1; }
@@ -3730,7 +3733,7 @@ _aip_add() (
     [ -n "$src" ] || continue
     _aip_add_parse_source "$src" || return
     url=$_AIP_ADD_URL
-    path=$_AIP_ADD_PATH
+    source_path=$_AIP_ADD_PATH
     name=$_AIP_ADD_NAME
     _aip_validate_name "$name" || { _aip_error "invalid skill name '$name'; use lowercase letters, digits, hyphens or underscores"; return 1; }
     if [ -n "$(command grep -Fx -- "$name" "$installedfile" 2>/dev/null)" ]; then
@@ -3741,7 +3744,7 @@ _aip_add() (
     dir=$(command mktemp "${TMPDIR:-/tmp}/aip-add.XXXXXX") || { _aip_error 'could not create a temporary directory'; return 1; }
     command rm -f -- "$dir"
     _aip_add_clone "$url" "$dir" || { command rm -rf -- "$dir"; return 1; }
-    _aip_add_resolve_skill "$dir" "$path" || { command rm -rf -- "$dir"; return 1; }
+    _aip_add_resolve_skill "$dir" "$source_path" || { command rm -rf -- "$dir"; return 1; }
     local skill_dir dest install_rc rc=0
     skill_dir=$_AIP_ADD_SKILL_DIR
     while IFS= read -r pname; do
@@ -3751,7 +3754,7 @@ _aip_add() (
       case $install_rc in
         0)
           dest=$(_aip_profile_path "$pname")/skills/$name
-          if ! _aip_write_skill_source "$dest" "$src" "$url" "$path"; then
+          if ! _aip_write_skill_source "$dest" "$src" "$url" "$source_path"; then
             rc=1
             break
           fi
