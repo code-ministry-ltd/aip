@@ -434,16 +434,42 @@ _aip_check_live_profile_links() {
   command rm -f "$entries"
 }
 
+_aip_primary_config_rels() {
+  # Primary configs are profile-owned, portable content—not machine-local fallback.
+  printf '%s\n' pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json
+}
+
+_aip_materialize_primary_configs() {
+  # $1 staged profile. Copies each existing source config byte-for-byte.
+  local profile_path=$1 rel harness file source
+  while IFS= read -r rel; do
+    harness=${rel%%/*}
+    file=${rel#*/}
+    source=$(_aip_import_harness_root "$harness")/$file || return 1
+    [ -f "$source" ] || continue
+    command cp -- "$source" "$profile_path/$rel" || return 1
+  done < <(_aip_primary_config_rels)
+}
+
+_aip_primary_config_add_paths() {
+  # $1 profile name, $2 profile path. Prints only owned regular config paths.
+  local name=$1 profile_path=$2 rel
+  while IFS= read -r rel; do
+    [ -f "$profile_path/$rel" ] && [ ! -L "$profile_path/$rel" ] && printf '%s/%s\n' "$name" "$rel"
+  done < <(_aip_primary_config_rels)
+  return 0
+}
+
 _aip_passthrough_rels() {
   # The per-harness pass-through allowlist: machine-local configuration inputs that
   # every profile falls back to unless it defines the path itself. Names are matched
   # without a trailing slash; each maps to the same relative path under the harness
   # default root. Only these paths may ever be linked by pass-through maintenance.
   case ${1-} in
-    pi) printf '%s\n' models.json auth.json settings.json themes prompts extensions npm ;;
-    claude) printf '%s\n' settings.json settings.local.json .credentials.json agents commands context-mode output-styles workflows keybindings.json plugins ;;
-    codex) printf '%s\n' config.toml auth.json plugins ;;
-    opencode) printf '%s\n' opencode.json auth.json tui.json agent command plugins ;;
+    pi) printf '%s\n' models.json auth.json themes prompts extensions npm ;;
+    claude) printf '%s\n' settings.local.json .credentials.json agents commands context-mode output-styles workflows keybindings.json plugins ;;
+    codex) printf '%s\n' auth.json plugins ;;
+    opencode) printf '%s\n' auth.json tui.json agent command plugins ;;
     *) return 1 ;;
   esac
 }
@@ -1292,7 +1318,7 @@ _aip_resolve_profile() {
 }
 
 _aip_write_profile_files() {
-  local profile_path=$1 pi_settings
+  local profile_path=$1
   command mkdir -p "$profile_path/skills" "$profile_path/claude" "$profile_path/codex" "$profile_path/pi" "$profile_path/opencode" || return
   command chmod 700 "$profile_path" || return
   : >"$profile_path/skills/.gitkeep" || return
@@ -1300,13 +1326,7 @@ _aip_write_profile_files() {
   printf '%s\n' '@../AGENTS.md' '' '# Claude Code instructions' >"$profile_path/claude/CLAUDE.md" || return
   printf '%s\n' '# Codex instructions' >"$profile_path/codex/instructions.md" || return
   printf '%s\n' '# Pi instructions' >"$profile_path/pi/APPEND_SYSTEM.md" || return
-  # The profile owns its pi settings from birth (tracked content like AGENTS.md):
-  # seed a copy from the machine-wide file when it has real content; a missing or
-  # trivial global file leaves the pass-through link to form instead.
-  pi_settings=$(_aip_import_harness_root pi)/settings.json
-  if [ -f "$pi_settings" ] && ! _aip_is_trivial_json_file "$pi_settings"; then
-    command cp -- "$pi_settings" "$profile_path/pi/settings.json" || return
-  fi
+  _aip_materialize_primary_configs "$profile_path" || return
   printf '%s\n' \
     '# aip-managed credential and runtime exclusions' \
     '.env' '.env.*' '!.env.example' '*.pem' '*.key' '*.p12' '*.pfx' \
@@ -1352,7 +1372,7 @@ _aip_publish_profile_directory() (
 
 _aip_create() (
   _aip_clear_git_routing
-  local name=${1-} destination stage temporary pi_settings_add selection_file
+  local name=${1-} destination stage temporary primary_config_add selection_file
   [ -n "$name" ] || {
     _aip_error 'usage: aip create NAME'
     return 2
@@ -1399,17 +1419,14 @@ _aip_create() (
   # Add only the profile's owned paths, never the whole directory: pass-through
   # links exist on disk at this point (machine-local, untracked by design) and a
   # broad add would track any that reconciliation failed to ignore.
-  pi_settings_add=''
-  # -f alone follows the pass-through link; only a real file is profile-owned.
-  [ -f "$destination/pi/settings.json" ] && [ ! -L "$destination/pi/settings.json" ] &&
-    pi_settings_add=$name/pi/settings.json
+  primary_config_add=$(_aip_primary_config_add_paths "$name" "$destination") || return
   _aip_git -C "$_AIP_PROFILE_ROOT" add \
     .gitignore \
     "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
     "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
     "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
     "$name/opencode/AGENTS.md" "$name/opencode/skills" \
-    $pi_settings_add || {
+    $primary_config_add || {
     _aip_error "could not commit profile '$name'; check Git identity and hooks"
     return 1
   }

@@ -158,3 +158,75 @@ Port discovery, deterministic deduplication, terminal-aware mixed-delimiter sele
 - Deps: T10–T13 (contract first) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
 
 *Checkpoint 3 (final): `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` pass; POSIX and PowerShell have matching prompts and outcomes.*
+
+---
+
+# Todo: profile-owned primary harness configuration (vNext)
+
+Spec: `tasks/spec.md` (profile-owned primary harness configuration addendum) · Plan: `tasks/plan.md` (same addendum). Each task leaves its relevant suite green; run the full affected suite before committing. Commit one completed task at a time.
+
+## T15 — New POSIX profiles own available primary configs
+
+Create a registry for `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. Materialize every existing global source byte-for-byte in the staged profile, explicitly stage it in the create commit, and remove the four from normal pass-through creation.
+
+- [x] All four existing source files—including empty JSON/TOML—become regular tracked profile files with byte-identical content.
+- [x] Any missing source leaves no profile file or link; create still succeeds.
+- [x] Pass-through reconciliation does not recreate any of the four links.
+- Verify: `npx bats tests/posix/lifecycle.bats tests/posix/passthrough.bats` · **Passed**
+- Deps: — · Files: `aip.sh`, `tests/posix/lifecycle.bats`, `tests/posix/passthrough.bats` · Size: M
+
+## T16 — New PowerShell profiles own available primary configs
+
+Port the ordered config registry, raw source copying, explicit creation-commit staging, and pass-through removal so PowerShell creates the same owned/absent paths as POSIX.
+
+- [ ] Existing global sources, including trivial content, become byte-identical regular tracked files in the new profile.
+- [ ] Missing sources create neither a file nor a link, without failing creation.
+- [ ] The four primary configs are absent from PowerShell pass-through behavior.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Deps: T15 (contract) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
+
+*Checkpoint 1: both create paths produce only regular owned primary configs or absent paths; no primary-config pass-through links remain.*
+
+## T17 — Existing POSIX profiles migrate legacy primary-config links
+
+Generalize Pi-only update adoption into a registry-driven migration that recognizes the historical valid link shape independently of the new pass-through allowlist. Materialize a present target or remove a link whose target is absent, then stage the resulting addition/deletion without touching regular owned files.
+
+- [ ] `aip update` stages byte-identical copies for valid links with present targets and staged deletions for target-missing links.
+- [ ] Regular owned files, malformed/foreign links, and absent paths are not overwritten; failures warn and continue.
+- [ ] A second update is a no-op, and post-migration validation accepts the profile.
+- Verify: `npx bats tests/posix/npm.bats tests/posix/lifecycle.bats`
+- Deps: T15 · Files: `aip.sh`, `tests/posix/npm.bats`, `tests/posix/lifecycle.bats` · Size: M
+
+## T18 — Existing PowerShell profiles migrate with the same rules
+
+Port legacy link recognition, target-present materialization, target-missing deletion, Git staging, and warning-only error handling while accounting for Windows link-target separators.
+
+- [ ] Pester covers all four target-present and target-missing migrations plus idempotency.
+- [ ] Existing real files and malformed/foreign links are preserved or safely rejected without destructive overwrite.
+- [ ] Migrated profiles pass normal layout/sync validation without primary-config link exceptions.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Deps: T17 (contract) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
+
+*Checkpoint 2: migration is staged, idempotent, and leaves no supported primary-config pass-through link in either implementation.*
+
+## T19 — Users understand portable primary configs
+
+Update the README, aip skill, setup guide, and changelog to distinguish the four portable profile-owned configs from machine-local credentials and runtime state; document create and update migration behavior, including the intentional no-secret-scan trust model.
+
+- [ ] Documentation names exactly the four profile-owned config paths and their missing-source behavior.
+- [ ] It states credentials/runtime state remain machine-local and excluded.
+- [ ] Changelog describes the user-visible configuration portability change without promising a release version.
+- Verify: `git diff --check && rg -n 'profile-owned|pass-through|settings.json|config.toml|opencode.json' README.md CHANGELOG.md skills/aip`
+- Deps: T15–T18 · Files: `README.md`, `CHANGELOG.md`, `skills/aip/SKILL.md`, `skills/aip/setup.md` · Size: M
+
+## T20 — CLI help describes primary config ownership
+
+Update help text and smoke assertions so the shipped CLI tells users that primary harness configs are copied into profiles and do not pass through.
+
+- [ ] `aip help` accurately distinguishes portable primary configs from machine-local auth/runtime paths.
+- [ ] Help, `--help`, and `-h` remain identical.
+- [ ] POSIX smoke coverage protects the wording contract.
+- Verify: `npx bats tests/posix/smoke.bats && npm run test:posix`
+- Deps: T19 · Files: `aip.sh`, `tests/posix/smoke.bats` · Size: S
+
+*Checkpoint 3 (final): `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` pass; documentation and CLI agree; release/version bump requires a separate explicit approval.*
