@@ -59,6 +59,36 @@ zeta	$(cd "$tree/c/pi/skills/zeta" && pwd -P)" ]
   [ "$output" = $'Available Pi skills:\n1. alpha\n2. beta' ]
 }
 
+@test "create skill selection accepts mixed delimiters and deduplicates numbers" {
+  run _aip_parse_create_skill_selection 5 '1, 3  5,,3'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'1\n3\n5' ]
+}
+
+@test "create skill selection rejects malformed and out-of-range input" {
+  run _aip_parse_create_skill_selection 3 '1, nope'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'invalid skill selection'* ]]
+
+  run _aip_parse_create_skill_selection 3 '0, 4'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'invalid skill selection'* ]]
+}
+
+@test "create skill selection skips safely when stdin is not a terminal" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  mkdir -p "$tree/profile/pi/skills/alpha"
+  touch "$tree/profile/pi/skills/alpha/SKILL.md"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+
+  run _aip_prompt_create_skill_selection
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "default sets and shows the fallback profile" {
   run aip default work
   [ "$status" -eq 0 ]

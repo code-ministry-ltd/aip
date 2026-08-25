@@ -117,10 +117,10 @@ Add portable POSIX helpers that find only directories containing `SKILL.md` at d
 
 Add the terminal-aware POSIX input flow that accepts unique positive menu numbers separated by commas, whitespace, or both; it reprompts invalid input and defaults to no skills when blank, no candidates, or noninteractive stdin.
 
-- [ ] `1, 3 5` selects those entries once, and a blank line selects none.
-- [ ] Invalid, zero, and out-of-range selections display an error and reprompt without accepting partial input.
-- [ ] Piped/nonterminal creation does not block and selects none.
-- Verify: `npx bats tests/posix/selection.bats`
+- [x] `1, 3 5` selects those entries once, and a blank line selects none.
+- [x] Invalid, zero, and out-of-range selections display an error and reprompt without accepting partial input.
+- [x] Piped/nonterminal creation does not block and selects none.
+- Verify: `npx bats tests/posix/selection.bats` · **Passed**
 - Deps: T10 · Files: `aip.sh`, `tests/posix/selection.bats` · Size: S
 
 *Checkpoint 1: `npx bats tests/posix/selection.bats` passes; `printf '' | aip create noninteractive` completes without a prompt.*
