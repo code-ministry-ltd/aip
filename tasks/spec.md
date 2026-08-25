@@ -125,3 +125,59 @@ When a user creates a profile, `aip` discovers reusable Pi skills from (a) Pi pr
 ## Open questions
 
 None blocking. The exact definition of a “Pi profile skill location” in an arbitrary descendant tree will be confirmed from the repository’s existing profile layout during planning, then encoded narrowly enough to avoid scanning unrelated project directories.
+
+---
+
+# Spec: profile-owned primary harness configuration (vNext)
+
+Living document — update before implementing a changed decision.
+
+## Objective
+
+Every profile owns and synchronizes its primary harness configuration, rather than inheriting it through a machine-local pass-through link. At creation, aip copies each existing global primary config into the staged profile and commits it with the profile. Existing profiles are migrated on `aip update` so all four harnesses—Pi, Claude, Codex, and OpenCode—have the same portable, per-profile configuration model.
+
+## Success criteria
+
+- **SC1 — Four owned primary configs:** the primary configuration paths are exactly `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. They are no longer pass-through allowlist entries in either implementation.
+- **SC2 — Create materializes every existing file:** `aip create NAME` copies each existing global source file byte-for-byte into its matching staged profile path, including empty, whitespace-only, `{}`, and `[]` configurations. These copies are regular files and included in the single creation commit.
+- **SC3 — Missing source is harmless:** when a global source file is absent, create leaves that profile path absent (no synthetic placeholder and no dangling link), letting the harness use its own defaults. Creation still succeeds.
+- **SC4 — Existing-profile migration:** `aip update` converts each existing primary-config pass-through link into a profile-owned regular file. If its global target exists, it copies that target and stages the result; if absent, it removes the stale link and stages the deletion. The command emits one clear status line per migrated path, is idempotent, and never overwrites an existing regular profile-owned config.
+- **SC5 — No pass-through resurrection:** normal pass-through reconciliation never recreates links for these four paths; doctor and sync accept their owned-file or absent states.
+- **SC6 — Explicit trust decision:** creation and migration copy the four files without content scanning. The operator has confirmed they contain no secrets and accepts responsibility for maintaining that invariant; credentials remain in harness-specific authentication stores such as `auth.json`, which continue to be excluded.
+- **SC7 — Cross-platform parity:** Bash/Zsh and PowerShell implement the same create, migration, staging, pass-through, and missing-file behavior. Tests cover every harness, present/trivial/missing source files, commit tracking, legacy link materialization/removal, idempotency, and no overwrite of owned content.
+- **SC8 — Documentation:** help and aip setup documentation explain that the four primary configs are profile-owned and portable, while authentication and runtime paths remain machine-local.
+
+## Boundaries
+
+**Always**
+
+- Copy source files only into the staged profile, before publication; preserve the existing atomic create lifecycle.
+- Use the harness-root resolver already used by pass-through so test fixtures and platform-specific config roots remain correct.
+- Preserve file bytes and do not parse, normalize, redact, or synthesize configuration content.
+- Stage explicit owned paths only; never use broad Git adds that could include credentials or runtime files.
+- Run both POSIX and PowerShell suites before each implementation commit.
+
+**Ask first**
+
+- Adding any additional config file to the profile-owned set.
+- Adding secret scanning, redaction, or format-specific validation.
+- Automatically converting pre-existing *regular* profile files.
+- Changing authentication, runtime-cache, or credential denylist/pass-through behavior.
+
+**Never**
+
+- Create a placeholder config when its source is absent.
+- Recreate a pass-through link for one of the four primary configs.
+- Copy or track `auth.json`, credential files, session/history/log/cache trees, or `node_modules`.
+- Overwrite a regular profile-owned config during create or migration.
+
+## Resolved decisions
+
+1. All four primary configs are profile-owned: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`; none remains a pass-through config.
+2. Any existing global source file is copied, even a trivial/empty configuration. A missing source yields no profile file, not a synthetic file or link.
+3. Existing pass-through links migrate automatically during `aip update`; an absent target results in link removal and a staged deletion.
+4. Copy without secret scanning is intentional and user-approved: the operator verified these files contain no secrets; credentials use their established separate locations.
+
+## Open questions
+
+None blocking.

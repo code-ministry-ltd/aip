@@ -127,3 +127,73 @@ The implementation belongs inside the existing staged creation lifecycle: constr
 ## Open questions
 
 None. The plan encodes the approved `<profile>/skills` destination and the requested combined comma/whitespace input syntax.
+
+---
+
+# Plan: profile-owned primary harness configuration (vNext)
+
+Reads: `tasks/spec.md` (profile-owned primary harness configuration addendum). **Planning only: no production-code changes in this phase.**
+
+## Overview
+
+Replace the current Pi-only special case with one shared, explicit four-item primary-config registry. Creation materializes every existing global source in the staging profile and explicitly stages owned files. Normal pass-through removes these paths. A separate legacy-link recognizer—not the post-change pass-through allowlist—lets `aip update` safely convert old links before validation sees them as unsupported.
+
+## Architecture decisions
+
+- **D1 — one ordered primary-config registry:** represent `(harness, relative path)` as `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json` in a small helper in each implementation. This is the single source for create copying, explicit Git staging, and legacy migration.
+- **D2 — existing means owned, regardless of bytes:** create checks only for an existing regular global file, then copies it into the staged profile unchanged. The current Pi JSON-triviality predicate is not used for primary config ownership. A missing source produces no path.
+- **D3 — remove all four from normal pass-through:** pass-through allowlists exclude the registry entries. Their old links must not be treated as normal links after rollout, so sync/layout validation needs no permanent exception.
+- **D4 — dedicated legacy-link recognition:** migration validates an old link against the harness root and the registry's expected relative target using the existing canonical/path-containment primitives, rather than asking `_aip_is_passthrough_link` / `Test-AipPassthroughLink` after its allowlist changes. Valid links are the only links migration may replace or delete.
+- **D5 — update migration is staged and idempotent:** for every profile and registry entry: regular file → untouched; valid old link + global regular file → atomically copy over the link and `git add`; valid old link + missing target → remove link and `git add -u`; absent path → untouched. Any filesystem/Git failure warns and continues, preserving the update command's current non-fatal adoption posture.
+- **D6 — explicit trust boundary:** no config parsing, key scanning, or transformations. Copy exactly; denylisted credentials/runtime paths remain unaffected.
+
+## Phased task list
+
+### Phase 1 — creation ownership (POSIX then PowerShell)
+
+1. **New POSIX profiles own all available primary configs**
+   - Add the POSIX registry and materialization helper; remove the four paths from pass-through; replace Pi-only create staging with explicit staged owned primary files.
+   - Cover all four present sources (including empty JSON/TOML), any subset missing, byte preservation, no symlinks, creation-commit tracking, and no re-created pass-through links.
+   - Files: `aip.sh`, `tests/posix/lifecycle.bats`, `tests/posix/passthrough.bats` · Size: M.
+
+2. **New PowerShell profiles own the same configs**
+   - Port the registry, byte-preserving materialization, pass-through removal, and explicit Git staging to `New-AipProfileFiles` / `Invoke-AipCreate`.
+   - Cover the same present/trivial/missing/commit assertions in Pester.
+   - Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M.
+
+*Checkpoint 1: new-profile tests pass in both implementations; every copied config is regular tracked content and every missing config is absent.*
+
+### Phase 2 — legacy migration and validation
+
+1. **Existing POSIX profiles migrate primary-config links on update**
+   - Generalize Pi-only adoption into registry-driven legacy-link migration; retain a safe recognizer for historical links while removing normal pass-through support.
+   - Cover target-present materialization/staging, target-missing link removal/staged deletion, regular-file non-overwrite, malformed/foreign-link refusal, idempotency, and warning-only Git/filesystem failures.
+   - Files: `aip.sh`, `tests/posix/npm.bats`, `tests/posix/lifecycle.bats` · Size: M.
+
+2. **Existing PowerShell profiles migrate with identical semantics**
+   - Port the legacy-link recognizer and staged migration behavior, including Windows link-target normalization and warning-only failures.
+   - Cover the same matrix in Pester.
+   - Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M.
+
+*Checkpoint 2: update migration is idempotent, and post-migration sync/layout validation accepts all profiles without special link exceptions.*
+
+### Phase 3 — documentation and release hygiene
+
+1. **Users understand portable harness configuration**
+   - Update help, README, aip skill/setup docs, changelog, and relevant doctor text to describe four profile-owned configs, `aip update` legacy migration, the missing-file default behavior, and the explicit no-secret-scan trust model.
+   - Update documentation assertions and release version according to the approved release decision.
+   - Files: `aip.sh`, `README.md`, `CHANGELOG.md`, `skills/aip/SKILL.md`, `skills/aip/setup.md`, `tests/posix/smoke.bats` · Size: M (split docs/version if it grows).
+
+*Checkpoint 3: `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` pass; docs accurately distinguish portable primary configs from machine-local credentials/runtime state.*
+
+## Risks and mitigations
+
+- **Removing the allowlist strands old links.** Migration recognizes the legacy link format independently and runs before later create/update work; tests exercise stale, foreign, and target-missing links.
+- **Tracked secrets in copied configs.** Explicitly accepted operator trust decision; no automatic scanning or redaction can silently corrupt valid config. Credentials remain in existing denylisted files.
+- **Format/byte drift.** Use raw file copies only—no JSON/TOML parser or reserialization—and assert byte identity.
+- **An absent global source causes unexpected behavior.** Leave the profile path absent, exactly as a fresh harness default, and test every missing subset.
+- **PowerShell path/link semantics differ.** Reuse the existing link-target normalization and validate behavior in Windows Pester.
+
+## Open questions
+
+None blocking. Release version is deferred to the final task because the user has not requested a release for this change.

@@ -188,17 +188,15 @@ setup() {
   grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
 }
 
-@test "doctor reports pass-through links and warns on broken ones without failing" {
+@test "doctor reports ordinary pass-through links but rejects a primary-config link" {
   run aip doctor work
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK: pass-through work/pi/models.json"* ]]
-  # a hand-made broken pass-through link is a warning, not an error
   rm -f "$_AIP_PROFILE_ROOT/work/pi/settings.json"
   ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/work/pi/settings.json"
-  rm "$HOME/.pi/agent/settings.json" 2>/dev/null || true
   run aip doctor work
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"WARN: pass-through work/pi/settings.json is broken"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unsupported symbolic link"* ]]
 }
 
 @test "security: an off-allowlist symlink still fails doctor and the checkpoint" {
@@ -294,12 +292,12 @@ setup() {
   [ -L "$_AIP_PROFILE_ROOT/claudy/claude/plugins" ]
 }
 
-@test "convergence: claude entries survive pi maintenance" {
+@test "convergence: non-primary Claude entries survive Pi maintenance" {
   mkdir -p "$HOME/.claude"
-  printf '{"permissions":{}}\n' >"$HOME/.claude/settings.json"
+  printf '{"permissions":{}}\n' >"$HOME/.claude/settings.local.json"
   bash -c 'source "$AIP_SOURCE"; _aip_passthrough claude work' >/dev/null
-  grep -Fx 'claude/settings.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  grep -Fx 'claude/settings.local.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
   bash -c 'source "$AIP_SOURCE"; _aip_passthrough pi work' >/dev/null
-  grep -Fx 'claude/settings.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  grep -Fx 'claude/settings.local.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
   grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
 }

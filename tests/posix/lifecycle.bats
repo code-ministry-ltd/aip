@@ -8,6 +8,39 @@ setup() {
   create_profile work
 }
 
+@test "create copies and tracks every available primary harness config" {
+  mkdir -p "$HOME/.pi/agent" "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode"
+  printf '{}\n' >"$HOME/.pi/agent/settings.json"
+  printf '{"permissions":{}}\n' >"$HOME/.claude/settings.json"
+  : >"$HOME/.codex/config.toml"
+  printf ' { } \n' >"$HOME/.config/opencode/opencode.json"
+
+  run aip create portable
+
+  [ "$status" -eq 0 ]
+  local rel
+  for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
+    [ -f "$_AIP_PROFILE_ROOT/portable/$rel" ]
+    [ ! -L "$_AIP_PROFILE_ROOT/portable/$rel" ]
+    [ -n "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- "portable/$rel")" ]
+  done
+  cmp "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/portable/pi/settings.json"
+  cmp "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/portable/claude/settings.json"
+  cmp "$HOME/.codex/config.toml" "$_AIP_PROFILE_ROOT/portable/codex/config.toml"
+  cmp "$HOME/.config/opencode/opencode.json" "$_AIP_PROFILE_ROOT/portable/opencode/opencode.json"
+}
+
+@test "create leaves missing primary configs absent rather than linking them" {
+  run aip create no-configs
+
+  [ "$status" -eq 0 ]
+  local rel
+  for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
+    [ ! -e "$_AIP_PROFILE_ROOT/no-configs/$rel" ]
+    [ ! -L "$_AIP_PROFILE_ROOT/no-configs/$rel" ]
+  done
+}
+
 @test "clone checkpoints safe source changes, then creates a new profile from tracked HEAD" {
   printf 'committed instructions\n' >"$_AIP_PROFILE_ROOT/work/AGENTS.md"
   git -C "$_AIP_PROFILE_ROOT" add work/AGENTS.md
@@ -193,7 +226,7 @@ setup() {
   ! [[ "$output" == *'not shared (untracked)'* ]]
 }
 
-@test "doctor stays quiet about settings when it is linked or absent" {
+@test "doctor stays quiet when a primary config is absent" {
   run aip doctor work
   [ "$status" -eq 0 ]
   ! [[ "$output" == *'not shared (untracked)'* ]]
@@ -201,7 +234,8 @@ setup() {
   mkdir -p "$HOME/.pi/agent"
   printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
   AIP_PROFILE=work pi >/dev/null
-  [ -L "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
   run aip doctor work
   [ "$status" -eq 0 ]
   ! [[ "$output" == *'not shared (untracked)'* ]]
