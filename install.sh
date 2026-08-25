@@ -106,6 +106,13 @@ setup_aip_profile_and_skill() {
 }
 setup_aip_profile_and_skill
 
+# Adopt profiles' untracked pi/settings.json (created before aip tracked them).
+(
+  export _AIP_PROFILE_ROOT="${_AIP_PROFILE_ROOT:-$HOME/agent-profiles}"
+  . "$installed_file"
+  _aip_adopt_untracked_settings
+) || :
+
 if [ -n "$previous_version" ] && [ "$previous_version" != "$package_version" ]; then
   printf 'Updated aip from %s to %s. Restart your shell or run: %s\n' "$previous_version" "$package_version" "$source_line"
 elif [ -n "$previous_version" ]; then

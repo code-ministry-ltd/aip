@@ -11,10 +11,34 @@ _aip_warn() {
   printf 'aip: warning: %s\n' "$*" >&2
 }
 
+_aip_adopt_untracked_settings() (
+  # One-time adoption for profiles created before aip tracked pi/settings.json:
+  # stage (never commit) every profile's real, untracked file so the next
+  # checkpoint shares it. Warn-only; never fails.
+  _aip_clear_git_routing
+  local root name profile settings
+  root=${_AIP_PROFILE_ROOT-}
+  [ -n "$root" ] && [ -d "$root/.git" ] || return 0
+  for name in $(_aip_list_profile_names); do
+    profile=$(_aip_profile_path "$name")
+    settings=$profile/pi/settings.json
+    if [ -f "$settings" ] && [ ! -L "$settings" ] &&
+       ! _aip_git -C "$root" ls-files --error-unmatch -- "$name/pi/settings.json" >/dev/null 2>&1; then
+      if _aip_git -C "$root" add -- "$name/pi/settings.json"; then
+        printf 'aip: staged %s/pi/settings.json for sharing (the next checkpoint commits it)\n' "$name"
+      else
+        _aip_warn "could not stage $name/pi/settings.json"
+      fi
+    fi
+  done
+  return 0
+)
+
 _aip_update() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
   (
     _aip_clear_git_routing
+    _aip_adopt_untracked_settings
     if ! command -v npx >/dev/null 2>&1; then
       _aip_error 'update requires Node.js (npx) on PATH'
       return 1
