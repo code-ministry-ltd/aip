@@ -35,6 +35,7 @@ This release makes pi package *declarations* portable profile content and packag
 ## Boundaries
 
 **Always**
+
 - Run `npm run test:posix` before each commit; every task leaves the suite green.
 - Keep `aip.sh` and `aip.ps1` behaviour in sync (parity may land in a later task of this release, but no intentional divergence).
 - Update SKILL.md (management menu + extensions flow), audit.md allowlist table, and help text whenever the pass-through allowlist or package flows change.
@@ -42,6 +43,7 @@ This release makes pi package *declarations* portable profile content and packag
 - Read-only git inspection of the profiles repo during testing; fixtures use the existing `setup_aip_test` helper.
 
 **Ask first**
+
 - Any change to the sync denylist (`_aip_is_forbidden_path`).
 - Hand-editing a profile's `packages` array from the skill *before* it is tracked (spec: route through `aip sync-packages`); once settings.json is tracked content, direct skill edits are sanctioned (SC9).
 - Extending the auto-stage list beyond `pi/settings.json` (claude settings.json can carry `env` keys by design; other harnesses need their own review).
@@ -50,6 +52,7 @@ This release makes pi package *declarations* portable profile content and packag
 - Tracking `settings.json` or any currently-untracked profile file in the profiles repo.
 
 **Never**
+
 - Commit secrets, credentials, or `node_modules` into the profiles repo.
 - Hand-edit the aip-managed `.gitignore` pass-through block in tests or fixtures.
 - Replace a non-trivial real file with a link without an explicit user-approved flag.
@@ -68,3 +71,57 @@ This release makes pi package *declarations* portable profile content and packag
 - Hand-written themes (`~/.pi/agent/themes/*.json`) → migrate into a pi package so themes become declared + auto-installed; retire the `themes` pass-through entry afterwards.
 - Version pinning of packages per profile (`pi` supports per-source pinned specs) if per-profile extension drift becomes common.
 - Deferred review findings: test gaps for `--replace` with no global packages, the missing-settings-file error path, and the install.sh adoption hook; `aip sync-packages` with no resolvable profile prints "invalid profile name ''" (nit).
+
+---
+
+# Spec: selectable Pi skills when creating a profile (vNext)
+
+Living document — update before implementing a changed decision.
+
+## Objective
+
+When a user creates a profile, `aip` discovers reusable Pi skills from (a) Pi profile skill trees under the invoking directory and (b) the machine-global `~/.pi/agent/skills` tree. It presents one deterministic, deduplicated, numbered menu; the user may select zero or more entries by number. Chosen skills are copied as complete skill directories into `<profile>/skills`, the shared profile-owned directory to which every harness skill directory symlinks. This lets a user establish a portable skill set at profile creation without manually finding and copying skills afterwards.
+
+## Success criteria
+
+- **SC1 — Discovery:** `aip create NAME` finds skill directories (directories containing `SKILL.md`) recursively beneath the invoking directory, restricted to Pi profile skill locations, and under `~/.pi/agent/skills` when it exists. Missing/unreadable candidate roots do not abort profile creation; they produce no candidates (and may warn).
+- **SC2 — Deterministic menu:** before publishing the profile, `aip create` prints a numbered, deduplicated list sorted by skill name. A duplicate skill name appears once; the global skill is preferred over a discovered profile copy, otherwise the lexically earliest source path wins.
+- **SC3 — Selection UX:** the prompt accepts integer selections separated by commas, ASCII whitespace, or a mixture (for example, `1, 3 5`). Empty input explicitly selects no skills. Invalid tokens, zero, out-of-range numbers, and repeated separators cause a clear error and reprompt; duplicate numbers are accepted but only copy once.
+- **SC4 — Copy semantics:** after valid selection, each selected source skill *directory* is copied recursively to `<profile>/skills/<skill-name>` before the profile is published. Copied files are regular profile-owned files, not symlinks to their sources. The standard creation commit includes them.
+- **SC5 — Safety and atomicity:** source paths are canonicalised and must remain within an allowed discovery root; the feature never follows a selected path outside those roots. A failure to copy any selected skill aborts the staged create and leaves no destination profile or partial published profile.
+- **SC6 — Empty and noninteractive behavior:** an empty discovery set prints a concise notice and proceeds without prompting. Noninteractive stdin (not a terminal) proceeds with no selected skills and does not block automation.
+- **SC7 — Harness layout invariant:** selected skills are copied only to `<profile>/skills`; no copied contents are written through `claude/skills`, `codex/skills`, `pi/skills`, or `opencode/skills`, because those directories are profile-local symlinks to `../skills`.
+- **SC8 — Parity and verification:** the POSIX and PowerShell implementations have equivalent discovery, prompt, validation, copying, and noninteractive behavior. Automated tests cover global and descendant discovery, name deduplication and precedence, valid mixed-delimiter selection, invalid retry, blank/noninteractive input, correct copy destination/content, and failed-copy rollback.
+- **SC9 — Documentation:** `aip help` and the aip skill/setup documentation describe the optional creation-time picker, its discovery sources, and accepted selection syntax.
+
+## Boundaries
+
+**Always**
+
+- Preserve the existing stage-then-publish lifecycle; prompt and copy work must finish before profile publication.
+- Preserve existing shared-skill symlinks; `<profile>/skills` remains the sole owned skill root.
+- Keep bash sourceable by bash and zsh and compatible with macOS bash 3.2; keep PowerShell parity.
+- Test the feature without reading or modifying actual global skills by using fixture roots/overrides.
+
+**Ask first**
+
+- Broadening discovery beyond Pi profile skill locations or `~/.pi/agent/skills`.
+- Changing duplicate precedence or using skill metadata rather than directory name as identity.
+- Adding a persistent CLI flag to skip, preselect, or alter discovery.
+
+**Never**
+
+- Write selected skills directly through a harness-specific skill symlink.
+- Modify source skills while discovering or copying them.
+- Overwrite a pre-existing destination profile or silently accept a partial copy.
+- Treat arbitrary descendant directories as skills unless they contain `SKILL.md`.
+
+## Resolved decisions
+
+1. The copied destination is **`<profile>/skills`**, not `<profile>/pi/skills`; all harness skill directories are symlinks to that shared directory.
+2. The input parser accepts both comma- and whitespace-delimited numbers, including mixtures. This is more forgiving than choosing one convention and matches common interactive CLI expectations.
+3. A skill is identified by its directory name and is eligible only when it contains `SKILL.md`.
+
+## Open questions
+
+None blocking. The exact definition of a “Pi profile skill location” in an arbitrary descendant tree will be confirmed from the repository’s existing profile layout during planning, then encoded narrowly enough to avoid scanning unrelated project directories.
