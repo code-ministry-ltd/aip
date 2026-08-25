@@ -1491,8 +1491,10 @@ _aip_resolve_doctor_profile() {
 }
 
 _aip_doctor_passthrough() {
-  # Reports pass-through links and warns (never fails) on broken ones.
-  local profile_path=$1 name=$2 harness root rel dest
+  # Reports pass-through links and warns (never fails) on broken ones, plus two
+  # pi-specific advisories: a shadowing real pi/npm dir, and a profile-owned
+  # settings.json that is not shared.
+  local profile_path=$1 name=$2 harness root rel dest pi_root npm_dir settings
   for harness in pi claude codex opencode; do
     root=$(_aip_import_harness_root "$harness") || continue
     [ -d "$root" ] || continue
@@ -1508,6 +1510,18 @@ _aip_doctor_passthrough() {
       fi
     done < <(_aip_passthrough_rels "$harness")
   done
+  pi_root=$(_aip_import_harness_root pi) || return 0
+  if [ -d "$pi_root/npm" ]; then
+    npm_dir=$profile_path/pi/npm
+    if [ -d "$npm_dir" ] && [ ! -L "$npm_dir" ]; then
+      printf 'WARN: %s/pi/npm is a local directory shadowing the machine-wide pi npm dir; inspect it, then remove it so the pass-through link can form (pi re-installs missing packages on next launch)\n' "$name"
+    fi
+  fi
+  settings=$profile_path/pi/settings.json
+  if [ -f "$settings" ] && [ ! -L "$settings" ] &&
+     ! _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/pi/settings.json" >/dev/null 2>&1; then
+    printf 'WARN: %s/pi/settings.json is not shared (untracked); run aip update, or: git -C %s add %s/pi/settings.json\n' "$name" "$_AIP_PROFILE_ROOT" "$name"
+  fi
 }
 
 _aip_doctor_profile_layout() {
