@@ -8,6 +8,57 @@ setup() {
   create_profile personal
 }
 
+@test "create skill discovery lists a sorted, globally deduplicated Pi skill menu" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  local global="$BATS_TEST_TMPDIR/global-skills"
+  mkdir -p "$tree/a/pi/skills/beta" "$tree/b/pi/skills/alpha" "$tree/c/pi/skills/zeta"
+  mkdir -p "$global/alpha" "$global/gamma"
+  touch "$tree/a/pi/skills/beta/SKILL.md" "$tree/b/pi/skills/alpha/SKILL.md" "$tree/c/pi/skills/zeta/SKILL.md"
+  touch "$global/alpha/SKILL.md" "$global/gamma/SKILL.md"
+  # A random SKILL.md outside a Pi skills location is never a candidate.
+  mkdir -p "$tree/unrelated"
+  touch "$tree/unrelated/SKILL.md"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT=$global
+
+  run _aip_list_create_skills
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "alpha	$(cd "$global/alpha" && pwd -P)
+beta	$(cd "$tree/a/pi/skills/beta" && pwd -P)
+gamma	$(cd "$global/gamma" && pwd -P)
+zeta	$(cd "$tree/c/pi/skills/zeta" && pwd -P)" ]
+}
+
+@test "create skill discovery rejects Pi skills symlinked outside the tree" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  local external="$BATS_TEST_TMPDIR/external-skills"
+  mkdir -p "$tree/profile/pi" "$external/escape"
+  touch "$external/escape/SKILL.md"
+  ln -s "$external" "$tree/profile/pi/skills"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-global-skills"
+
+  run _aip_list_create_skills
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "create skill discovery renders a stable numbered menu" {
+  local tree="$BATS_TEST_TMPDIR/discovery-tree"
+  local global="$BATS_TEST_TMPDIR/global-skills"
+  mkdir -p "$tree/profile/pi/skills/beta" "$global/alpha"
+  touch "$tree/profile/pi/skills/beta/SKILL.md" "$global/alpha/SKILL.md"
+  _AIP_CREATE_SKILLS_TREE_ROOT=$tree
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT=$global
+
+  run _aip_render_create_skill_menu
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'Available Pi skills:\n1. alpha\n2. beta' ]
+}
+
 @test "default sets and shows the fallback profile" {
   run aip default work
   [ "$status" -eq 0 ]

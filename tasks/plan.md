@@ -21,6 +21,7 @@ Nine areas of change in `aip.sh`, docs, and bats tests. Everything additive to t
 Ordered bottom-up (mechanism → features → docs); every task leaves `npm run test:posix` green.
 
 **Phase 1 — pass-through mechanics**
+
 1. `npm` allowlist entry + npm-link bats (SC1).
 2. Trivial-file repair in `_aip_passthrough` + bats (SC2).
 3. `models-store.json` scaffold + denylist lines + bats (SC10).
@@ -52,4 +53,77 @@ Ordered bottom-up (mechanism → features → docs); every task leaves `npm run 
 
 ## Open questions
 
-None blocking — all four spec questions resolved. Task-level detail to confirm in-task: exact `_aip_update`/`bin/aip.js` hook point for D5.
+None blocking — all four spec questions resolved. Task-level detail to confirm in-task: exact `_aip_update`/`bin/aip.js` hook point for D5
+---
+
+# Plan: selectable Pi skills when creating a profile (vNext)
+
+Reads: `tasks/spec.md` (governing addendum). **Planning only: no production-code changes in this phase.**
+
+## Overview
+
+The implementation belongs inside the existing staged creation lifecycle: construct the temporary profile, discover and select skills while the destination does not exist, copy choices into the temporary profile's owned `skills/` root, then publish and make the normal explicit Git creation commit. The existing profile layout already makes each harness skill directory a symlink to `../skills`, so no harness-specific copy path is needed.
+
+## Architecture decisions
+
+- **D1 — eligibility is structural and narrow.** A candidate is a directory named `NAME` with a directly contained `SKILL.md`, discovered from `PWD` only at paths matching a Pi profile's `pi/skills/NAME` layout and from `$HOME/.pi/agent/skills/NAME`. Do not recursively inspect arbitrary project directories just because they contain `SKILL.md`.
+- **D2 — deterministic source map.** Build a temporary `name → canonical source directory` map. Register global skills first, then project candidates; a project candidate replaces neither an existing global candidate nor an earlier lexical candidate. Sort the deduplicated map by name before printing its 1-based menu; source precedence never changes the displayed order.
+- **D3 — terminal-only prompt.** When there are candidates and stdin is a terminal, print the menu and read one line repeatedly until it is blank or parses as positive, in-range integers separated by commas and/or whitespace. When stdin is not a terminal, print an optional concise skip notice and select none; existing scripts and test helpers therefore remain non-blocking.
+- **D4 — copy before publication.** Reuse a dedicated copy helper after `_aip_write_profile_files` / `New-AipProfileFiles` but before `_aip_publish_profile_directory` / directory move. It validates the canonical source remains under a registered root, copies to `temporary/skills/NAME`, and treats any error as a creation failure; the existing staging cleanup removes it.
+- **D5 — test seams are explicit environment/script variables.** Introduce an internal discovery-root override for tests (current-tree and global root independently) rather than reading a developer's real `HOME` or relying on the test process's `PWD`. Production defaults remain `PWD` and `~/.pi/agent/skills`.
+- **D6 — no duplicate `git add` special case.** The creation code already stages `$name/skills` explicitly. Copied skills therefore enter the same creation commit automatically; `.gitkeep` may remain harmlessly alongside them.
+
+## Phased task list
+
+### Phase 1 — POSIX discovery and selection
+
+1. **User can see eligible skills before creating a profile**
+   - Add bash 3.2/zsh-safe helpers for Pi-layout discovery, canonical-root containment, deterministic name deduplication, and numbered menu rendering.
+   - Cover no candidates, global candidates, descendant `pi/skills` candidates, duplicate-name global precedence, stable ordering, and no arbitrary `SKILL.md` discovery.
+   - Files: `aip.sh`, `tests/posix/selection.bats` (or a focused new `create-skills.bats`) · Size: M.
+
+2. **User can choose skills with one forgiving input line**
+   - Add the terminal-aware prompt/parser: blank selects none; comma/whitespace mixtures select unique numbers; invalid input reprompts; noninteractive stdin skips safely.
+   - Cover valid mixed selection, duplicate selection, malformed/out-of-range retry, blank, and noninteractive modes.
+   - Files: `aip.sh`, POSIX picker test file · Size: S.
+
+*Checkpoint 1: `npx bats` picker tests pass; a piped `aip create NAME` does not hang.*
+
+### Phase 2 — POSIX staged copy and lifecycle verification
+
+1. **Chosen skills arrive as owned profile content**
+   - Connect selection to `_aip_create` after temporary scaffolding and before publication; recursively copy source directories to `temporary/skills/NAME`, preserving content without symlinking.
+   - Cover exact destination, harness symlink visibility, creation-commit tracking, no choices, and failed-copy rollback/no destination.
+   - Files: `aip.sh`, POSIX picker test file, `tests/posix/lifecycle.bats` · Size: M.
+
+2. **Creation documentation explains the optional picker**
+   - Amend command help and `skills/aip/setup.md` / `skills/aip/SKILL.md` to state the discovery locations, menu behavior, blank skip, and comma-or-space syntax.
+   - Update matching help assertions.
+   - Files: `aip.sh`, `skills/aip/setup.md`, `skills/aip/SKILL.md`, `tests/posix/smoke.bats` · Size: M.
+
+*Checkpoint 2: `npm run test:posix` passes and a fixture profile contains selected skill files only in `PROFILE/skills`, with `PROFILE/pi/skills` still a symlink.*
+
+### Phase 3 — PowerShell parity
+
+1. **PowerShell users receive the same discovery and picker**
+   - Implement equivalent root discovery, canonical containment, deduplication/order, terminal-aware input, parse/retry, and test-only root overrides in `aip.ps1`.
+   - Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M.
+
+2. **PowerShell creation stages selected skills atomically**
+   - Copy selections to the temporary profile's `skills` directory before `Directory.Move`, retaining existing cleanup and explicit Git staging behavior.
+   - Cover copied content, symlink visibility, invalid retry, noninteractive mode, global precedence, and failed-copy cleanup in Pester.
+   - Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M.
+
+*Checkpoint 3: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` and `npm run test:posix` pass; both implementations have the same visible prompt and selection outcomes.*
+
+## Risks and mitigations
+
+- **Scanning can escape the requested scope through symlinks.** Use canonical paths for candidate and allowed root, reject candidates outside their registered root, and avoid `find -L` / recursive symbolic-link traversal.
+- **Interactive reads can break automation.** Gate prompts on terminal stdin and default noninteractive creation to no skills.
+- **Copy failure could publish a partial profile.** Copy only in the temporary directory; preserve current cleanup-on-failure behavior and test it.
+- **Bash/zsh portability.** Avoid arrays, process substitution assumptions, GNU-only `find` flags, and bash-only case conversions; use newline-safe temporary lists/`while read` patterns compatible with the existing script constraints.
+- **A profile symlink could appear as a duplicate discovery source.** Deduplicate by directory name and canonicalise sources; copying remains from the selected canonical location, never through the destination's harness symlink.
+
+## Open questions
+
+None. The plan encodes the approved `<profile>/skills` destination and the requested combined comma/whitespace input syntax.

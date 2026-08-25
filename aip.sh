@@ -547,6 +547,90 @@ _aip_resolve_path() {
   _aip_normalize_path "$path"
 }
 
+
+_aip_create_skills_tree_root() {
+  printf '%s\n' "${_AIP_CREATE_SKILLS_TREE_ROOT-$PWD}"
+}
+
+_aip_create_skills_global_root() {
+  printf '%s\n' "${_AIP_CREATE_SKILLS_GLOBAL_ROOT-${HOME}/.pi/agent/skills}"
+}
+
+_aip_canonical_directory() (
+  [ -d "$1" ] || exit 1
+  builtin cd "$1" 2>/dev/null && builtin pwd -P
+)
+
+_aip_create_skill_is_within() {
+  # _aip_path_is_under deliberately treats '/' as a special case here: every
+  # absolute candidate is under it, whereas the ordinary prefix matcher needs a
+  # non-root slash suffix.
+  [ "$1" = / ] && return 0
+  _aip_path_is_under "$1" "$2"
+}
+
+_aip_add_create_skill_candidate() {
+  # $1 canonical allowed root, $2 candidate directory, $3 tab-separated list file.
+  local root=$1 candidate=$2 entries=$3 name canonical
+  [ -d "$candidate" ] && [ -f "$candidate/SKILL.md" ] || return 0
+  name=${candidate##*/}
+  case $name in ''|*$'\n'*|*$'\r'*|*$'\t'*) return 0 ;; esac
+  canonical=$(_aip_canonical_directory "$candidate") || return 0
+  _aip_create_skill_is_within "$root" "$canonical" || return 0
+  printf '%s\t%s\n' "$name" "$canonical" >>"$entries"
+}
+
+_aip_list_create_skills() {
+  # Prints name<TAB>canonical-source, with global skills taking precedence. Skills
+  # from the current tree are recognised only at a Pi profile's pi/skills/NAME path.
+  local tree global tree_root global_root roots global_entries tree_entries all_entries skill_root child
+  tree=$(_aip_create_skills_tree_root) || return 1
+  global=$(_aip_create_skills_global_root) || return 1
+  global_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-global-skills.XXXXXX") || return 1
+  tree_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-tree-skills.XXXXXX") || { command rm -f "$global_entries"; return 1; }
+  all_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-skills.XXXXXX") || { command rm -f "$global_entries" "$tree_entries"; return 1; }
+  : >|"$global_entries"
+  : >|"$tree_entries"
+
+  if global_root=$(_aip_canonical_directory "$global"); then
+    while IFS= read -r child; do
+      _aip_add_create_skill_candidate "$global_root" "$child" "$global_entries"
+    done < <(command find -H "$global_root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
+  fi
+
+  if tree_root=$(_aip_canonical_directory "$tree"); then
+    roots=$(command mktemp "${TMPDIR:-/tmp}/aip-create-skill-roots.XXXXXX") || { command rm -f "$global_entries" "$tree_entries" "$all_entries"; return 1; }
+    command find -H "$tree_root" -path '*/pi/skills' \( -type d -o -type l \) -print >|"$roots" 2>/dev/null || :
+    while IFS= read -r skill_root; do
+      skill_root=$(_aip_canonical_directory "$skill_root") || continue
+      _aip_create_skill_is_within "$tree_root" "$skill_root" || continue
+      while IFS= read -r child; do
+        _aip_add_create_skill_candidate "$tree_root" "$child" "$tree_entries"
+      done < <(command find -H "$skill_root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
+    done <"$roots"
+    command rm -f "$roots"
+  fi
+
+  LC_ALL=C command sort "$global_entries" >|"$all_entries"
+  LC_ALL=C command sort "$tree_entries" >>"$all_entries"
+  command awk -F '\t' 'NF == 2 && !seen[$1]++ { print }' "$all_entries" | LC_ALL=C command sort
+  command rm -f "$global_entries" "$tree_entries" "$all_entries"
+}
+
+_aip_render_create_skill_menu() {
+  local skills name source number=1
+  skills=$(_aip_list_create_skills) || return 1
+  [ -n "$skills" ] || return 1
+  printf '%s\n' 'Available Pi skills:'
+  while IFS="$(printf '\t')" read -r name source; do
+    [ -n "$name" ] || continue
+    printf '%s. %s\n' "$number" "$name"
+    number=$((number + 1))
+  done <<EOF
+$skills
+EOF
+}
+
 _aip_is_passthrough_link() {
   # $1 relative link path (e.g. pi/models.json), $2 profile path. Returns 0 when the
   # link is a pass-through link: allowlisted rel whose target is confined to the
