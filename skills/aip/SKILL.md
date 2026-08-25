@@ -59,7 +59,10 @@ Reference files live next to this SKILL.md — read them when directed:
   committed by the next checkpoint (the shared `skills/` tree is
   checkpoint-owned). Imported harness-native files (settings, config) stay
   untracked until someone deliberately `git add`s and commits them — do not
-  tell the user such a file is shared until it is tracked.
+  tell the user such a file is shared until it is tracked. Exception:
+  `pi/settings.json` is tracked profile content by design — `aip create`
+  seeds and tracks it, `aip update` stages any legacy copy, and the next
+  checkpoint commits it.
 - aip refuses to sync a fixed denylist of credential and runtime paths, for
   example: `.env`/`.env.*` files (`.env.example` allowed), private keys
   (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`-style),
