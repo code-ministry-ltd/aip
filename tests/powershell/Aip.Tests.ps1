@@ -3008,6 +3008,8 @@ Describe 'pass-through' {
         Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value '{"models":[]}' -Encoding utf8NoBOM -NoNewline
         Set-Content -LiteralPath (Join-Path $script:Pidir 'auth.json') -Value '{"token":"secret"}' -Encoding utf8NoBOM -NoNewline
         Set-Content -LiteralPath (Join-Path $script:Pidir 'themes/custom.json') -Value '{"name":"custom"}' -Encoding utf8NoBOM -NoNewline
+        New-Item -ItemType Directory -Path (Join-Path $script:Pidir 'npm/node_modules/fake-pkg') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'npm/node_modules/fake-pkg/package.json') -Value '{"name":"fake-pkg","version":"1.0.0"}' -Encoding utf8NoBOM -NoNewline
         New-TestProfile work
         New-TestProfile suit
         $env:AIP_PROFILE = 'work'
@@ -3187,6 +3189,274 @@ Describe 'pass-through' {
         Invoke-AipPassthrough 'pi' 'work'
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.json$"
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
+    }
+
+    It 'create seeds the npm pass-through link and never tracks its contents' {
+        Test-AipProfileLink 'work' 'pi/npm' | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/npm/node_modules/fake-pkg/package.json') | Should -BeTrue
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/npm$"
+        & git -C $script:AipProfileRoot check-ignore -- work/pi/npm *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot ls-files -- 'work/pi/npm' 'work/pi/npm/*') | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'npm pass-through is absent when the machine has no pi npm root' {
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'npm') -Recurse -Force
+        aip create nonpm *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'nonpm/pi/npm') | Should -BeFalse
+        (Get-AipGitIgnoreText 'nonpm') | Should -Not -Match "(?m)^pi/npm$"
+    }
+
+    It 'launch checkpoint passes with the npm link present' {
+        & pi *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'a trivial real file shadowing the link is replaced by the link' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
+        & pi *> $null
+        Test-AipProfileLink 'work' 'pi/models.json' | Should -BeTrue
+        (Get-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Raw) | Should -Be '{"models":[]}'
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'a non-trivial real file is never replaced' {
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Force
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Value '{"own":1} junk' -Encoding utf8NoBOM -NoNewline
+        & pi *> $null
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models.json') -Raw) | Should -Be '{"own":1} junk'
+    }
+
+    It 'a tracked trivial file is exempt from replacement' {
+        $script:AipImportHome = Join-Path $TestDrive ('no-root-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:AipImportHome -Force | Out-Null
+        aip create own *> $null
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'own/pi/models.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
+        & git -C $script:AipProfileRoot add own/pi/models.json
+        & git -C $script:AipProfileRoot commit -q -m 'own trivial models.json' *> $null
+        New-Item -ItemType Directory -Path $script:Pidir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'models.json') -Value '{"default":true}' -Encoding utf8NoBOM -NoNewline
+        $env:AIP_PROFILE = 'own'
+        & pi *> $null
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'own/pi/models.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'own/pi/models.json') -Raw) | Should -Be '{}'
+    }
+}
+
+Describe 'pi settings and packages' {
+    BeforeEach {
+        $script:PassRoot = Join-Path $TestDrive ('pkg-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $script:PassRoot -Force | Out-Null
+        $script:AipImportHome = Join-Path $script:PassRoot 'home'
+        $script:AipProfileRoot = Join-Path $script:PassRoot 'agent-profiles'
+        $script:FakeBin = Join-Path $script:PassRoot 'fake bin'
+        $script:FakeCapture = Join-Path $script:PassRoot 'capture'
+        $env:FAKE_CAPTURE = $script:FakeCapture
+        $env:FAKE_EXIT_STATUS = '0'
+        $env:AIP_PROFILE = $null
+        $env:GIT_CONFIG_GLOBAL = Join-Path $script:PassRoot 'gitconfig'
+        $env:GIT_CONFIG_NOSYSTEM = '1'
+        New-Item -ItemType Directory -Path $script:AipImportHome, $script:FakeBin -Force | Out-Null
+        & git config --global user.name 'Aip Tests'
+        & git config --global user.email 'aip@example.test'
+        & git config --global maintenance.auto false
+        & git config --global gc.auto 0
+        foreach ($harness in 'claude', 'codex', 'pi', 'opencode') { New-FakeHarness $harness }
+        $script:AipRealPath = $script:FakeBin
+        $script:Pidir = Join-Path $script:AipImportHome '.pi/agent'
+        New-Item -ItemType Directory -Path $script:Pidir -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{
+  "theme": "dark",
+  "packages": [
+    "npm:pi-web-access",
+    "npm:@the-librarian/pi-extension",
+    "npm:context-mode"
+  ]
+}' -Encoding utf8NoBOM
+        New-TestProfile work
+        $env:AIP_PROFILE = 'work'
+    }
+
+    BeforeAll {
+        function Get-ProfileSettings {
+            return (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Raw)
+        }
+    }
+
+    AfterEach {
+        $env:AIP_PROFILE = $null
+    }
+
+    It 'create materialises and tracks pi/settings.json from the global settings' {
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        (Get-ProfileSettings) | Should -Match '"theme": "dark"'
+        (Get-ProfileSettings) | Should -Match '"npm:context-mode"'
+        & git -C $script:AipProfileRoot ls-files --error-unmatch -- work/pi/settings.json *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'create links settings when the global file is trivial' {
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
+        aip create linked *> $null
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')
+        $item.LinkType | Should -Be 'SymbolicLink'
+    }
+
+    It 'clone carries the tracked settings.json into the new profile' {
+        aip clone work copy *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'copy/pi/settings.json')
+        $item.LinkType | Should -BeNullOrEmpty
+        & git -C $script:AipProfileRoot ls-files --error-unmatch -- copy/pi/settings.json *> $null
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'new profile gitignore excludes the pi model-catalog cache' {
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw) | Should -Match '(?m)^pi/models-store.json$'
+        & git -C $script:AipProfileRoot check-ignore -- work/pi/models-store.json *> $null
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
+    It 'sync hard-fails when the pi model-catalog cache is tracked' {
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/models-store.json') -Value 'catalog cache' -Encoding utf8NoBOM
+        & git -C $script:AipProfileRoot add -f work/pi/models-store.json
+        & git -C $script:AipProfileRoot commit -q -m 'unsafe tracked file' *> $null
+        Add-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/AGENTS.md') -Value 'change waiting'
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Not -Be 0
+    }
+
+    It 'sync-packages bulk: seeded profile is in sync, idempotently' {
+        aip sync-packages work | Out-String | Should -Match 'already matches'
+        $script:AipCommandStatus | Should -Be 0
+        $before = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        aip sync-packages work | Out-String | Should -Match 'already matches'
+        $after = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        $after | Should -Be $before
+    }
+
+    It 'sync-packages bulk copy: a profile without packages adopts the global list' {
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{
+  "theme": "light"
+}' -Encoding utf8NoBOM
+        aip sync-packages work | Out-String | Should -Match 'copied 3 package\(s\)'
+        $settings = Get-ProfileSettings
+        $settings | Should -Match '"npm:pi-web-access",'
+        $settings | Should -Match '"npm:context-mode"'
+        $settings | Should -Match '"theme": "light"'
+        aip sync-packages work | Out-String | Should -Match 'already matches'
+    }
+
+    It 'sync-packages bulk diff: reported, non-zero, untouched without --replace' {
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{
+  "packages": [
+    "npm:only-here"
+  ]
+}' -Encoding utf8NoBOM
+        $before = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        aip sync-packages work | Out-String | Should -Match 'profile only'
+        $script:AipCommandStatus | Should -Be 1
+        $after = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        $after | Should -Be $before
+
+        aip sync-packages work --replace | Out-String | Should -Match 'replaced'
+        $script:AipCommandStatus | Should -Be 0
+        $settings = Get-ProfileSettings
+        $settings | Should -Match '"npm:pi-web-access",'
+        $settings | Should -Not -Match 'only-here'
+    }
+
+    It 'sync-packages --add is surgical and idempotent; --remove drops by name' {
+        aip sync-packages work --add npm:brand-new | Out-String | Should -Match 'added'
+        (Get-ProfileSettings) | Should -Match '"npm:brand-new"'
+        $before = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        aip sync-packages work --add npm:brand-new | Out-String | Should -Match 'already present'
+        $after = (Get-FileHash -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).Hash
+        $after | Should -Be $before
+
+        aip sync-packages work --remove pi-web-access | Out-String | Should -Match 'removed'
+        (Get-ProfileSettings) | Should -Not -Match 'pi-web-access'
+        aip sync-packages work --remove pi-web-access | Out-String | Should -Match 'not in the profile package list'
+    }
+
+    It 'sync-packages refuses a non-array packages member' {
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{
+  "packages": {"broken": true}
+}' -Encoding utf8NoBOM
+        aip sync-packages work --add npm:x *> $null
+        $script:AipCommandStatus | Should -Be 2
+        (Get-ProfileSettings) | Should -Match '"broken": true'
+    }
+
+    It 'sync-packages refuses to edit a pass-through linked settings file' {
+        # untrack the create-time settings, leave a trivial stub: maintenance repairs it into a link
+        & git -C $script:AipProfileRoot rm --cached -q work/pi/settings.json
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
+        & pi *> $null
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
+        aip sync-packages work --add npm:evil *> $null
+        $script:AipCommandStatus | Should -Be 1
+        $script:AipLastError | Should -Match 'pass-through link'
+        (Get-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Raw) | Should -Not -Match 'evil'
+    }
+
+    It 'doctor warns (without failing) on a shadowing pi/npm dir and an untracked settings file' {
+        New-Item -ItemType Directory -Path (Join-Path $script:Pidir 'npm/node_modules') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $script:AipProfileRoot 'work/pi/npm/node_modules') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
+        & git -C $script:AipProfileRoot rm --cached -q work/pi/settings.json  # legacy untracked state
+
+        aip doctor work *> $null
+        $script:AipCommandStatus | Should -Be 0
+        $output = (aip doctor work) | Out-String
+        $output | Should -Match 'WARN: work/pi/npm is a local directory shadowing the machine-wide pi npm dir'
+        $output | Should -Match 'WARN: work/pi/settings.json is not shared \(untracked\)'
+
+        Remove-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/npm') -Recurse -Force
+        & pi *> $null
+        & git -C $script:AipProfileRoot add work/pi/settings.json
+        & git -C $script:AipProfileRoot commit -q -m 'share settings' *> $null
+        $output = (aip doctor work) | Out-String
+        $output | Should -Not -Match 'shadowing the machine-wide pi npm dir'
+        $output | Should -Not -Match 'not shared \(untracked\)'
+    }
+
+    It 'aip update stages untracked pi/settings.json without committing or touching links' {
+        New-FakeHarness 'npx'
+        # create both profiles before the global settings exist, restore it as a
+        # trivial value so linked becomes a pass-through link; legacy keeps its
+        # own untracked real file
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force
+        aip create linked *> $null
+        aip create legacy *> $null
+        Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
+        $env:AIP_PROFILE = 'linked'
+        & pi *> $null
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
+        $env:AIP_PROFILE = 'work'
+
+        $savedPath = $env:PATH
+        $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
+        try {
+            aip update | Out-String | Should -Match 'staged legacy/pi/settings.json for sharing'
+            $script:AipCommandStatus | Should -Be 0
+            (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain 'legacy/pi/settings.json'
+            (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
+
+            aip update | Out-String | Should -Not -Match 'staged'
+        }
+        finally { $env:PATH = $savedPath }
     }
 }
 

@@ -504,7 +504,7 @@ function Get-AipGitIgnoreLines {
         '**/.credentials.json', '**/auth.json',
         'claude/.credentials.json', 'claude/history.jsonl', 'claude/projects/', 'claude/session-env/', 'claude/shell-snapshots/', 'claude/statsig/', 'claude/todos/', 'claude/debug/', 'claude/cache/', 'claude/logs/', 'claude/file-history/',
         'codex/auth.json', 'codex/history.jsonl', 'codex/sessions/', 'codex/archived_sessions/', 'codex/log/', 'codex/logs/', 'codex/cache/', 'codex/*.db', 'codex/*.db-*', 'codex/*.sqlite', 'codex/*.sqlite-*',
-        'pi/auth.json', 'pi/sessions/', 'pi/logs/', 'pi/cache/',
+        'pi/auth.json', 'pi/sessions/', 'pi/logs/', 'pi/cache/', 'pi/models-store.json',
         'opencode/auth.json', 'opencode/sessions/', 'opencode/logs/', 'opencode/cache/'
     )
 }
@@ -520,6 +520,15 @@ function New-AipProfileFiles {
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'claude/CLAUDE.md') @('@../AGENTS.md', '', '# Claude Code instructions')
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'codex/instructions.md') @('# Codex instructions')
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'pi/APPEND_SYSTEM.md') @('# Pi instructions')
+    # The profile owns its pi settings from birth (tracked content like AGENTS.md):
+    # seed a copy from the machine-wide file when it has real content; a missing or
+    # trivial global file leaves the pass-through link to form instead.
+    $globalSettings = Join-Path (Get-AipImportHarnessRoot 'pi') 'settings.json'
+    if (Test-Path -LiteralPath $globalSettings -PathType Leaf) {
+        if (-not (Test-AipTrivialJsonFile $globalSettings)) {
+            Copy-Item -LiteralPath $globalSettings -Destination (Join-Path $ProfilePath 'pi/settings.json') -Force -ErrorAction Stop
+        }
+    }
     Set-AipUtf8LfFile (Join-Path $ProfilePath '.gitignore') @(Get-AipGitIgnoreLines)
 
     $links = @{
@@ -598,6 +607,10 @@ function Invoke-AipCreate {
     # links exist on disk at this point (machine-local, untracked by design) and a
     # broad add would track any that reconciliation failed to ignore.
     $owned = @('.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
+    $ownedSettings = Join-Path $destination 'pi/settings.json'
+    if ((Test-Path -LiteralPath $ownedSettings -PathType Leaf) -and $null -eq (Get-Item -LiteralPath $ownedSettings -Force).LinkType) {
+        $owned += 'pi/settings.json'
+    }
     Invoke-AipGit -C $script:AipProfileRoot add .gitignore @($owned | ForEach-Object { "$($name)/$_" })
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
     Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
@@ -1120,6 +1133,7 @@ function Test-AipForbiddenPath {
         'pi/logs/*' { return $true }
         'pi/cache' { return $true }
         'pi/cache/*' { return $true }
+        'pi/models-store.json' { return $true }
         'opencode/auth.json' { return $true }
         'opencode/sessions' { return $true }
         'opencode/sessions/*' { return $true }
@@ -1876,9 +1890,299 @@ function Invoke-AipUse {
     Write-Output "Using profile '$name' for this PowerShell session"
 }
 
+function Invoke-AipAdoptUntrackedSettings {
+    # One-time adoption for profiles created before aip tracked pi/settings.json:
+    # stage (never commit) every profile's real, untracked file so the next
+    # checkpoint shares it. Warn-only; never fails.
+    $root = $script:AipProfileRoot
+    if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container)) { return }
+    foreach ($name in @(Get-AipProfileNames)) {
+        $settings = Join-Path (Get-AipProfilePath $name) 'pi/settings.json'
+        $item = Get-Item -LiteralPath $settings -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item -or $item.PSIsContainer -or $null -ne $item.LinkType) { continue }
+        if (Test-AipTrackedPath "$name/pi/settings.json") { continue }
+        Invoke-AipGit -C $root add -- "$name/pi/settings.json"
+        if ($global:LASTEXITCODE -eq 0) {
+            Write-Output "aip: staged $name/pi/settings.json for sharing (the next checkpoint commits it)"
+        }
+        else {
+            Write-AipWarning "could not stage $name/pi/settings.json"
+        }
+    }
+}
+
+function Invoke-AipSyncPackages {
+    # Sync a profile's pi package list (the "packages" array of pi/settings.json)
+    # with the machine-wide global settings. Node performs the JSON splice so
+    # unrelated lines of the settings file stay byte-identical.
+    # Modes: bulk (default) copies the global array when absent and reports a diff
+    # otherwise; --replace adopts the global list; --add SPEC / --remove PKG are
+    # surgical. Stage-only: edits the file, no Git write.
+    param([object[]]$Arguments)
+    $name = ''; $mode = 'bulk'; $spec = ''; $pkg = ''; $haveName = $false
+    if ($Arguments.Count -gt 5) { Write-AipError 'usage: aip sync-packages [NAME] [--add SPEC | --remove PKG | --replace]'; $script:AipCommandStatus = 2; return }
+    $i = 0
+    while ($i -lt $Arguments.Count) {
+        $arg = [string]$Arguments[$i]
+        switch ($arg) {
+            '--add' {
+                if ($i + 1 -ge $Arguments.Count) { Write-AipError '--add requires a package spec'; $script:AipCommandStatus = 2; return }
+                if ($mode -ne 'bulk') { Write-AipError 'combine at most one of --add, --remove, --replace'; $script:AipCommandStatus = 2; return }
+                $mode = 'add'; $spec = [string]$Arguments[$i + 1]; $i += 2
+            }
+            '--remove' {
+                if ($i + 1 -ge $Arguments.Count) { Write-AipError '--remove requires a package name'; $script:AipCommandStatus = 2; return }
+                if ($mode -ne 'bulk') { Write-AipError 'combine at most one of --add, --remove, --replace'; $script:AipCommandStatus = 2; return }
+                $mode = 'remove'; $pkg = [string]$Arguments[$i + 1]; $i += 2
+            }
+            '--replace' {
+                if ($mode -ne 'bulk') { Write-AipError 'combine at most one of --add, --remove, --replace'; $script:AipCommandStatus = 2; return }
+                $mode = 'replace'; $i += 1
+            }
+            default {
+                if ($arg -like '-*') { Write-AipError "unknown option '$arg'"; $script:AipCommandStatus = 2; return }
+                if ($haveName) { Write-AipError "unexpected argument '$arg'"; $script:AipCommandStatus = 2; return }
+                $haveName = $true; $name = $arg; $i += 1
+            }
+        }
+    }
+    $profile = Resolve-AipProfile $name $haveName
+    if ($null -eq $profile) { return }
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-AipError 'sync-packages requires Node.js on PATH'; $script:AipCommandStatus = 1; return }
+    $profileSettings = Join-Path $profile.Path 'pi/settings.json'
+    $linkItem = Get-Item -LiteralPath $profileSettings -Force -ErrorAction SilentlyContinue
+    if ($null -ne $linkItem -and $null -ne $linkItem.LinkType) {
+        Write-AipError "$($profile.Name)/pi/settings.json is a pass-through link; give the profile its own settings file first (copy the global one), then retry"
+        $script:AipCommandStatus = 1
+        return
+    }
+    if (-not (Test-Path -LiteralPath $profileSettings -PathType Leaf)) { Write-AipError "$($profile.Name) has no pi/settings.json"; $script:AipCommandStatus = 1; return }
+    $globalSettings = Join-Path (Get-AipImportHarnessRoot 'pi') 'settings.json'
+    $js = @'
+const fs = require("fs");
+// node -e puts the -e script outside argv: [node, mode, profile, global, spec, pkg]
+const mode = process.argv[1];
+const profilePath = process.argv[2];
+const globalPath = process.argv[3];
+const spec = process.argv[4];
+const pkg = process.argv[5];
+
+const profileText = fs.readFileSync(profilePath, "utf8");
+const globalText = fs.existsSync(globalPath) ? fs.readFileSync(globalPath, "utf8") : null;
+
+function skipString(text, i) {
+  let j = i + 1;
+  while (j < text.length) {
+    if (text[j] === "\\") j += 2;
+    else if (text[j] === '"') return j + 1;
+    j++;
+  }
+  return j;
+}
+
+function findPackages(text) {
+  // { arrStart, arrEnd, indent } of the top-level "packages" array member, or null
+  let depth = 0;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') {
+      const end = skipString(text, i);
+      if (depth === 1 && text.slice(i + 1, end - 1) === "packages") {
+        let k = end;
+        while (k < text.length && /\s/.test(text[k])) k++;
+        if (text[k] === ":") {
+          k++;
+          while (k < text.length && /\s/.test(text[k])) k++;
+          if (text[k] !== "[") {
+            // a top-level "packages" member that is not an array: refuse to
+            // touch the file rather than insert a duplicate member
+            return { nonArray: true };
+          }
+          {
+            let d = 0;
+            let m = k;
+            while (m < text.length) {
+              const ch = text[m];
+              if (ch === '"') m = skipString(text, m);
+              else if (ch === "[") d++;
+              else if (ch === "]") { d--; if (d === 0) break; }
+              m++;
+            }
+            const lineStart = text.lastIndexOf("\n", i) + 1;
+            return { arrStart: k, arrEnd: m, indent: text.slice(lineStart, i) };
+          }
+        }
+      }
+      i = end;
+    } else {
+      if (c === "{" || c === "[") depth++;
+      else if (c === "}" || c === "]") depth--;
+      i++;
+    }
+  }
+  return null;
+}
+
+function parseEntries(text, arrStart, arrEnd) {
+  const inner = text.slice(arrStart + 1, arrEnd);
+  const entries = [];
+  let i = 0;
+  while (i < inner.length) {
+    while (i < inner.length && /[\s,]/.test(inner[i])) i++;
+    if (i >= inner.length) break;
+    let end;
+    if (inner[i] === '"') end = skipString(inner, i);
+    else if (inner[i] === "{") {
+      let d = 0;
+      let m = i;
+      while (m < inner.length) {
+        const ch = inner[m];
+        if (ch === '"') m = skipString(inner, m);
+        else if (ch === "{") d++;
+        else if (ch === "}") { d--; if (d === 0) break; }
+        m++;
+      }
+      end = m + 1;
+    } else {
+      let m = i;
+      while (m < inner.length && !/[\s,]/.test(inner[m])) m++;
+      end = m;
+    }
+    entries.push(inner.slice(i, end));
+    i = end;
+  }
+  return entries;
+}
+
+function renderArray(entries, indent) {
+  if (entries.length === 0) return "[]";
+  const child = indent + "  ";
+  return "[\n" + entries.map((e) => child + e).join(",\n") + "\n" + indent + "]";
+}
+
+function insertMember(text, entries, indent) {
+  // splice a new top-level "packages" member just before the root object's close
+  let depth = 0;
+  let closeIdx = -1;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') { i = skipString(text, i); continue; }
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) { closeIdx = i; break; } }
+    i++;
+  }
+  if (closeIdx === -1) return null;
+  const pre = text.slice(0, closeIdx).replace(/\s+$/, "");
+  const suffix = text.slice(closeIdx);
+  const comma = pre.endsWith("{") ? "" : ",";
+  return pre + comma + "\n" + indent + '"packages": ' + renderArray(entries, indent) + "\n" + suffix;
+}
+
+function entryName(entry) {
+  let value;
+  try { value = JSON.parse(entry); } catch (e) { return entry; }
+  if (typeof value === "object" && value !== null) value = value.source ?? entry;
+  if (typeof value === "string" && value.startsWith("npm:")) return value.slice(4);
+  return typeof value === "string" ? value : entry;
+}
+
+const globalMember = globalText ? findPackages(globalText) : null;
+if (globalMember && globalMember.nonArray) {
+  console.error("the global settings' \"packages\" member is not an array; fix it by hand");
+  process.exit(2);
+}
+const globalEntries = globalMember && !globalMember.nonArray ? parseEntries(globalText, globalMember.arrStart, globalMember.arrEnd) : null;
+const profileMember = findPackages(profileText);
+if (profileMember && profileMember.nonArray) {
+  console.error("the profile settings' \"packages\" member is not an array; fix it by hand");
+  process.exit(2);
+}
+const profileEntries = profileMember && !profileMember.nonArray ? parseEntries(profileText, profileMember.arrStart, profileMember.arrEnd) : null;
+
+function spliceIntoProfile(entries) {
+  if (profileMember) {
+    return profileText.slice(0, profileMember.arrStart) + renderArray(entries, profileMember.indent) + profileText.slice(profileMember.arrEnd + 1);
+  }
+  const inserted = insertMember(profileText, entries, "  ");
+  if (inserted === null) {
+    console.error("could not locate the end of the settings object");
+    process.exit(2);
+  }
+  return inserted;
+}
+
+function writeProfile(newText) { fs.writeFileSync(profilePath, newText); }
+
+if (mode === "bulk" || mode === "replace") {
+  if (!globalEntries) {
+    if (mode === "replace") { console.error("the global pi settings define no packages to replace with"); process.exit(2); }
+    console.log("global pi settings define no packages; nothing to copy");
+    process.exit(0);
+  }
+  if (profileEntries === null) {
+    writeProfile(spliceIntoProfile(globalEntries));
+    console.log(`copied ${globalEntries.length} package(s) from global settings`);
+    process.exit(0);
+  }
+  if (profileEntries.length === globalEntries.length && profileEntries.every((e, i) => e === globalEntries[i])) {
+    console.log("package list already matches global settings");
+    process.exit(0);
+  }
+  console.log("package list differs from global settings:");
+  for (const e of profileEntries.filter((e) => !globalEntries.includes(e))) console.log(`  - ${e} (profile only)`);
+  for (const e of globalEntries.filter((e) => !profileEntries.includes(e))) console.log(`  + ${e} (global only)`);
+  if (mode === "replace") {
+    writeProfile(spliceIntoProfile(globalEntries));
+    console.log(`replaced the profile package list with the global ${globalEntries.length} package(s)`);
+    process.exit(0);
+  }
+  console.log("re-run with --replace to adopt the global list");
+  process.exit(1);
+}
+
+if (mode === "add") {
+  // a bare spec (npm:foo) is JSON-stringified; a quoted or object entry is kept verbatim
+  let entry = spec;
+  try {
+    const parsed = JSON.parse(spec);
+    if (typeof parsed === "string") entry = JSON.stringify(parsed);
+  } catch (e) {
+    entry = JSON.stringify(spec);
+  }
+  if (profileEntries === null) {
+    writeProfile(spliceIntoProfile([entry]));
+    console.log(`added ${entry}`);
+    process.exit(0);
+  }
+  if (profileEntries.includes(entry)) { console.log(`${entry} is already present`); process.exit(0); }
+  writeProfile(spliceIntoProfile([...profileEntries, entry]));
+  console.log(`added ${entry}`);
+  process.exit(0);
+}
+
+if (mode === "remove") {
+  if (profileEntries === null) { console.log("profile has no packages; nothing to remove"); process.exit(0); }
+  const idx = profileEntries.findIndex((e) => e === pkg || entryName(e) === pkg);
+  if (idx === -1) { console.log(`${pkg} is not in the profile package list`); process.exit(0); }
+  const removed = profileEntries[idx];
+  writeProfile(spliceIntoProfile(profileEntries.filter((_, i) => i !== idx)));
+  console.log(`removed ${removed}`);
+  process.exit(0);
+}
+
+console.error(`unknown mode ${mode}`);
+process.exit(2);
+'@
+    & node -e $js $mode $profileSettings $globalSettings $spec $pkg
+    $script:AipCommandStatus = $LASTEXITCODE
+}
+
 function Invoke-AipUpdate {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
+    Invoke-AipAdoptUntrackedSettings
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
     & npx --yes '@code-ministry/aip@latest' update
     $script:AipCommandStatus = $LASTEXITCODE
@@ -2328,7 +2632,7 @@ function Get-AipPassthroughRel {
     # may ever be linked by pass-through maintenance.
     param([Parameter(Mandatory)][string]$Harness)
     switch ($Harness) {
-        'pi' { return @('models.json', 'auth.json', 'settings.json', 'themes', 'prompts', 'extensions') }
+        'pi' { return @('models.json', 'auth.json', 'settings.json', 'themes', 'prompts', 'extensions', 'npm') }
         'claude' { return @('settings.json', 'settings.local.json', '.credentials.json', 'agents', 'commands', 'context-mode', 'output-styles', 'workflows', 'keybindings.json', 'plugins') }
         'codex' { return @('config.toml', 'auth.json', 'plugins') }
         'opencode' { return @('opencode.json', 'auth.json', 'tui.json', 'agent', 'command', 'plugins') }
@@ -2458,6 +2762,16 @@ function Remove-AipPassthroughGitIgnoreEntry {
     Set-AipPassthroughGitIgnoreBlock $GitIgnorePath $current
 }
 
+function Test-AipTrivialJsonFile {
+    # True when the file holds only an empty value (no bytes, or an empty JSON
+    # object/array up to whitespace) — a stub that never carries user content.
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    try {
+        $content = (Get-Content -LiteralPath $LiteralPath -Raw -ErrorAction Stop) -replace '\s', ''
+    } catch { return $false }
+    return ($null -eq $content) -or $content -eq '{}' -or $content -eq '[]'
+}
+
 function Test-AipTrackedPath {
     # Returns $true when the profile-relative path is tracked in the profiles repo.
     param([Parameter(Mandatory)][string]$RepoRel)
@@ -2518,10 +2832,36 @@ function Invoke-AipPassthrough {
 
         # 2. Create missing links for allowlisted paths that exist in the default root
         #    and are absent from the profile (or were just removed as broken). A real
-        #    file or directory shadows the link; a tracked path is exempt.
+        #    file or directory with content shadows the link; a tracked path is exempt.
+        #    A trivial real file (an empty stub) is replaced by the link so it never
+        #    shadows the machine-wide default for good.
         foreach ($rel in $relList) {
             $dest = Join-Path $harnessDir $rel
-            if ($null -ne (Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue)) { continue }
+            $existing = Get-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+            if ($null -ne $existing) {
+                if ($null -eq $existing.LinkType -and $existing.PSIsContainer -eq $false -and
+                    (Test-AipTrivialJsonFile $dest) -and
+                    (Test-Path -LiteralPath (Join-Path $root $rel)) -and
+                    -not (Test-AipTrackedPath "$Name/$Harness/$rel")) {
+                    $source = Join-Path $root $rel
+                    $expected = ConvertTo-AipRelativePath $harnessDir $source
+                    # Remove-Item returns nothing: re-check the path instead of its return value.
+                    Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+                    if (-not (Test-AipPathEntry $dest)) {
+                        try {
+                            New-Item -ItemType SymbolicLink -Path $dest -Target $expected -ErrorAction Stop | Out-Null
+                            Write-AipWarning "replaced trivial $Name/$Harness/$rel with its pass-through link (it held only an empty value)"
+                        }
+                        catch {
+                            Write-AipWarning "could not re-create pass-through link $Name/$Harness/$rel after removing its trivial file"
+                        }
+                    }
+                    else {
+                        Write-AipWarning "could not remove trivial file $Name/$Harness/$rel; kept it"
+                    }
+                }
+                continue
+            }
             $source = Join-Path $root $rel
             if (-not (Test-Path -LiteralPath $source)) { continue }
             if (Test-AipTrackedPath "$Name/$Harness/$rel") { continue }
@@ -2584,7 +2924,9 @@ function Invoke-AipPassthroughProfile {
 }
 
 function Write-AipDoctorPassthrough {
-    # Reports pass-through links and warns (never fails) on broken ones.
+    # Reports pass-through links and warns (never fails) on broken ones, plus two
+    # pi-specific advisories: a shadowing real pi/npm dir, and a profile-owned
+    # settings.json that is not shared.
     param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Name)
     foreach ($harness in 'pi', 'claude', 'codex', 'opencode') {
         $root = Get-AipImportHarnessRoot $harness
@@ -2601,6 +2943,20 @@ function Write-AipDoctorPassthrough {
                 Write-Output "WARN: pass-through $Name/$harness/$rel is broken (its machine-local target is missing)"
             }
         }
+    }
+    $piRoot = Get-AipImportHarnessRoot 'pi'
+    if ($piRoot -and (Test-Path -LiteralPath (Join-Path $piRoot 'npm') -PathType Container)) {
+        $npmDir = Join-Path $ProfilePath 'pi/npm'
+        $npmItem = Get-Item -LiteralPath $npmDir -Force -ErrorAction SilentlyContinue
+        if ($null -ne $npmItem -and $npmItem.PSIsContainer -and $null -eq $npmItem.LinkType) {
+            Write-Output "WARN: $Name/pi/npm is a local directory shadowing the machine-wide pi npm dir; inspect it, then remove it so the pass-through link can form (pi re-installs missing packages on next launch)"
+        }
+    }
+    $settingsPath = Join-Path $ProfilePath 'pi/settings.json'
+    $settingsItem = Get-Item -LiteralPath $settingsPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $settingsItem -and $settingsItem.PSIsContainer -eq $false -and $null -eq $settingsItem.LinkType -and
+        -not (Test-AipTrackedPath "$Name/pi/settings.json")) {
+        Write-Output "WARN: $Name/pi/settings.json is not shared (untracked); run aip update, or: git -C $($script:AipProfileRoot) add $Name/pi/settings.json"
     }
 }
 
@@ -3628,6 +3984,7 @@ Commands:
   aip delete NAME [--force]          Delete a profile
   aip manage HARNESS [ARGS...]       Launch a harness with the aip profile
   aip sync                           Checkpoint and sync every profile
+  aip sync-packages [NAME] [--add SPEC | --remove PKG | --replace]   Sync a profile's pi package list with the global settings
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
@@ -3690,6 +4047,7 @@ function aip {
             'import' { Invoke-AipWithoutGitRouting { Invoke-AipImport $rest } }
             'run' { Invoke-AipRun $rest }
             'sync' { Invoke-AipSyncCommand $rest }
+            'sync-packages' { Invoke-AipWithoutGitRouting { Invoke-AipSyncPackages $rest } }
             'use' { Invoke-AipUse $rest }
             'uninstall' { Invoke-AipUninstall $rest }
             'update' { Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }

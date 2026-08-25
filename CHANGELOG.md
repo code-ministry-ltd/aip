@@ -1,9 +1,10 @@
 # Changelog
 
-## 0.7.0 — 2026-08-25 (POSIX only)
+## 0.7.0 — 2026-08-25
 
-New features for the POSIX implementation (`aip.sh`); the PowerShell
-implementation gains parity in 0.7.1.
+New features, implemented for both the POSIX (`aip.sh`) and PowerShell
+(`aip.ps1`) implementations (parity folded in after review; PS suite runs
+in the Windows CI job).
 
 - **`pi/npm` pass-through.** Profiles now share the machine-wide pi package
   install via one pass-through link (`pi/npm -> ~/.pi/agent/npm`). Pi's own

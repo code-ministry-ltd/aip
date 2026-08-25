@@ -129,6 +129,9 @@ try {
     }
         Set-Content -LiteralPath $versionFile -Value $packageVersion -Encoding utf8NoBOM
         Invoke-AipProfileSkillSetup -InstalledFile $installedFile -PackageVersion $packageVersion -ScriptDirectory $PSScriptRoot
+        # Adopt profiles' untracked pi/settings.json (created before aip tracked them).
+        $adoptCommand = ". '$($installedFile.Replace("'", "''"))'; Invoke-AipAdoptUntrackedSettings"
+        & (Get-Process -Id $PID).Path -NoProfile -Command $adoptCommand
         if ($previousVersion -and $previousVersion -ne $packageVersion) {
             Write-Output "Updated aip from $previousVersion to $packageVersion. Restart PowerShell or run: $sourceLine"
         }

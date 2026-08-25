@@ -68,3 +68,13 @@ SKILL.md (menu: extensions flow via `sync-packages`; settings.json as tracked sk
 - Deps: T1–T7 · Files: `skills/aip/SKILL.md`, `skills/aip/audit.md`, `aip.sh`, `package.json` · Size: M
 
 *Checkpoint 3 (final): full suite green; `aip doctor` clean on the real `~/agent-profiles`; `pi list` (PI_CODING_AGENT_DIR on a scratch profile) shows the 17 global packages including `@the-librarian/pi-extension`; `aip sync` pushes a clean commit.*
+
+## T9 — PowerShell parity (folded into 0.7.0 after review)
+Same nine changes ported to `aip.ps1` (+ `install.ps1` adopt hook): `npm` in the pi pass-through rels, trivial-stub repair in maintenance, `pi/models-store.json` exclusion ×2, `create` materialises + tracks `pi/settings.json`, `aip sync-packages` (same embedded node splice), both doctor warnings, adopt-on-update, dispatch + help. Pester suite: +8 new tests (251 total, green under `mcr.microsoft.com/powershell` with Pester 5.9).
+- [x] `pi` npm pass-through: trivial stub replaced with link; content keeps precedence
+- [x] create materialises and tracks `pi/settings.json`; trivial global → link on first `pi`
+- [x] `models-store.json` in scaffold gitignore and sync denylist
+- [x] `sync-packages`: bulk, `--replace`, `--add/--remove`, non-array refusal, link-guard
+- [x] doctor: npm-shadow + untracked-settings warnings
+- [x] `aip update` (and the installer) stage untracked real settings, warn-only, idempotent
+- Verify: Pester 251/251 under docker-powershell; full POSIX suite still 297/297

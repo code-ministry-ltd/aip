@@ -60,7 +60,7 @@ This release makes pi package *declarations* portable profile content and packag
 1. ~~Track `settings.json`?~~ **Resolved: yes, tracked by default.** New profiles: SC3 materialises + tracks at create. Legacy profiles: SC9 auto-stages on `aip update` (stage-only, no verb, no scans). Reverse path and non-pi harnesses deferred.
 2. ~~Existing real `npm` dir in a profile~~ **Resolved: warn-only (option A).** Pass-through and doctor report the shadowing real dir with an actionable message (inspect, delete dir, link re-creates, pi re-installs on next launch). Merge-and-convert (option B) deferred as a follow-up.
 3. ~~`models-store.json`~~ **Resolved: yes to both.** Scaffold exclusion block gains `pi/models-store.json` (sh + ps1, existing profiles patched once or via doctor notice), and the sync denylist gains the same pattern as a belt-and-braces guard; bats asserts new profiles ignore it.
-4. ~~PowerShell parity scope~~ **Resolved: POSIX-first.** v0.7.0 ships POSIX only (all changes are additive; PS users keep current behaviour). PS parity is v0.7.1, preceded by a Windows link-semantics spike (reparse points vs content copies for the `npm` tree).
+4. ~~PowerShell parity scope~~ **Resolved: POSIX-first, then folded in.** The POSIX implementation shipped first (reviewed as its own commit series); the PowerShell port landed on top in the same 0.7.0 release — the Windows link mechanism (`New-Item -ItemType SymbolicLink`) was already in production use for `extensions`/`themes`, so no spike was needed.
 
 ## Notes / future work (not this release)
 
