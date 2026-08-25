@@ -708,7 +708,7 @@ function findPackages(text) {
             // touch the file rather than insert a duplicate member
             return { nonArray: true };
           }
-          if (true) {
+          {
             let d = 0;
             let m = k;
             while (m < text.length) {
