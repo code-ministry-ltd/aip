@@ -816,7 +816,7 @@ _aip_resolve_profile() {
 }
 
 _aip_write_profile_files() {
-  local profile_path=$1
+  local profile_path=$1 pi_settings
   command mkdir -p "$profile_path/skills" "$profile_path/claude" "$profile_path/codex" "$profile_path/pi" "$profile_path/opencode" || return
   command chmod 700 "$profile_path" || return
   : >"$profile_path/skills/.gitkeep" || return
@@ -824,6 +824,13 @@ _aip_write_profile_files() {
   printf '%s\n' '@../AGENTS.md' '' '# Claude Code instructions' >"$profile_path/claude/CLAUDE.md" || return
   printf '%s\n' '# Codex instructions' >"$profile_path/codex/instructions.md" || return
   printf '%s\n' '# Pi instructions' >"$profile_path/pi/APPEND_SYSTEM.md" || return
+  # The profile owns its pi settings from birth (tracked content like AGENTS.md):
+  # seed a copy from the machine-wide file when it has real content; a missing or
+  # trivial global file leaves the pass-through link to form instead.
+  pi_settings=$(_aip_import_harness_root pi)/settings.json
+  if [ -f "$pi_settings" ] && ! _aip_is_trivial_json_file "$pi_settings"; then
+    command cp -- "$pi_settings" "$profile_path/pi/settings.json" || return
+  fi
   printf '%s\n' \
     '# aip-managed credential and runtime exclusions' \
     '.env' '.env.*' '!.env.example' '*.pem' '*.key' '*.p12' '*.pfx' \
@@ -869,7 +876,7 @@ _aip_publish_profile_directory() (
 
 _aip_create() (
   _aip_clear_git_routing
-  local name=${1-} destination stage temporary
+  local name=${1-} destination stage temporary pi_settings_add
   [ -n "$name" ] || {
     _aip_error 'usage: aip create NAME'
     return 2
@@ -912,12 +919,17 @@ _aip_create() (
   # Add only the profile's owned paths, never the whole directory: pass-through
   # links exist on disk at this point (machine-local, untracked by design) and a
   # broad add would track any that reconciliation failed to ignore.
+  pi_settings_add=''
+  # -f alone follows the pass-through link; only a real file is profile-owned.
+  [ -f "$destination/pi/settings.json" ] && [ ! -L "$destination/pi/settings.json" ] &&
+    pi_settings_add=$name/pi/settings.json
   _aip_git -C "$_AIP_PROFILE_ROOT" add \
     .gitignore \
     "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
     "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
     "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
-    "$name/opencode/AGENTS.md" "$name/opencode/skills" || {
+    "$name/opencode/AGENTS.md" "$name/opencode/skills" \
+    $pi_settings_add || {
     _aip_error "could not commit profile '$name'; check Git identity and hooks"
     return 1
   }

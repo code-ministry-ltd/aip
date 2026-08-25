@@ -51,6 +51,41 @@ setup() {
   git -C "$_AIP_PROFILE_ROOT" check-ignore -- work/pi/models-store.json
 }
 
+@test "create materialises and tracks pi/settings.json from the global settings" {
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"theme":"dark","packages":["npm:example/pkg"]}\n' >"$HOME/.pi/agent/settings.json"
+  aip create work >/dev/null
+  [ -f "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/settings.json")" = '{"theme":"dark","packages":["npm:example/pkg"]}' ]
+  git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch work/pi/settings.json
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
+@test "create links settings when the global file is trivial, materialises when it is not" {
+  mkdir -p "$HOME/.pi/agent"
+  printf '{}' >"$HOME/.pi/agent/settings.json"
+  aip create linked >/dev/null
+  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+
+  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  aip create materialised >/dev/null
+  [ -f "$_AIP_PROFILE_ROOT/materialised/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/materialised/pi/settings.json" ]
+}
+
+@test "clone carries the tracked settings.json into the new profile" {
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  aip create work >/dev/null
+  aip clone work copy >/dev/null
+  [ -f "$_AIP_PROFILE_ROOT/copy/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/copy/pi/settings.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/copy/pi/settings.json")" = '{"theme":"dark"}' ]
+  git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch copy/pi/settings.json
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
 @test "create builds the approved profile atomically with relative links and an initial commit" {
   run aip create work
   [ "$status" -eq 0 ]
