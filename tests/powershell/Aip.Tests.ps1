@@ -93,6 +93,8 @@ BeforeEach {
     & git config --global gc.auto 0
     foreach ($harness in 'claude', 'codex', 'pi', 'opencode') { New-FakeHarness $harness }
     $script:AipRealPath = $script:FakeBin
+    $script:AipCreateSkillsTreeRoot = $null
+    $script:AipCreateSkillsGlobalRoot = $null
     Remove-Variable -Name AipLockAttempts -Scope Script -ErrorAction SilentlyContinue
 }
 
@@ -226,6 +228,25 @@ Describe 'profile creation and selection' {
         $rootGitIgnore | Should -Match '\.default'
         $rootGitIgnore | Should -Match '\.aip-\*/'
         [int](& git -C $root rev-list --count HEAD) | Should -Be 1
+    }
+
+    It 'discovers and copies sorted Pi create skills into the shared profile root' {
+        $tree = Join-Path $TestDrive 'skill-tree'
+        $global = Join-Path $TestDrive 'global-skills'
+        New-Item -ItemType Directory -Path (Join-Path $tree 'profile/pi/skills/beta'), (Join-Path $tree 'profile/pi/skills/alpha'), (Join-Path $global 'alpha') -Force | Out-Null
+        'tree alpha' | Set-Content -LiteralPath (Join-Path $tree 'profile/pi/skills/alpha/SKILL.md')
+        'tree beta' | Set-Content -LiteralPath (Join-Path $tree 'profile/pi/skills/beta/SKILL.md')
+        'global alpha' | Set-Content -LiteralPath (Join-Path $global 'alpha/SKILL.md')
+        $script:AipCreateSkillsTreeRoot = $tree
+        $script:AipCreateSkillsGlobalRoot = $global
+
+        $skills = @(Get-AipCreateSkills)
+        $skills.Name | Should -Be @('alpha', 'beta')
+        $skills[0].Source | Should -Be (Join-Path $global 'alpha')
+        $stage = Join-Path $TestDrive 'stage'
+        New-Item -ItemType Directory -Path (Join-Path $stage 'skills') -Force | Out-Null
+        Copy-AipCreateSkills $stage @($skills[0])
+        (Get-Content -LiteralPath (Join-Path $stage 'skills/alpha/SKILL.md') -Raw).Trim() | Should -Be 'global alpha'
     }
 
     It 'create refuses a destination collision before creating the profiles repository' {

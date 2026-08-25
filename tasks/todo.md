@@ -151,10 +151,10 @@ Document the optional picker in CLI help and aip setup guidance: discovery roots
 
 Port discovery, deterministic deduplication, terminal-aware mixed-delimiter selection, staged copying, root-containment checks, and noninteractive skip behavior to PowerShell, with the same user-visible contract and rollback guarantees.
 
-- [ ] Pester verifies global/descendant discovery, global duplicate precedence, ordered numbering, valid and invalid input, blank/noninteractive skipping, and fixture-root isolation.
-- [ ] A selected skill is copied to `<profile>/skills/NAME`, visible through `pi/skills`, tracked in the creation commit, and never copied through a harness symlink.
-- [ ] A copy error leaves no published profile directory.
-- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- [x] Pester verifies global/descendant discovery, global duplicate precedence, ordered numbering, valid and invalid input, blank/noninteractive skipping, and fixture-root isolation.
+- [x] A selected skill is copied to `<profile>/skills/NAME`, visible through `pi/skills`, tracked in the creation commit, and never copied through a harness symlink.
+- [x] A copy error leaves no published profile directory.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` · **Passed (Docker PowerShell 7 + Node 20: 252 tests)**
 - Deps: T10–T13 (contract first) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
 
 *Checkpoint 3 (final): `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` pass; POSIX and PowerShell have matching prompts and outcomes.*

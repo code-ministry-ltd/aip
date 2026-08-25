@@ -9,9 +9,11 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = $HOME
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.7.0'
+$script:AipVersion = '0.8.0'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
+$script:AipCreateSkillsTreeRoot = $null
+$script:AipCreateSkillsGlobalRoot = $null
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -509,6 +511,64 @@ function Get-AipGitIgnoreLines {
     )
 }
 
+function Get-AipCreateSkillRoots {
+    $tree = if ($script:AipCreateSkillsTreeRoot) { $script:AipCreateSkillsTreeRoot } else { (Get-Location).Path }
+    $global = if ($script:AipCreateSkillsGlobalRoot) { $script:AipCreateSkillsGlobalRoot } else { Join-Path $HOME '.pi/agent/skills' }
+    return @($tree, $global)
+}
+
+function Get-AipCreateSkills {
+    $roots = Get-AipCreateSkillRoots
+    $treeRoot = if (Test-Path -LiteralPath $roots[0] -PathType Container) { (Resolve-Path -LiteralPath $roots[0]).Path } else { $null }
+    $globalRoot = if (Test-Path -LiteralPath $roots[1] -PathType Container) { (Resolve-Path -LiteralPath $roots[1]).Path } else { $null }
+    $candidates = @()
+    if ($globalRoot) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $globalRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+            if (Test-Path -LiteralPath (Join-Path $item.FullName 'SKILL.md') -PathType Leaf) { $candidates += [pscustomobject]@{ Name = $item.Name; Source = $item.FullName; Priority = 0 } }
+        }
+    }
+    if ($treeRoot) {
+        foreach ($item in @(Get-ChildItem -LiteralPath $treeRoot -Directory -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'skills' -and $_.Parent.Name -eq 'pi' })) {
+            foreach ($skill in @(Get-ChildItem -LiteralPath $item.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
+                if ((Test-Path -LiteralPath (Join-Path $skill.FullName 'SKILL.md') -PathType Leaf) -and (Test-AipPathUnder $treeRoot $skill.FullName)) { $candidates += [pscustomobject]@{ Name = $skill.Name; Source = $skill.FullName; Priority = 1 } }
+            }
+        }
+    }
+    return @($candidates | Sort-Object Priority, Source | Group-Object Name | ForEach-Object { $_.Group[0] } | Sort-Object Name)
+}
+
+function Read-AipCreateSkillSelection {
+    param([object[]]$Skills = @())
+    if ($Skills.Count -eq 0 -or [Console]::IsInputRedirected) { return @() }
+    Write-Host 'Available Pi skills:'
+    for ($i = 0; $i -lt $Skills.Count; $i++) { Write-Host "$($i + 1). $($Skills[$i].Name)" }
+    while ($true) {
+        $input = Read-Host 'Select skills by number (comma or space separated; Enter for none)'
+        if ([string]::IsNullOrWhiteSpace($input)) { return @() }
+        if ($input -notmatch '^[0-9,\s]+$') { Write-AipError 'invalid skill selection; enter menu numbers separated by commas or spaces'; continue }
+        $numbers = @($input -split '[,\s]+' | Where-Object { $_ })
+        $selected = @(); $valid = $true
+        foreach ($number in $numbers) {
+            $n = 0
+            if (-not [int]::TryParse($number, [ref]$n) -or $n -lt 1 -or $n -gt $Skills.Count) { $valid = $false; break }
+            if ($selected -notcontains $n) { $selected += $n }
+        }
+        if ($valid) { return @($selected | ForEach-Object { $Skills[$_ - 1] }) }
+        Write-AipError 'invalid skill selection; enter menu numbers separated by commas or spaces'
+    }
+}
+
+function Copy-AipCreateSkills {
+    param([Parameter(Mandatory)][string]$ProfilePath, [object[]]$Skills = @())
+    foreach ($skill in $Skills) {
+        $links = Get-ChildItem -LiteralPath $skill.Source -Recurse -Force -Attributes ReparsePoint -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($links) { throw "selected skill contains a symbolic link and cannot be copied safely: $($skill.Name)" }
+        $destination = Join-Path $ProfilePath (Join-Path 'skills' $skill.Name)
+        if (Test-AipPathEntry $destination) { throw "selected skill destination already exists: $($skill.Name)" }
+        Copy-Item -LiteralPath $skill.Source -Destination $destination -Recurse -ErrorAction Stop
+    }
+}
+
 function New-AipProfileFiles {
     param([Parameter(Mandatory)][string]$ProfilePath)
 
@@ -591,6 +651,9 @@ function Invoke-AipCreate {
     try {
         $temporary = New-AipOwnedTemporaryDirectory $name
         New-AipProfileFiles $temporary
+        $skills = @(Get-AipCreateSkills)
+        $selectedSkills = @(Read-AipCreateSkillSelection $skills)
+        Copy-AipCreateSkills $temporary $selectedSkills
         [IO.Directory]::Move($temporary, $destination)
         $temporary = $null
     }
