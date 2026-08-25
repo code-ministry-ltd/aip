@@ -36,6 +36,14 @@ Reference files live next to this SKILL.md — read them when directed:
   instruction files (`claude/CLAUDE.md`, `codex/instructions.md`,
   `pi/APPEND_SYSTEM.md`) are separate — put harness-specific instructions in
   that harness's own file.
+- Each profile also owns its `pi/settings.json` (model, theme, and the
+  `packages` extension list) as tracked content: `aip create` seeds it from
+  the machine-wide pi settings, so the profile's model and extension set
+  travel with the repository. The extensions themselves are machine-local:
+  every profile passes through the machine-wide `~/.pi/agent/npm` install,
+  and pi installs whatever `packages` declares on the next launch. Never put
+  secrets in `pi/settings.json` — credentials live in `auth.json` and
+  environment variables by design.
 - If the remote is unreachable, aip warns and continues with the committed
   local profile. If the remote and local changed the same path, aip
   **blocks** the launch or sync and picks no side — read `conflicts.md`.
@@ -44,6 +52,9 @@ Reference files live next to this SKILL.md — read them when directed:
   per-directory marker (`aip local`), the
   machine default (`aip default`), else no profile. A running session is
   locked to the profile it launched with.
+- `aip update` stages any profile-owned `pi/settings.json` that pre-v0.7
+  profiles still carry untracked; the next checkpoint commits it. `aip
+  doctor` names it until then.
 - `aip skills add`/`update`/`remove` and `aip import` commit nothing directly. Skill files are
   committed by the next checkpoint (the shared `skills/` tree is
   checkpoint-owned). Imported harness-native files (settings, config) stay
@@ -53,7 +64,8 @@ Reference files live next to this SKILL.md — read them when directed:
   example: `.env`/`.env.*` files (`.env.example` allowed), private keys
   (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`-style),
   `.netrc`/`.npmrc`/`.pypirc`, `claude/.credentials.json`, `codex/auth.json`,
-  `pi/auth.json`, `opencode/auth.json`, the harnesses'
+  `pi/auth.json`, `opencode/auth.json`, pi's model-catalog cache
+  (`pi/models-store.json`), the harnesses'
   session/history/log/cache and other runtime directories (claude
   `projects/`, `todos/`, `debug/`, …), and `node_modules/`. The list is
   broader than this summary, and the block message does not name the path —
@@ -72,9 +84,12 @@ Reference files live next to this SKILL.md — read them when directed:
   machine, decide with the user what is worth importing or copying, find the
   exact skill path inside a repository, and apply conflict resolutions the
   user has approved.
-- **Editing content:** `AGENTS.md`, `skills/`, and the per-harness
-  instruction files are tracked files — edit them directly with your file
-  tools; the next checkpoint commits the change. aip validates layout on
+- **Editing content:** `AGENTS.md`, `skills/`, the per-harness
+  instruction files, and `pi/settings.json` are tracked files — edit them
+  directly with your file tools; the next checkpoint commits the change.
+  For the `packages` array prefer `aip sync-packages` (bulk sync, `--add`,
+  `--remove`); a change takes effect on the next harness launch, and
+  `pi list` shows the result. aip validates layout on
   every checkpoint, so: `claude/CLAUDE.md` must keep `@../AGENTS.md` as its
   first line (write Claude-specific instructions *below* it),
   `codex/instructions.md` must stay NUL-free UTF-8, and the
@@ -137,6 +152,10 @@ configured).
    (this shell), `aip local NAME` (this directory).
 8. **Health check** — `aip doctor [NAME]`; a blocked sync or launch →
    read `conflicts.md`.
+9. **Change a profile's extensions** — `aip sync-packages NAME` lists the
+   diff against the machine-wide list (copy it with `--replace`, or edit
+   surgically with `--add SPEC` / `--remove PKG`); the change takes effect
+   on the next harness launch, and `pi list` shows the result.
 
 After any change that leaves new files on disk (audit copies, `aip skills add`,
 imports), offer `aip sync` to publish.

@@ -42,7 +42,7 @@ the harness default root):
 
 | Harness | Pass-through paths |
 |---|---|
-| pi | `models.json`, `auth.json`, `settings.json`, `themes`, `prompts`, `extensions` |
+| pi | `models.json`, `auth.json`, `settings.json`, `themes`, `prompts`, `extensions`, `npm` |
 | claude | `settings.json`, `settings.local.json`, `.credentials.json`, `agents`, `commands`, `context-mode`, `output-styles`, `workflows`, `keybindings.json`, `plugins` |
 | codex | `config.toml`, `auth.json`, `plugins` |
 | opencode | `opencode.json`, `auth.json`, `tui.json`, `agent`, `command`, `plugins` |
