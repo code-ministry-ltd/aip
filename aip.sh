@@ -831,7 +831,7 @@ _aip_write_profile_files() {
     '**/.credentials.json' '**/auth.json' \
     'claude/.credentials.json' 'claude/history.jsonl' 'claude/projects/' 'claude/session-env/' 'claude/shell-snapshots/' 'claude/statsig/' 'claude/todos/' 'claude/debug/' 'claude/cache/' 'claude/logs/' 'claude/file-history/' \
     'codex/auth.json' 'codex/history.jsonl' 'codex/sessions/' 'codex/archived_sessions/' 'codex/log/' 'codex/logs/' 'codex/cache/' 'codex/*.db' 'codex/*.db-*' 'codex/*.sqlite' 'codex/*.sqlite-*' \
-    'pi/auth.json' 'pi/sessions/' 'pi/logs/' 'pi/cache/' \
+    'pi/auth.json' 'pi/sessions/' 'pi/logs/' 'pi/cache/' 'pi/models-store.json' \
     'opencode/auth.json' 'opencode/sessions/' 'opencode/logs/' 'opencode/cache/' \
     >"$profile_path/.gitignore" || return
   command ln -s ../skills "$profile_path/claude/skills" || return
@@ -1569,7 +1569,7 @@ _aip_is_forbidden_path() {
     .credentials.json|*/.credentials.json|auth.json|*/auth.json) return 0 ;;
     claude/.credentials.json|claude/history.jsonl|claude/projects|claude/projects/*|claude/session-env|claude/session-env/*|claude/shell-snapshots|claude/shell-snapshots/*|claude/statsig|claude/statsig/*|claude/todos|claude/todos/*|claude/debug|claude/debug/*|claude/cache|claude/cache/*|claude/logs|claude/logs/*|claude/file-history|claude/file-history/*) return 0 ;;
     codex/auth.json|codex/history.jsonl|codex/sessions|codex/sessions/*|codex/archived_sessions|codex/archived_sessions/*|codex/log|codex/log/*|codex/logs|codex/logs/*|codex/cache|codex/cache/*|codex/*.db|codex/*.db-*|codex/*.sqlite|codex/*.sqlite-*) return 0 ;;
-    pi/auth.json|pi/sessions|pi/sessions/*|pi/logs|pi/logs/*|pi/cache|pi/cache/*) return 0 ;;
+    pi/auth.json|pi/sessions|pi/sessions/*|pi/logs|pi/logs/*|pi/cache|pi/cache/*|pi/models-store.json) return 0 ;;
     opencode/auth.json|opencode/sessions|opencode/sessions/*|opencode/logs|opencode/logs/*|opencode/cache|opencode/cache/*) return 0 ;;
     node_modules|node_modules/*|*/node_modules|*/node_modules/*) return 0 ;;
     *) return 1 ;;

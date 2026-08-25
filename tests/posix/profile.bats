@@ -45,6 +45,12 @@ setup() {
   git -C "$_AIP_PROFILE_ROOT" check-ignore -- work/skills/x/.credentials.json work/skills/x/auth.json
 }
 
+@test "new profile gitignore excludes the pi model-catalog cache" {
+  aip create work >/dev/null
+  grep -Fx 'pi/models-store.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  git -C "$_AIP_PROFILE_ROOT" check-ignore -- work/pi/models-store.json
+}
+
 @test "create builds the approved profile atomically with relative links and an initial commit" {
   run aip create work
   [ "$status" -eq 0 ]

@@ -82,6 +82,19 @@ make_upstream() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only)" ]
 }
 
+@test "sync hard-fails when the pi model-catalog cache is tracked" {
+  printf 'catalog cache\n' >"$_AIP_PROFILE_ROOT/work/pi/models-store.json"
+  git -C "$_AIP_PROFILE_ROOT" add -f work/pi/models-store.json
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'unsafe tracked file'
+  printf 'change waiting\n' >>"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'forbidden credential or runtime path is tracked'* ]]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only)" ]
+}
+
 @test "sync never adds an ignored credential file under the auto-tracked skills tree" {
   mkdir -p "$_AIP_PROFILE_ROOT/work/skills/reviewer"
   printf 'do not track\n' >"$_AIP_PROFILE_ROOT/work/skills/reviewer/.env"
