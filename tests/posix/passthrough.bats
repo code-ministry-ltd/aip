@@ -12,6 +12,8 @@ setup() {
   printf '{"models":[]}\n' >"$HOME/.pi/agent/models.json"
   printf '{"token":"secret"}\n' >"$HOME/.pi/agent/auth.json"
   printf '{"name":"custom"}\n' >"$HOME/.pi/agent/themes/custom.json"
+  mkdir -p "$HOME/.pi/agent/npm/node_modules/fake-pkg"
+  printf '{"name":"fake-pkg","version":"1.0.0"}\n' >"$HOME/.pi/agent/npm/node_modules/fake-pkg/package.json"
   create_profile work
   create_profile suit
   AIP_PROFILE=work
@@ -69,6 +71,32 @@ setup() {
   [ ! -L "$_AIP_PROFILE_ROOT/work/pi/models.json" ]
   [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/models.json")" = '{"own":true}' ]
   ! grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+}
+
+@test "create seeds the npm pass-through link and never tracks its contents" {
+  [ -L "$_AIP_PROFILE_ROOT/work/pi/npm" ]
+  expected=$(_aip_relative_path "$_AIP_PROFILE_ROOT/work/pi" "$HOME/.pi/agent/npm")
+  [ "$(readlink "$_AIP_PROFILE_ROOT/work/pi/npm")" = "$expected" ]
+  # the link resolves through to the machine-local npm root
+  [ -f "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules/fake-pkg/package.json" ]
+  grep -Fx 'pi/npm' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  git -C "$_AIP_PROFILE_ROOT" check-ignore work/pi/npm
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- 'work/pi/npm' 'work/pi/npm/*')" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
+@test "npm pass-through is absent when the machine has no pi npm root" {
+  rm -rf "$HOME/.pi/agent/npm"
+  run aip create nonpm
+  [ "$status" -eq 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/nonpm/pi/npm" ]
+  ! grep -Fx 'pi/npm' "$_AIP_PROFILE_ROOT/nonpm/.gitignore"
+}
+
+@test "launch checkpoint passes with the npm link present" {
+  run pi
+  [ "$status" -eq 0 ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
 }
 
 @test "profile precedence: a real directory shadows a directory link" {
