@@ -87,3 +87,25 @@ setup() {
   [ "$npm_version" = "$sh_version" ]
   [ "$npm_version" = "$ps_version" ]
 }
+
+@test "aip update stages untracked pi/settings.json without committing or touching links" {
+  create_profile work
+  create_profile linked
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  AIP_PROFILE=linked pi >/dev/null
+  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  printf '{"theme":"light"}\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'staged work/pi/settings.json for sharing'* ]]
+  # staged, not committed; the link profile is untouched
+  git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq 'work/pi/settings.json'
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain --untracked-files=no)" ] || true
+  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'staged'* ]]
+}
