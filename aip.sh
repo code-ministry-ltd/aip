@@ -603,10 +603,20 @@ EOF
   command rm -f "$entries"
 }
 
+_aip_is_trivial_json_file() {
+  # $1 file: true when it holds only an empty value (no bytes, or an empty JSON
+  # object/array up to whitespace) — a stub that never carries user content.
+  local content
+  content=$(command cat -- "$1" 2>/dev/null) || return 1
+  content=${content//[[:space:]]/}
+  [ "$content" = "" ] || [ "$content" = "{}" ] || [ "$content" = "[]" ]
+}
+
 _aip_passthrough() {
   # $1 harness, $2 profile name. Ensures the profile's pass-through links for one
   # harness match the machine-local default root: creates missing links (never
-  # overwriting an existing path, skipping paths already tracked in Git), removes
+  # overwriting a real path with content, except trivial stub files which are
+  # repaired in place; skipping paths already tracked in Git), removes
   # broken links with a warning, and reconciles the profile's .gitignore block.
   # Never fails: problems warn and the caller proceeds (pass-through is a fallback).
   local harness=$1 name=$2 profile_path root rel source dest expected
@@ -634,13 +644,29 @@ _aip_passthrough() {
 
   # 2. Create missing links for allowlisted paths that exist in the default root and
   #    are absent from the profile (or were just removed as broken). A real file or
-  #    directory in the profile shadows the link; a path already tracked in Git is
-  #    exempt (the profile owns it and keeps syncing it).
+  #    directory with content shadows the link; a path already tracked in Git is
+  #    exempt (the profile owns it and keeps syncing it). A trivial real file (an
+  #    empty stub) is replaced by the link so it never shadows the machine-wide
+  #    default for good.
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     dest=$profile_path/$harness/$rel
     if [ -e "$dest" ] || [ -L "$dest" ]; then
-      continue  # existing path shadows the link (profile precedence)
+      if [ ! -L "$dest" ] && [ -f "$dest" ] && _aip_is_trivial_json_file "$dest" &&
+         [ -e "$root/$rel" ] &&
+         ! _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/$harness/$rel" >/dev/null 2>&1; then
+        if command rm -f "$dest" 2>/dev/null; then
+          expected=$(_aip_relative_path "$profile_path/$harness" "$root/$rel")
+          if command ln -s "$expected" "$dest" 2>/dev/null; then
+            _aip_warn "replaced trivial $name/$harness/$rel with its pass-through link (it held only an empty value)"
+          else
+            _aip_warn "could not re-create pass-through link $name/$harness/$rel after removing its trivial file"
+          fi
+        else
+          _aip_warn "could not remove trivial file $name/$harness/$rel; kept it"
+        fi
+      fi
+      continue  # remaining existing paths shadow the link (profile precedence)
     fi
     [ -e "$root/$rel" ] || continue
     if _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/$harness/$rel" >/dev/null 2>&1; then

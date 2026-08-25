@@ -110,6 +110,50 @@ setup() {
   ! grep -Fx 'pi/themes' "$_AIP_PROFILE_ROOT/work/.gitignore"
 }
 
+@test "a trivial real file shadowing the link is replaced by the link" {
+  rm "$_AIP_PROFILE_ROOT/work/pi/models.json"
+  printf '{}\n' >"$_AIP_PROFILE_ROOT/work/pi/models.json"
+  run pi
+  [ "$status" -eq 0 ]
+  [ -L "$_AIP_PROFILE_ROOT/work/pi/models.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/models.json")" = '{"models":[]}' ]
+  grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
+@test "an empty real file shadowing the link is replaced by the link" {
+  rm "$_AIP_PROFILE_ROOT/work/pi/auth.json"
+  : >"$_AIP_PROFILE_ROOT/work/pi/auth.json"
+  pi >/dev/null
+  [ -L "$_AIP_PROFILE_ROOT/work/pi/auth.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/auth.json")" = '{"token":"secret"}' ]
+}
+
+@test "a non-trivial real file is never replaced" {
+  rm "$_AIP_PROFILE_ROOT/work/pi/models.json"
+  printf '{"own":1} junk\n' >"$_AIP_PROFILE_ROOT/work/pi/models.json"
+  pi >/dev/null
+  [ -f "$_AIP_PROFILE_ROOT/work/pi/models.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/work/pi/models.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/models.json")" = '{"own":1} junk' ]
+}
+
+@test "a tracked trivial file is exempt from replacement" {
+  # fresh profile without fixtures, then the user tracks their own trivial file
+  # (tracked before the default root exists, so no gitignore entry blocks it)
+  rm -rf "$HOME/.pi"
+  run aip create own
+  printf '{}' >"$_AIP_PROFILE_ROOT/own/pi/models.json"
+  git -C "$_AIP_PROFILE_ROOT" add own/pi/models.json
+  git -C "$_AIP_PROFILE_ROOT" commit -qm 'own trivial models.json'
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"default":true}\n' >"$HOME/.pi/agent/models.json"
+  AIP_PROFILE=own pi >/dev/null
+  [ -f "$_AIP_PROFILE_ROOT/own/pi/models.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/own/pi/models.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/own/pi/models.json")" = '{}' ]
+}
+
 @test "a path already tracked in Git is exempt: no link, no entry" {
   # fresh profile without fixtures, then the user tracks their own file
   rm -rf "$HOME/.pi"
