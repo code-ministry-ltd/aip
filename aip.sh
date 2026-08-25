@@ -665,9 +665,9 @@ _aip_prompt_create_skill_selection() {
   done <<EOF
 $skills
 EOF
-  _aip_render_create_skill_menu || return 1
+  _aip_render_create_skill_menu >&2 || return 1
   while :; do
-    printf '%s' 'Select skills by number (comma or space separated; Enter for none): '
+    printf '%s' 'Select skills by number (comma or space separated; Enter for none): ' >&2
     if ! IFS= read -r input; then
       return 0
     fi
@@ -676,6 +676,60 @@ EOF
       return 0
     }
   done
+}
+
+_aip_create_skill_source_is_allowed() {
+  # Prints the current canonical source only when it is still below a discovery root.
+  local source=$1 canonical root
+  canonical=$(_aip_canonical_directory "$source") || return 1
+  [ -f "$canonical/SKILL.md" ] || return 1
+  for root in "$(_aip_create_skills_global_root)" "$(_aip_create_skills_tree_root)"; do
+    root=$(_aip_canonical_directory "$root") || continue
+    if _aip_create_skill_is_within "$root" "$canonical"; then
+      printf '%s\n' "$canonical"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_aip_copy_selected_create_skills() {
+  # $1 staged profile directory, $2 newline-separated selected menu indices.
+  local profile_path=$1 selections=$2 skills source name destination links index
+  skills=$(command mktemp "${TMPDIR:-/tmp}/aip-create-skills.XXXXXX") || return 1
+  _aip_list_create_skills >|"$skills" || { command rm -f "$skills"; return 1; }
+  while IFS= read -r index; do
+    case $index in ''|*[!0-9]*) command rm -f "$skills"; return 1 ;; esac
+    source=$(command awk -F '\t' -v number="$index" 'NR == number { print $2; exit }' "$skills")
+    name=$(command awk -F '\t' -v number="$index" 'NR == number { print $1; exit }' "$skills")
+    if [ -z "$source" ] || [ -z "$name" ]; then
+      command rm -f "$skills"
+      _aip_error "selected skill number is no longer available: $index"
+      return 1
+    fi
+    source=$(_aip_create_skill_source_is_allowed "$source") || {
+      command rm -f "$skills"
+      _aip_error "selected skill source is no longer within an allowed root: $name"
+      return 1
+    }
+    links=$(command find -H "$source" -type l -print -quit 2>/dev/null) || {
+      command rm -f "$skills"
+      return 1
+    }
+    if [ -n "$links" ]; then
+      command rm -f "$skills"
+      _aip_error "selected skill contains a symbolic link and cannot be copied safely: $name"
+      return 1
+    fi
+    destination=$profile_path/skills/$name
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+      command rm -f "$skills"
+      _aip_error "selected skill destination already exists: $name"
+      return 1
+    fi
+    command cp -R "$source" "$destination" || { command rm -f "$skills"; return 1; }
+  done <"$selections"
+  command rm -f "$skills"
 }
 
 _aip_is_passthrough_link() {
@@ -1298,7 +1352,7 @@ _aip_publish_profile_directory() (
 
 _aip_create() (
   _aip_clear_git_routing
-  local name=${1-} destination stage temporary pi_settings_add
+  local name=${1-} destination stage temporary pi_settings_add selection_file
   [ -n "$name" ] || {
     _aip_error 'usage: aip create NAME'
     return 2
@@ -1331,6 +1385,10 @@ _aip_create() (
   temporary=$stage/$name
   if ! command mkdir "$temporary" ||
      ! _aip_write_profile_files "$temporary" ||
+     ! selection_file=$(command mktemp "$stage/.aip-create-selection.XXXXXX") ||
+     ! _aip_prompt_create_skill_selection >"$selection_file" ||
+     ! _aip_copy_selected_create_skills "$temporary" "$selection_file" ||
+     ! command rm -f "$selection_file" ||
      ! _aip_publish_profile_directory "$temporary" "$destination"; then
     command rm -rf "$stage"
     _aip_error "could not create profile '$name'"

@@ -129,10 +129,10 @@ Add the terminal-aware POSIX input flow that accepts unique positive menu number
 
 Wire valid POSIX selections into the staged create lifecycle. Copy full selected directories into the temporary profile's owned `skills/` root before publication, fail and clean up if any copy fails, and rely on existing explicit `skills` staging for the creation commit.
 
-- [ ] Selected skill files exist at `<profile>/skills/NAME`, are real copied content, and are visible via the unchanged `pi/skills -> ../skills` link.
-- [ ] The creation commit tracks selected skills; blank selection leaves no copied directories.
-- [ ] A forced copy failure creates no destination profile and leaves no partial published content.
-- Verify: `npx bats tests/posix/selection.bats tests/posix/lifecycle.bats`
+- [x] Selected skill files exist at `<profile>/skills/NAME`, are real copied content, and are visible via the unchanged `pi/skills -> ../skills` link.
+- [x] The creation commit tracks selected skills; blank selection leaves no copied directories.
+- [x] A forced copy failure creates no destination profile and leaves no partial published content.
+- Verify: `npx bats tests/posix/selection.bats tests/posix/lifecycle.bats` · **Passed**
 - Deps: T10, T11 · Files: `aip.sh`, `tests/posix/selection.bats`, `tests/posix/lifecycle.bats` · Size: M
 
 ## T13 — Users can understand the creation-time picker
