@@ -45,6 +45,15 @@ name: beta
   [[ "$output" == *"added beta to work"* ]]
 }
 
+@test "add works when the profile script is sourced by Zsh" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+
+  run zsh -f -c 'source "$AIP_SOURCE"; aip skills add work "file://$TEST_SRC#alpha"'
+
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/work/skills/alpha/SKILL.md" ]
+}
+
 @test "add installs every file in the skill directory, preserving modes" {
   aip skills add work "file://$TEST_SRC#alpha" >/dev/null
   [ -f "$_AIP_PROFILE_ROOT/work/skills/alpha/SKILL.md" ]
