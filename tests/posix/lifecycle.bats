@@ -169,6 +169,44 @@ setup() {
   [ -d "$_AIP_PROFILE_ROOT/elsewhere" ]
 }
 
+@test "doctor warns (without failing) on a shadowing pi/npm dir and an untracked settings file" {
+  mkdir -p "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules"
+  printf '{"theme":"light"}\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  mkdir -p "$HOME/.pi/agent/npm/node_modules"
+
+  run aip doctor work
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'WARN: work/pi/npm is a local directory shadowing the machine-wide pi npm dir'* ]]
+  [[ "$output" == *'WARN: work/pi/settings.json is not shared (untracked)'* ]]
+  [[ "$output" == *'add work/pi/settings.json'* ]]
+
+  # healthy states go quiet: npm becomes the link, settings becomes tracked
+  rm -rf "$_AIP_PROFILE_ROOT/work/pi/npm"
+  AIP_PROFILE=work pi >/dev/null
+  git -C "$_AIP_PROFILE_ROOT" add work/pi/settings.json
+  git -C "$_AIP_PROFILE_ROOT" commit -qm 'share settings'
+
+  run aip doctor work
+  [ "$status" -eq 0 ]
+  ! [[ "$output" == *'shadowing the machine-wide pi npm dir'* ]]
+  ! [[ "$output" == *'not shared (untracked)'* ]]
+}
+
+@test "doctor stays quiet about settings when it is linked or absent" {
+  run aip doctor work
+  [ "$status" -eq 0 ]
+  ! [[ "$output" == *'not shared (untracked)'* ]]
+
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  AIP_PROFILE=work pi >/dev/null
+  [ -L "$_AIP_PROFILE_ROOT/work/pi/settings.json" ]
+  run aip doctor work
+  [ "$status" -eq 0 ]
+  ! [[ "$output" == *'not shared (untracked)'* ]]
+}
+
 @test "doctor validates healthy links and reports missing harnesses as warnings" {
   rm "$FAKE_BIN/pi"
 
