@@ -603,6 +603,255 @@ EOF
   command rm -f "$entries"
 }
 
+_aip_sync_packages() (
+  # Sync a profile's pi package list (the "packages" array of pi/settings.json)
+  # with the machine-wide global settings. Node performs the JSON splice so
+  # unrelated lines of the settings file stay byte-identical.
+  # Modes: bulk (default) copies the global array when absent and reports a diff
+  # otherwise; --replace adopts the global list; --add SPEC / --remove PKG are
+  # surgical. Stage-only: edits the file, no Git write.
+  _aip_clear_git_routing
+  local name='' mode=bulk spec='' pkg='' have_name=0
+  [ "$#" -le 5 ] || { _aip_error 'usage: aip sync-packages [NAME] [--add SPEC | --remove PKG | --replace]'; return 2; }
+  while [ "$#" -gt 0 ]; do
+    case $1 in
+      --add)
+        [ "$#" -ge 2 ] || { _aip_error '--add requires a package spec'; return 2; }
+        [ "$mode" = bulk ] || { _aip_error 'combine at most one of --add, --remove, --replace'; return 2; }
+        mode=add; spec=$2; shift 2 ;;
+      --remove)
+        [ "$#" -ge 2 ] || { _aip_error '--remove requires a package name'; return 2; }
+        [ "$mode" = bulk ] || { _aip_error 'combine at most one of --add, --remove, --replace'; return 2; }
+        mode=remove; pkg=$2; shift 2 ;;
+      --replace)
+        [ "$mode" = bulk ] || { _aip_error 'combine at most one of --add, --remove, --replace'; return 2; }
+        mode=replace; shift ;;
+      -*) _aip_error "unknown option '$1'"; return 2 ;;
+      *)
+        [ "$have_name" -eq 0 ] || { _aip_error "unexpected argument '$1'"; return 2; }
+        have_name=1; name=$1; shift ;;
+    esac
+  done
+  _aip_resolve_profile "$name" || return
+  name=$_AIP_RESOLVED_NAME
+  command -v node >/dev/null 2>&1 || { _aip_error 'sync-packages requires Node.js on PATH'; return 1; }
+  local profile_settings global_settings js
+  profile_settings=$(_aip_profile_path "$name")/pi/settings.json
+  if [ -L "$profile_settings" ]; then
+    _aip_error "$name/pi/settings.json is a pass-through link; give the profile its own settings file first (copy the global one), then retry"
+    return 1
+  fi
+  [ -f "$profile_settings" ] || { _aip_error "$name has no pi/settings.json"; return 1; }
+  global_settings=$(_aip_import_harness_root pi)/settings.json
+  js=$(cat <<'JS'
+const fs = require("fs");
+// node -e puts the -e script outside argv: [node, mode, profile, global, spec, pkg]
+const mode = process.argv[1];
+const profilePath = process.argv[2];
+const globalPath = process.argv[3];
+const spec = process.argv[4];
+const pkg = process.argv[5];
+
+const profileText = fs.readFileSync(profilePath, "utf8");
+const globalText = fs.existsSync(globalPath) ? fs.readFileSync(globalPath, "utf8") : null;
+
+function skipString(text, i) {
+  let j = i + 1;
+  while (j < text.length) {
+    if (text[j] === "\\") j += 2;
+    else if (text[j] === '"') return j + 1;
+    j++;
+  }
+  return j;
+}
+
+function findPackages(text) {
+  // { arrStart, arrEnd, indent } of the top-level "packages" array member, or null
+  let depth = 0;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') {
+      const end = skipString(text, i);
+      if (depth === 1 && text.slice(i + 1, end - 1) === "packages") {
+        let k = end;
+        while (k < text.length && /\s/.test(text[k])) k++;
+        if (text[k] === ":") {
+          k++;
+          while (k < text.length && /\s/.test(text[k])) k++;
+          if (text[k] === "[") {
+            let d = 0;
+            let m = k;
+            while (m < text.length) {
+              const ch = text[m];
+              if (ch === '"') m = skipString(text, m);
+              else if (ch === "[") d++;
+              else if (ch === "]") { d--; if (d === 0) break; }
+              m++;
+            }
+            const lineStart = text.lastIndexOf("\n", i) + 1;
+            return { arrStart: k, arrEnd: m, indent: text.slice(lineStart, i) };
+          }
+        }
+      }
+      i = end;
+    } else {
+      if (c === "{" || c === "[") depth++;
+      else if (c === "}" || c === "]") depth--;
+      i++;
+    }
+  }
+  return null;
+}
+
+function parseEntries(text, arrStart, arrEnd) {
+  const inner = text.slice(arrStart + 1, arrEnd);
+  const entries = [];
+  let i = 0;
+  while (i < inner.length) {
+    while (i < inner.length && /[\s,]/.test(inner[i])) i++;
+    if (i >= inner.length) break;
+    let end;
+    if (inner[i] === '"') end = skipString(inner, i);
+    else if (inner[i] === "{") {
+      let d = 0;
+      let m = i;
+      while (m < inner.length) {
+        const ch = inner[m];
+        if (ch === '"') m = skipString(inner, m);
+        else if (ch === "{") d++;
+        else if (ch === "}") { d--; if (d === 0) break; }
+        m++;
+      }
+      end = m + 1;
+    } else {
+      let m = i;
+      while (m < inner.length && !/[\s,]/.test(inner[m])) m++;
+      end = m;
+    }
+    entries.push(inner.slice(i, end));
+    i = end;
+  }
+  return entries;
+}
+
+function renderArray(entries, indent) {
+  if (entries.length === 0) return "[]";
+  const child = indent + "  ";
+  return "[\n" + entries.map((e) => child + e).join(",\n") + "\n" + indent + "]";
+}
+
+function insertMember(text, entries, indent) {
+  // splice a new top-level "packages" member just before the root object's close
+  let depth = 0;
+  let closeIdx = -1;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') { i = skipString(text, i); continue; }
+    if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) { closeIdx = i; break; } }
+    i++;
+  }
+  if (closeIdx === -1) return null;
+  const pre = text.slice(0, closeIdx).replace(/\s+$/, "");
+  const suffix = text.slice(closeIdx);
+  const comma = pre.endsWith("{") ? "" : ",";
+  return pre + comma + "\n" + indent + '"packages": ' + renderArray(entries, indent) + "\n" + suffix;
+}
+
+function entryName(entry) {
+  let value;
+  try { value = JSON.parse(entry); } catch (e) { return entry; }
+  if (typeof value === "object" && value !== null) value = value.source ?? entry;
+  if (typeof value === "string" && value.startsWith("npm:")) return value.slice(4);
+  return typeof value === "string" ? value : entry;
+}
+
+const globalMember = globalText ? findPackages(globalText) : null;
+const globalEntries = globalMember ? parseEntries(globalText, globalMember.arrStart, globalMember.arrEnd) : null;
+const profileMember = findPackages(profileText);
+const profileEntries = profileMember ? parseEntries(profileText, profileMember.arrStart, profileMember.arrEnd) : null;
+
+function spliceIntoProfile(entries) {
+  if (profileMember) {
+    return profileText.slice(0, profileMember.arrStart) + renderArray(entries, profileMember.indent) + profileText.slice(profileMember.arrEnd + 1);
+  }
+  const inserted = insertMember(profileText, entries, "  ");
+  if (inserted === null) {
+    console.error("could not locate the end of the settings object");
+    process.exit(2);
+  }
+  return inserted;
+}
+
+function writeProfile(newText) { fs.writeFileSync(profilePath, newText); }
+
+if (mode === "bulk" || mode === "replace") {
+  if (!globalEntries) {
+    if (mode === "replace") { console.error("the global pi settings define no packages to replace with"); process.exit(2); }
+    console.log("global pi settings define no packages; nothing to copy");
+    process.exit(0);
+  }
+  if (profileEntries === null) {
+    writeProfile(spliceIntoProfile(globalEntries));
+    console.log(`copied ${globalEntries.length} package(s) from global settings`);
+    process.exit(0);
+  }
+  if (profileEntries.length === globalEntries.length && profileEntries.every((e, i) => e === globalEntries[i])) {
+    console.log("package list already matches global settings");
+    process.exit(0);
+  }
+  console.log("package list differs from global settings:");
+  for (const e of profileEntries.filter((e) => !globalEntries.includes(e))) console.log(`  - ${e} (profile only)`);
+  for (const e of globalEntries.filter((e) => !profileEntries.includes(e))) console.log(`  + ${e} (global only)`);
+  if (mode === "replace") {
+    writeProfile(spliceIntoProfile(globalEntries));
+    console.log(`replaced the profile package list with the global ${globalEntries.length} package(s)`);
+    process.exit(0);
+  }
+  console.log("re-run with --replace to adopt the global list");
+  process.exit(1);
+}
+
+if (mode === "add") {
+  // a bare spec (npm:foo) is JSON-stringified; a quoted or object entry is kept verbatim
+  let entry = spec;
+  try {
+    const parsed = JSON.parse(spec);
+    if (typeof parsed === "string") entry = JSON.stringify(parsed);
+  } catch (e) {
+    entry = JSON.stringify(spec);
+  }
+  if (profileEntries === null) {
+    writeProfile(spliceIntoProfile([entry]));
+    console.log(`added ${entry}`);
+    process.exit(0);
+  }
+  if (profileEntries.includes(entry)) { console.log(`${entry} is already present`); process.exit(0); }
+  writeProfile(spliceIntoProfile([...profileEntries, entry]));
+  console.log(`added ${entry}`);
+  process.exit(0);
+}
+
+if (mode === "remove") {
+  if (profileEntries === null) { console.log("profile has no packages; nothing to remove"); process.exit(0); }
+  const idx = profileEntries.findIndex((e) => e === pkg || entryName(e) === pkg);
+  if (idx === -1) { console.log(`${pkg} is not in the profile package list`); process.exit(0); }
+  const removed = profileEntries[idx];
+  writeProfile(spliceIntoProfile(profileEntries.filter((_, i) => i !== idx)));
+  console.log(`removed ${removed}`);
+  process.exit(0);
+}
+
+console.error(`unknown mode ${mode}`);
+process.exit(2);
+JS
+)
+  node -e "$js" "$mode" "$profile_settings" "$global_settings" "$spec" "$pkg"
+  return $?
+)
+
 _aip_is_trivial_json_file() {
   # $1 file: true when it holds only an empty value (no bytes, or an empty JSON
   # object/array up to whitespace) — a stub that never carries user content.
@@ -1519,7 +1768,7 @@ _aip_is_command() {
     [ "${1-}" = delete ] || [ "${1-}" = doctor ] || [ "${1-}" = list ] ||
     [ "${1-}" = local ] || [ "${1-}" = manage ] || [ "${1-}" = remote ] || [ "${1-}" = uninstall ] ||
     [ "${1-}" = import ] || [ "${1-}" = run ] ||
-    [ "${1-}" = sync ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
+    [ "${1-}" = sync ] || [ "${1-}" = sync-packages ] || [ "${1-}" = use ] || [ "${1-}" = update ] ||
     [ "${1-}" = version ] || [ "${1-}" = which ]
 }
 
@@ -3295,6 +3544,7 @@ Commands:
   aip delete NAME [--force]          Delete a profile
   aip manage HARNESS [ARGS...]       Launch a harness with the aip profile
   aip sync                           Checkpoint and sync every profile
+  aip sync-packages [NAME] [--add SPEC | --remove PKG | --replace]   Sync a profile's pi package list with the global settings
   aip remote add URL                 Connect the profiles repository to a remote
   aip remote show                    Show the configured remote (if any)
   aip remote remove                  Disconnect the remote
@@ -3491,6 +3741,7 @@ aip() {
     import) _aip_import "$@" ;;
     run) _aip_run "$@" ;;
     sync) _aip_sync_command "$@" ;;
+    sync-packages) _aip_sync_packages "$@" ;;
     use) _aip_use "$@" ;;
     uninstall) _aip_uninstall "$@" ;;
     update) _aip_update "$@" ;;
