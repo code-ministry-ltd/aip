@@ -1,3 +1,7 @@
 node_modules/
 test-results/
 .DS_Store
+.pi
+.claude
+.codex
+.opencode

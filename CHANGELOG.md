@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 — 2026-08-25
+
+- **Create profiles with selected Pi skills.** Interactive `aip create NAME`
+  now discovers skills in Pi profiles below the current directory and the
+  machine-global Pi skills directory, presents a deduplicated numbered list,
+  and copies selected skills into the profile's shared `skills/` directory.
+  Enter numbers separated by commas or spaces, or press Enter to skip.
+
 ## 0.7.0 — 2026-08-25
 
 New features, implemented for both the POSIX (`aip.sh`) and PowerShell
