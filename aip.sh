@@ -659,7 +659,7 @@ _aip_sync_packages() (
   _aip_resolve_profile "$name" || return
   name=$_AIP_RESOLVED_NAME
   command -v node >/dev/null 2>&1 || { _aip_error 'sync-packages requires Node.js on PATH'; return 1; }
-  local profile_settings global_settings js
+  local profile_settings global_settings jsfile rc
   profile_settings=$(_aip_profile_path "$name")/pi/settings.json
   if [ -L "$profile_settings" ]; then
     _aip_error "$name/pi/settings.json is a pass-through link; give the profile its own settings file first (copy the global one), then retry"
@@ -667,14 +667,18 @@ _aip_sync_packages() (
   fi
   [ -f "$profile_settings" ] || { _aip_error "$name has no pi/settings.json"; return 1; }
   global_settings=$(_aip_import_harness_root pi)/settings.json
-  js=$(cat <<'JS'
+  # The node script goes to a temp file, not a $(cat <<EOF) heredoc: bash 3.2
+  # (macOS /bin/bash) misparses parenthesised heredoc bodies inside $( ), which
+  # corrupts the whole file's parse.
+  jsfile=$(command mktemp) || return
+  cat > "$jsfile" <<'JS'
 const fs = require("fs");
-// node -e puts the -e script outside argv: [node, mode, profile, global, spec, pkg]
-const mode = process.argv[1];
-const profilePath = process.argv[2];
-const globalPath = process.argv[3];
-const spec = process.argv[4];
-const pkg = process.argv[5];
+// node script: argv is [node, script, mode, profile, global, spec, pkg]
+const mode = process.argv[2];
+const profilePath = process.argv[3];
+const globalPath = process.argv[4];
+const spec = process.argv[5];
+const pkg = process.argv[6];
 
 const profileText = fs.readFileSync(profilePath, "utf8");
 const globalText = fs.existsSync(globalPath) ? fs.readFileSync(globalPath, "utf8") : null;
@@ -884,9 +888,10 @@ if (mode === "remove") {
 console.error(`unknown mode ${mode}`);
 process.exit(2);
 JS
-)
-  node -e "$js" "$mode" "$profile_settings" "$global_settings" "$spec" "$pkg"
-  return $?
+  node "$jsfile" "$mode" "$profile_settings" "$global_settings" "$spec" "$pkg"
+  rc=$?
+  command rm -f "$jsfile"
+  return $rc
 )
 
 _aip_is_trivial_json_file() {
