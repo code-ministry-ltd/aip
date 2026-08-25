@@ -631,6 +631,53 @@ $skills
 EOF
 }
 
+_aip_parse_create_skill_selection() {
+  # $1 menu size, $2 user input. Prints unique selected menu indices, one per line.
+  local count=$1 input=$2 normalised token selected='' old_ifs=$IFS
+  if ! printf '%s\n' "$input" | LC_ALL=C command grep -Eq '^[0-9,[:space:]]*$'; then
+    _aip_error 'invalid skill selection; enter menu numbers separated by commas or spaces'
+    return 1
+  fi
+  normalised=$(printf '%s' "$input" | command tr ',' ' ') || return 1
+  IFS=$(printf ' \t')
+  for token in $normalised; do
+    if ! [ "$token" -ge 1 ] 2>/dev/null || ! [ "$token" -le "$count" ] 2>/dev/null; then
+      IFS=$old_ifs
+      _aip_error 'invalid skill selection; enter menu numbers separated by commas or spaces'
+      return 1
+    fi
+    case " $selected " in *" $token "*) continue ;; esac
+    selected=${selected:+$selected }$token
+    printf '%s\n' "$token"
+  done
+  IFS=$old_ifs
+}
+
+_aip_prompt_create_skill_selection() {
+  # Prints selected menu indices only. Automation has no terminal stdin, so it
+  # deliberately gets the existing no-skills creation behaviour without blocking.
+  local skills name source count=0 input selected
+  [ -t 0 ] || return 0
+  skills=$(_aip_list_create_skills) || return 1
+  [ -n "$skills" ] || return 0
+  while IFS="$(printf '\t')" read -r name source; do
+    [ -n "$name" ] && count=$((count + 1))
+  done <<EOF
+$skills
+EOF
+  _aip_render_create_skill_menu || return 1
+  while :; do
+    printf '%s' 'Select skills by number (comma or space separated; Enter for none): '
+    if ! IFS= read -r input; then
+      return 0
+    fi
+    selected=$(_aip_parse_create_skill_selection "$count" "$input") && {
+      [ -n "$selected" ] && printf '%s\n' "$selected"
+      return 0
+    }
+  done
+}
+
 _aip_is_passthrough_link() {
   # $1 relative link path (e.g. pi/models.json), $2 profile path. Returns 0 when the
   # link is a pass-through link: allowlisted rel whose target is confined to the
