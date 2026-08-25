@@ -416,7 +416,7 @@ _aip_passthrough_rels() {
   # without a trailing slash; each maps to the same relative path under the harness
   # default root. Only these paths may ever be linked by pass-through maintenance.
   case ${1-} in
-    pi) printf '%s\n' models.json auth.json settings.json themes prompts extensions ;;
+    pi) printf '%s\n' models.json auth.json settings.json themes prompts extensions npm ;;
     claude) printf '%s\n' settings.json settings.local.json .credentials.json agents commands context-mode output-styles workflows keybindings.json plugins ;;
     codex) printf '%s\n' config.toml auth.json plugins ;;
     opencode) printf '%s\n' opencode.json auth.json tui.json agent command plugins ;;
