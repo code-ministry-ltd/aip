@@ -117,7 +117,12 @@ Re-run `aip list`. If the profiles root is missing or not a Git repository
 
 Then **ask which profiles they want** — names and how many. `work` and
 `personal` are an example of a common pair, never a default. Create exactly
-what they choose, one `aip create NAME` each.
+what they choose, one `aip create NAME` each. In an interactive terminal, each
+create shows a numbered, deduplicated menu of Pi skills found in Pi profile
+skill trees below the current directory and in `~/.pi/agent/skills`. The user
+may enter numbers separated by commas, spaces, or both (or press Enter for no
+skills); aip copies those selections into the new profile's shared
+`<profile>/skills` directory, which every harness skill path links to.
 
 - They may choose **none for now** — skip 5–6 and finish with 7; if a
   remote re-add is still pending from 3b (a repository with no commits),

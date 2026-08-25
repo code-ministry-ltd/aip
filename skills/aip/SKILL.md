@@ -35,7 +35,9 @@ Reference files live next to this SKILL.md — read them when directed:
   `AGENTS.md`/`skills` files link to the shared ones. Per-harness
   instruction files (`claude/CLAUDE.md`, `codex/instructions.md`,
   `pi/APPEND_SYSTEM.md`) are separate — put harness-specific instructions in
-  that harness's own file.
+  that harness's own file. During an interactive `aip create`, Pi skills from
+  descendant Pi profiles and `~/.pi/agent/skills` can be selected by number;
+  aip copies them into this shared `skills/` tree, never a harness link.
 - Each profile also owns its `pi/settings.json` (model, theme, and the
   `packages` extension list) as tracked content: `aip create` seeds it from
   the machine-wide pi settings, so the profile's model and extension set

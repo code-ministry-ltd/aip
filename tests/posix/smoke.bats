@@ -45,6 +45,7 @@
   [[ "$output" == *'Quick start'* ]]
   [[ "$output" == *'README'* ]]
   [[ "$output" == *'claude, codex, pi, opencode'* ]]
+  [[ "$output" == *'Pi skills: when stdin is a terminal'* ]]
 
   run bash -c 'source "$0"; aip --help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
