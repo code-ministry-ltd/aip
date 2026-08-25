@@ -110,3 +110,19 @@ setup() {
   [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
   ! grep -q 'evil' "$HOME/.pi/agent/settings.json"
 }
+
+@test "refuses to write when a packages member is not an array" {
+  printf '{\n  "packages": {"broken": true}\n}\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  run aip sync-packages work --add npm:x
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'not an array'* ]]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/settings.json")" = '{
+  "packages": {"broken": true}
+}' ]
+
+  printf '{\n  "packages": "nope"\n}\n' >"$HOME/.pi/agent/settings.json"
+  printf '{\n  "theme": "light"\n}\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  run aip sync-packages work
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'not an array'* ]]
+}

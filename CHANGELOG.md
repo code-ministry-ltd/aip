@@ -23,7 +23,13 @@ implementation gains parity in 0.7.1.
   from global when absent, diff with non-zero exit when they differ,
   `--replace` to adopt the global list, `--add SPEC` / `--remove PKG` for
   surgical edits. The splice keeps every settings line outside `packages`
-  byte-identical. Requires Node.js on PATH.
+  byte-identical. Requires Node.js on PATH. A settings file whose
+  `packages` member is not an array is left untouched (refused with an
+  error).
+- **Known trade-off:** pi has no lock around its startup auto-install, so
+  two pi sessions launching at once on a machine that is still missing
+  packages can race the shared `npm` install; npm's own lockfiles absorb
+  most of it. A proper lock belongs upstream in pi.
 - **Legacy adoption.** `aip update` stages (never commits) every profile's
   real, untracked `pi/settings.json`; the next checkpoint commits it. `aip
   doctor` names untracked files and profile-local `pi/npm` directories that

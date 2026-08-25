@@ -703,7 +703,12 @@ function findPackages(text) {
         if (text[k] === ":") {
           k++;
           while (k < text.length && /\s/.test(text[k])) k++;
-          if (text[k] === "[") {
+          if (text[k] !== "[") {
+            // a top-level "packages" member that is not an array: refuse to
+            // touch the file rather than insert a duplicate member
+            return { nonArray: true };
+          }
+          if (true) {
             let d = 0;
             let m = k;
             while (m < text.length) {
@@ -793,9 +798,17 @@ function entryName(entry) {
 }
 
 const globalMember = globalText ? findPackages(globalText) : null;
-const globalEntries = globalMember ? parseEntries(globalText, globalMember.arrStart, globalMember.arrEnd) : null;
+if (globalMember && globalMember.nonArray) {
+  console.error("the global settings' \"packages\" member is not an array; fix it by hand");
+  process.exit(2);
+}
+const globalEntries = globalMember && !globalMember.nonArray ? parseEntries(globalText, globalMember.arrStart, globalMember.arrEnd) : null;
 const profileMember = findPackages(profileText);
-const profileEntries = profileMember ? parseEntries(profileText, profileMember.arrStart, profileMember.arrEnd) : null;
+if (profileMember && profileMember.nonArray) {
+  console.error("the profile settings' \"packages\" member is not an array; fix it by hand");
+  process.exit(2);
+}
+const profileEntries = profileMember && !profileMember.nonArray ? parseEntries(profileText, profileMember.arrStart, profileMember.arrEnd) : null;
 
 function spliceIntoProfile(entries) {
   if (profileMember) {
