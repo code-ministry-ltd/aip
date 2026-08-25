@@ -3803,6 +3803,11 @@ Commands:
   aip version                        Show the aip version
   aip help                           Show this help
 
+Pi skills: when stdin is a terminal, `aip create NAME` lists eligible skills
+from Pi profiles below the current directory and `~/.pi/agent/skills`. Enter
+numbers separated by commas or spaces (or press Enter for none); selections are
+copied into the new profile's shared `skills/` directory.
+
 Harness wrappers:
   claude, codex, pi, opencode [ARGS...] launch the named tool with the
   selected profile's settings, checkpointing the profiles repository before

@@ -139,10 +139,10 @@ Wire valid POSIX selections into the staged create lifecycle. Copy full selected
 
 Document the optional picker in CLI help and aip setup guidance: discovery roots, one-time numbered menu, blank skip, and comma-or-whitespace number syntax; update help assertions to protect the contract.
 
-- [ ] `aip help` describes the picker and accepted input syntax accurately.
-- [ ] The aip skill/setup docs state selected skills are copied into shared `<profile>/skills` and not a harness-specific directory.
-- [ ] POSIX help tests remain green.
-- Verify: `npx bats tests/posix/smoke.bats && npm run test:posix`
+- [x] `aip help` describes the picker and accepted input syntax accurately.
+- [x] The aip skill/setup docs state selected skills are copied into shared `<profile>/skills` and not a harness-specific directory.
+- [x] POSIX help tests remain green.
+- Verify: `npx bats tests/posix/smoke.bats && npm run test:posix` · **Passed**
 - Deps: T12 · Files: `aip.sh`, `skills/aip/SKILL.md`, `skills/aip/setup.md`, `tests/posix/smoke.bats` · Size: M
 
 *Checkpoint 2: `npm run test:posix` passes; a fixture create with selection copies only to `PROFILE/skills`, and all harness skill paths remain links.*
