@@ -1960,6 +1960,56 @@ function Invoke-AipUse {
     Write-Output "Using profile '$name' for this PowerShell session"
 }
 
+function Test-AipLegacyPrimaryConfigLink {
+    param([Parameter(Mandatory)][string]$Relative, [Parameter(Mandatory)][string]$ProfilePath)
+    if ($Relative -notin @(Get-AipPrimaryConfigRel)) { return $false }
+    $slash = $Relative.IndexOf('/')
+    $harness = $Relative.Substring(0, $slash)
+    $rel = $Relative.Substring($slash + 1)
+    $root = Get-AipImportHarnessRoot $harness
+    $item = Get-Item -LiteralPath (Join-Path $ProfilePath $Relative) -Force -ErrorAction SilentlyContinue
+    if (-not $root -or $null -eq $item -or $item.LinkType -ne 'SymbolicLink') { return $false }
+    $raw = ([string]$item.Target).Replace('\\', '/')
+    $expected = ConvertTo-AipRelativePath (Join-Path $ProfilePath $harness) (Join-Path $root $rel)
+    if ($raw -eq $expected) { return $true }
+    try {
+        $resolved = $item.ResolveLinkTarget($true)
+        if ($null -eq $resolved) { return $false }
+        return [IO.Path]::GetFullPath($resolved.FullName) -eq [IO.Path]::GetFullPath((Join-Path $root $rel))
+    }
+    catch { return $false }
+}
+
+function Invoke-AipMigrateLegacyPrimaryConfigLinks {
+    $root = $script:AipProfileRoot
+    if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container)) { return }
+    foreach ($name in @(Get-AipProfileNames)) {
+        $profile = Get-AipProfilePath $name
+        foreach ($relative in @(Get-AipPrimaryConfigRel)) {
+            if (-not (Test-AipLegacyPrimaryConfigLink $relative $profile)) { continue }
+            $slash = $relative.IndexOf('/')
+            $harness = $relative.Substring(0, $slash); $rel = $relative.Substring($slash + 1)
+            $source = Join-Path (Get-AipImportHarnessRoot $harness) $rel
+            $destination = Join-Path $profile $relative
+            try {
+                Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $source -PathType Leaf) {
+                    Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+                    Invoke-AipGit -C $root add -- "$name/$relative"
+                    if ($global:LASTEXITCODE -ne 0) { throw 'git add failed' }
+                    Write-Output "aip: staged $name/$relative for sharing (the next checkpoint commits it)"
+                }
+                else {
+                    Invoke-AipGit -C $root add -u -- "$name/$relative"
+                    if ($global:LASTEXITCODE -ne 0) { throw 'git add -u failed' }
+                    Write-Output "aip: staged deletion of $name/$relative (the global config is absent)"
+                }
+            }
+            catch { Write-AipWarning "could not migrate legacy link $name/$relative" }
+        }
+    }
+}
+
 function Invoke-AipAdoptUntrackedSettings {
     # One-time adoption for profiles created before aip tracked pi/settings.json:
     # stage (never commit) every profile's real, untracked file so the next
@@ -2252,6 +2302,7 @@ process.exit(2);
 function Invoke-AipUpdate {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
+    Invoke-AipMigrateLegacyPrimaryConfigLinks
     Invoke-AipAdoptUntrackedSettings
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
     & npx --yes '@code-ministry/aip@latest' update
