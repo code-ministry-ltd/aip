@@ -62,11 +62,14 @@ setup() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
 }
 
-@test "create links settings when the global file is trivial, materialises when it is not" {
+@test "create copies and tracks settings even when the global file is trivial" {
   mkdir -p "$HOME/.pi/agent"
   printf '{}' >"$HOME/.pi/agent/settings.json"
   aip create linked >/dev/null
-  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  [ -f "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/linked/pi/settings.json")" = '{}' ]
+  git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch linked/pi/settings.json
 
   printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
   aip create materialised >/dev/null
