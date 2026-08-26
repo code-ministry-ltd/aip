@@ -3493,6 +3493,72 @@ Describe 'pi settings and packages' {
         $output | Should -Not -Match 'not shared \(untracked\)'
     }
 
+    It 'aip update migrates valid legacy links for every primary config' {
+        New-FakeHarness 'npx'
+        $globalRels = @{
+            'pi/settings.json' = '.pi/agent/settings.json'
+            'claude/settings.json' = '.claude/settings.json'
+            'codex/config.toml' = '.codex/config.toml'
+            'opencode/opencode.json' = '.config/opencode/opencode.json'
+        }
+        foreach ($globalRel in $globalRels.Values) { Remove-Item -LiteralPath (Join-Path $script:AipImportHome $globalRel) -Force -ErrorAction SilentlyContinue }
+        aip create legacy *> $null
+        foreach ($rel in $globalRels.Keys) {
+            $source = Join-Path $script:AipImportHome $globalRels[$rel]
+            New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+            [IO.File]::WriteAllText($source, "source-$rel")
+            New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) -Target $source | Out-Null
+        }
+
+        aip update *> $null
+        $script:AipCommandStatus | Should -Be 0
+        foreach ($rel in $globalRels.Keys) {
+            $destination = Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)
+            (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
+            (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain "legacy/$rel"
+        }
+    }
+
+    It 'leaves malformed and foreign primary-config links untouched during migration' {
+        aip create legacy *> $null
+        $foreign = Join-Path $TestDrive 'foreign-settings.json'
+        [IO.File]::WriteAllText($foreign, '{}')
+        $link = Join-Path $script:AipProfileRoot 'legacy/pi/settings.json'
+        Remove-Item -LiteralPath $link -Force
+        New-Item -ItemType SymbolicLink -Path $link -Target $foreign | Out-Null
+
+        Invoke-AipMigrateLegacyPrimaryConfigLinks
+
+        (Get-Item -LiteralPath $link -Force).LinkType | Should -Be 'SymbolicLink'
+        [string](Get-Item -LiteralPath $link -Force).Target | Should -Be $foreign
+    }
+
+    It 'aip update removes tracked legacy links whose primary config targets are absent' {
+        New-FakeHarness 'npx'
+        $globalRels = @{
+            'pi/settings.json' = '.pi/agent/settings.json'
+            'claude/settings.json' = '.claude/settings.json'
+            'codex/config.toml' = '.codex/config.toml'
+            'opencode/opencode.json' = '.config/opencode/opencode.json'
+        }
+        foreach ($globalRel in $globalRels.Values) { Remove-Item -LiteralPath (Join-Path $script:AipImportHome $globalRel) -Force -ErrorAction SilentlyContinue }
+        aip create legacy *> $null
+        foreach ($rel in $globalRels.Keys) {
+            $source = Join-Path $script:AipImportHome $globalRels[$rel]
+            New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+            New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) -Target $source | Out-Null
+            & git -C $script:AipProfileRoot add -f -- "legacy/$rel"
+        }
+        & git -C $script:AipProfileRoot commit -qm 'legacy primary config links'
+
+        aip update *> $null
+        $script:AipCommandStatus | Should -Be 0
+        foreach ($rel in $globalRels.Keys) {
+            Test-Path -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) | Should -BeFalse
+            (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain "legacy/$rel"
+        }
+    }
+
     It 'aip update stages an untracked owned pi/settings.json without committing' {
         New-FakeHarness 'npx'
         Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force

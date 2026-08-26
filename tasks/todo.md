@@ -201,10 +201,10 @@ Generalize Pi-only update adoption into a registry-driven migration that recogni
 
 Port legacy link recognition, target-present materialization, target-missing deletion, Git staging, and warning-only error handling while accounting for Windows link-target separators.
 
-- [ ] Pester covers all four target-present and target-missing migrations plus idempotency.
-- [ ] Existing real files and malformed/foreign links are preserved or safely rejected without destructive overwrite.
-- [ ] Migrated profiles pass normal layout/sync validation without primary-config link exceptions.
-- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- [x] Pester covers all four target-present and target-missing migrations plus idempotency.
+- [x] Existing real files and malformed/foreign links are preserved or safely rejected without destructive overwrite.
+- [x] Migrated profiles pass normal layout/sync validation without primary-config link exceptions.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` · **Passed (257 tests)**
 - Deps: T17 (contract) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
 
 *Checkpoint 2: migration is staged, idempotent, and leaves no supported primary-config pass-through link in either implementation.*
