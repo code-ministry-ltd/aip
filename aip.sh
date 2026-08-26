@@ -3861,7 +3861,7 @@ Commands:
                                      Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
-  aip update                         Update the aip npm package
+  aip update                         Migrate legacy configs and update the aip npm package
   aip uninstall [--force]            Remove the aip installation (not your profiles)
   aip version                        Show the aip version
   aip help                           Show this help

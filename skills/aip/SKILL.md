@@ -38,6 +38,7 @@ Reference files live next to this SKILL.md — read them when directed:
   that harness's own file. During an interactive `aip create`, Pi skills from
   descendant Pi profiles and `~/.pi/agent/skills` can be selected by number;
   aip copies them into this shared `skills/` tree, never a harness link.
+- Each profile owns portable primary configuration: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. Existing global sources copy byte-for-byte; missing sources remain absent. `aip update` migrates legacy links.
 - Each profile also owns its `pi/settings.json` (model, theme, and the
   `packages` extension list) as tracked content: `aip create` seeds it from
   the machine-wide pi settings, so the profile's model and extension set
