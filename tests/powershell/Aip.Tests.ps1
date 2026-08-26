@@ -230,6 +230,48 @@ Describe 'profile creation and selection' {
         [int](& git -C $root rev-list --count HEAD) | Should -Be 1
     }
 
+    It 'creates byte-identical owned primary configs when global sources exist' {
+        $sources = @{
+            'pi/settings.json' = '{}'
+            'claude/settings.json' = '{"permissions":{}}'
+            'codex/config.toml' = ''
+            'opencode/opencode.json' = ' { } '
+        }
+        $globalRels = @{
+            'pi/settings.json' = '.pi/agent/settings.json'
+            'claude/settings.json' = '.claude/settings.json'
+            'codex/config.toml' = '.codex/config.toml'
+            'opencode/opencode.json' = '.config/opencode/opencode.json'
+        }
+        foreach ($rel in $sources.Keys) {
+            $source = Join-Path $script:AipImportHome $globalRels[$rel]
+            New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+            [IO.File]::WriteAllText($source, $sources[$rel])
+        }
+
+        aip create portable
+        $global:LASTEXITCODE | Should -Be 0
+        foreach ($rel in $sources.Keys) {
+            $source = Join-Path $script:AipImportHome $globalRels[$rel]
+            $destination = Join-Path $script:AipProfileRoot (Join-Path 'portable' $rel)
+            (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
+            [IO.File]::ReadAllBytes($destination) | Should -Be ([IO.File]::ReadAllBytes($source))
+            (& git -C $script:AipProfileRoot ls-files -- "portable/$rel") | Should -Be "portable/$rel"
+        }
+    }
+
+    It 'leaves missing primary configs absent rather than linking them' {
+        foreach ($rel in '.pi/agent/settings.json', '.claude/settings.json', '.codex/config.toml', '.config/opencode/opencode.json') {
+            Remove-Item -LiteralPath (Join-Path $script:AipImportHome $rel) -Force -ErrorAction SilentlyContinue
+        }
+
+        aip create absent
+        $global:LASTEXITCODE | Should -Be 0
+        foreach ($rel in 'pi/settings.json', 'claude/settings.json', 'codex/config.toml', 'opencode/opencode.json') {
+            Test-Path -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path 'absent' $rel)) | Should -BeFalse
+        }
+    }
+
     It 'discovers and copies sorted Pi create skills into the shared profile root' {
         $tree = Join-Path $TestDrive 'skill-tree'
         $global = Join-Path $TestDrive 'global-skills'
@@ -3123,18 +3165,16 @@ Describe 'pass-through' {
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
     }
 
-    It 'doctor reports pass-through links and warns on broken ones without failing' {
+    It 'doctor reports ordinary pass-through links but rejects a primary-config link' {
         aip doctor work *> $null
         $script:AipCommandStatus | Should -Be 0
         $output = aip doctor work
         $output | Out-String | Should -Match 'OK: pass-through work/pi/models.json'
-        # a hand-made broken pass-through link is a warning, not an error
         New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Target (Join-Path $script:Pidir 'settings.json') | Out-Null
-        Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force -ErrorAction SilentlyContinue
         aip doctor work *> $null
-        $script:AipCommandStatus | Should -Be 0
+        $script:AipCommandStatus | Should -Be 1
         $output = aip doctor work
-        $output | Out-String | Should -Match 'WARN: pass-through work/pi/settings.json is broken'
+        $output | Out-String | Should -Match 'unsupported symbolic link'
     }
 
     It 'security: an off-allowlist symlink still fails doctor' {
@@ -3201,14 +3241,14 @@ Describe 'pass-through' {
         (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'claudy/claude/plugins') -Force).LinkType | Should -Be 'SymbolicLink'
     }
 
-    It 'convergence: claude entries survive pi maintenance' {
+    It 'convergence: non-primary Claude entries survive Pi maintenance' {
         $cldir = Join-Path $script:AipImportHome '.claude'
         New-Item -ItemType Directory -Path $cldir -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $cldir 'settings.json') -Value '{"permissions":{}}' -Encoding utf8NoBOM -NoNewline
+        Set-Content -LiteralPath (Join-Path $cldir 'settings.local.json') -Value '{"permissions":{}}' -Encoding utf8NoBOM -NoNewline
         Invoke-AipPassthrough 'claude' 'work'
-        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.json$"
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.local.json$"
         Invoke-AipPassthrough 'pi' 'work'
-        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.json$"
+        (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^claude/settings.local.json$"
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
     }
 
@@ -3326,11 +3366,13 @@ Describe 'pi settings and packages' {
         (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
     }
 
-    It 'create links settings when the global file is trivial' {
+    It 'create copies and tracks settings when the global file is trivial' {
         Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
         aip create linked *> $null
-        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')
-        $item.LinkType | Should -Be 'SymbolicLink'
+        $settings = Join-Path $script:AipProfileRoot 'linked/pi/settings.json'
+        (Get-Item -LiteralPath $settings).LinkType | Should -BeNullOrEmpty
+        [IO.File]::ReadAllBytes($settings) | Should -Be ([IO.File]::ReadAllBytes((Join-Path $script:Pidir 'settings.json')))
+        (& git -C $script:AipProfileRoot ls-files -- linked/pi/settings.json) | Should -Be 'linked/pi/settings.json'
     }
 
     It 'clone carries the tracked settings.json into the new profile' {
@@ -3419,15 +3461,14 @@ Describe 'pi settings and packages' {
         (Get-ProfileSettings) | Should -Match '"broken": true'
     }
 
-    It 'sync-packages refuses to edit a pass-through linked settings file' {
-        # untrack the create-time settings, leave a trivial stub: maintenance repairs it into a link
+    It 'sync-packages edits an owned untracked settings file without changing the global file' {
         & git -C $script:AipProfileRoot rm --cached -q work/pi/settings.json
         Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
         & pi *> $null
-        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
+        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).LinkType | Should -BeNullOrEmpty
         aip sync-packages work --add npm:evil *> $null
-        $script:AipCommandStatus | Should -Be 1
-        $script:AipLastError | Should -Match 'pass-through link'
+        $script:AipCommandStatus | Should -Be 0
+        (Get-ProfileSettings) | Should -Match 'evil'
         (Get-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Raw) | Should -Not -Match 'evil'
     }
 
@@ -3452,20 +3493,11 @@ Describe 'pi settings and packages' {
         $output | Should -Not -Match 'not shared \(untracked\)'
     }
 
-    It 'aip update stages untracked pi/settings.json without committing or touching links' {
+    It 'aip update stages an untracked owned pi/settings.json without committing' {
         New-FakeHarness 'npx'
-        # create both profiles before the global settings exist, restore it as a
-        # trivial value so linked becomes a pass-through link; legacy keeps its
-        # own untracked real file
         Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force
-        aip create linked *> $null
         aip create legacy *> $null
-        Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
-        $env:AIP_PROFILE = 'linked'
-        & pi *> $null
-        (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
         Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
-        $env:AIP_PROFILE = 'work'
 
         $savedPath = $env:PATH
         $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
@@ -3473,8 +3505,6 @@ Describe 'pi settings and packages' {
             aip update | Out-String | Should -Match 'staged legacy/pi/settings.json for sharing'
             $script:AipCommandStatus | Should -Be 0
             (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain 'legacy/pi/settings.json'
-            (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'linked/pi/settings.json')).LinkType | Should -Be 'SymbolicLink'
-
             aip update | Out-String | Should -Not -Match 'staged'
         }
         finally { $env:PATH = $savedPath }

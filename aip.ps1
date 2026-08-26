@@ -569,6 +569,21 @@ function Copy-AipCreateSkills {
     }
 }
 
+function Get-AipPrimaryConfigRel {
+    return @('pi/settings.json', 'claude/settings.json', 'codex/config.toml', 'opencode/opencode.json')
+}
+
+function Copy-AipPrimaryConfigs {
+    param([Parameter(Mandatory)][string]$ProfilePath)
+    foreach ($rel in @(Get-AipPrimaryConfigRel)) {
+        $parts = $rel -split '/', 2
+        $source = Join-Path (Get-AipImportHarnessRoot $parts[0]) $parts[1]
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $ProfilePath $rel) -Force -ErrorAction Stop
+        }
+    }
+}
+
 function New-AipProfileFiles {
     param([Parameter(Mandatory)][string]$ProfilePath)
 
@@ -580,15 +595,7 @@ function New-AipProfileFiles {
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'claude/CLAUDE.md') @('@../AGENTS.md', '', '# Claude Code instructions')
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'codex/instructions.md') @('# Codex instructions')
     Set-AipUtf8LfFile (Join-Path $ProfilePath 'pi/APPEND_SYSTEM.md') @('# Pi instructions')
-    # The profile owns its pi settings from birth (tracked content like AGENTS.md):
-    # seed a copy from the machine-wide file when it has real content; a missing or
-    # trivial global file leaves the pass-through link to form instead.
-    $globalSettings = Join-Path (Get-AipImportHarnessRoot 'pi') 'settings.json'
-    if (Test-Path -LiteralPath $globalSettings -PathType Leaf) {
-        if (-not (Test-AipTrivialJsonFile $globalSettings)) {
-            Copy-Item -LiteralPath $globalSettings -Destination (Join-Path $ProfilePath 'pi/settings.json') -Force -ErrorAction Stop
-        }
-    }
+    Copy-AipPrimaryConfigs $ProfilePath
     Set-AipUtf8LfFile (Join-Path $ProfilePath '.gitignore') @(Get-AipGitIgnoreLines)
 
     $links = @{
@@ -670,9 +677,9 @@ function Invoke-AipCreate {
     # links exist on disk at this point (machine-local, untracked by design) and a
     # broad add would track any that reconciliation failed to ignore.
     $owned = @('.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
-    $ownedSettings = Join-Path $destination 'pi/settings.json'
-    if ((Test-Path -LiteralPath $ownedSettings -PathType Leaf) -and $null -eq (Get-Item -LiteralPath $ownedSettings -Force).LinkType) {
-        $owned += 'pi/settings.json'
+    foreach ($rel in @(Get-AipPrimaryConfigRel)) {
+        $ownedConfig = Join-Path $destination $rel
+        if ((Test-Path -LiteralPath $ownedConfig -PathType Leaf) -and $null -eq (Get-Item -LiteralPath $ownedConfig -Force).LinkType) { $owned += $rel }
     }
     Invoke-AipGit -C $script:AipProfileRoot add .gitignore @($owned | ForEach-Object { "$($name)/$_" })
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
@@ -2695,10 +2702,10 @@ function Get-AipPassthroughRel {
     # may ever be linked by pass-through maintenance.
     param([Parameter(Mandatory)][string]$Harness)
     switch ($Harness) {
-        'pi' { return @('models.json', 'auth.json', 'settings.json', 'themes', 'prompts', 'extensions', 'npm') }
-        'claude' { return @('settings.json', 'settings.local.json', '.credentials.json', 'agents', 'commands', 'context-mode', 'output-styles', 'workflows', 'keybindings.json', 'plugins') }
-        'codex' { return @('config.toml', 'auth.json', 'plugins') }
-        'opencode' { return @('opencode.json', 'auth.json', 'tui.json', 'agent', 'command', 'plugins') }
+        'pi' { return @('models.json', 'auth.json', 'themes', 'prompts', 'extensions', 'npm') }
+        'claude' { return @('settings.local.json', '.credentials.json', 'agents', 'commands', 'context-mode', 'output-styles', 'workflows', 'keybindings.json', 'plugins') }
+        'codex' { return @('auth.json', 'plugins') }
+        'opencode' { return @('auth.json', 'tui.json', 'agent', 'command', 'plugins') }
         default { return @() }
     }
 }

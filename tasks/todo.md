@@ -179,10 +179,10 @@ Create a registry for `pi/settings.json`, `claude/settings.json`, `codex/config.
 
 Port the ordered config registry, raw source copying, explicit creation-commit staging, and pass-through removal so PowerShell creates the same owned/absent paths as POSIX.
 
-- [ ] Existing global sources, including trivial content, become byte-identical regular tracked files in the new profile.
-- [ ] Missing sources create neither a file nor a link, without failing creation.
-- [ ] The four primary configs are absent from PowerShell pass-through behavior.
-- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- [x] Existing global sources, including trivial content, become byte-identical regular tracked files in the new profile.
+- [x] Missing sources create neither a file nor a link, without failing creation.
+- [x] The four primary configs are absent from PowerShell pass-through behavior.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` · **Passed (254 tests)**
 - Deps: T15 (contract) · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
 
 *Checkpoint 1: both create paths produce only regular owned primary configs or absent paths; no primary-config pass-through links remain.*
