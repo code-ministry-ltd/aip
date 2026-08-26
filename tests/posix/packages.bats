@@ -96,18 +96,19 @@ setup() {
   [[ "$output" == *'no packages'* ]]
 }
 
-@test "refuses to edit a pass-through linked settings file" {
+@test "edits an owned settings file without changing the global file" {
   rm -rf "$HOME/.pi"
   create_profile linked
   mkdir -p "$HOME/.pi/agent"
   printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  printf '{}' >"$_AIP_PROFILE_ROOT/linked/pi/settings.json"
   AIP_PROFILE=linked pi >/dev/null
-  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
 
   run aip sync-packages linked --add npm:evil
-  [ "$status" -eq 1 ]
-  [[ "$output" == *'pass-through link'* ]]
-  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'added "npm:evil"'* ]]
+  grep -Fq '"npm:evil"' "$_AIP_PROFILE_ROOT/linked/pi/settings.json"
   ! grep -q 'evil' "$HOME/.pi/agent/settings.json"
 }
 
