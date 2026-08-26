@@ -191,10 +191,10 @@ Port the ordered config registry, raw source copying, explicit creation-commit s
 
 Generalize Pi-only update adoption into a registry-driven migration that recognizes the historical valid link shape independently of the new pass-through allowlist. Materialize a present target or remove a link whose target is absent, then stage the resulting addition/deletion without touching regular owned files.
 
-- [ ] `aip update` stages byte-identical copies for valid links with present targets and staged deletions for target-missing links.
-- [ ] Regular owned files, malformed/foreign links, and absent paths are not overwritten; failures warn and continue.
-- [ ] A second update is a no-op, and post-migration validation accepts the profile.
-- Verify: `npx bats tests/posix/npm.bats tests/posix/lifecycle.bats`
+- [x] `aip update` stages byte-identical copies for valid links with present targets and staged deletions for target-missing links.
+- [x] Regular owned files, malformed/foreign links, and absent paths are not overwritten; failures warn and continue.
+- [x] A second update is a no-op, and post-migration validation accepts the profile.
+- Verify: `npx bats tests/posix/npm.bats tests/posix/lifecycle.bats` · **Passed**
 - Deps: T15 · Files: `aip.sh`, `tests/posix/npm.bats`, `tests/posix/lifecycle.bats` · Size: M
 
 ## T18 — Existing PowerShell profiles migrate with the same rules
