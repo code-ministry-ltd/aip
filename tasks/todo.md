@@ -213,9 +213,9 @@ Port legacy link recognition, target-present materialization, target-missing del
 
 Update the README, aip skill, setup guide, and changelog to distinguish the four portable profile-owned configs from machine-local credentials and runtime state; document create and update migration behavior, including the intentional no-secret-scan trust model.
 
-- [ ] Documentation names exactly the four profile-owned config paths and their missing-source behavior.
-- [ ] It states credentials/runtime state remain machine-local and excluded.
-- [ ] Changelog describes the user-visible configuration portability change without promising a release version.
+- [x] Documentation names exactly the four profile-owned config paths and their missing-source behavior.
+- [x] It states credentials/runtime state remain machine-local and excluded.
+- [x] Changelog describes the user-visible configuration portability change without promising a release version.
 - Verify: `git diff --check && rg -n 'profile-owned|pass-through|settings.json|config.toml|opencode.json' README.md CHANGELOG.md skills/aip`
 - Deps: T15–T18 · Files: `README.md`, `CHANGELOG.md`, `skills/aip/SKILL.md`, `skills/aip/setup.md` · Size: M
 
@@ -223,10 +223,10 @@ Update the README, aip skill, setup guide, and changelog to distinguish the four
 
 Update help text and smoke assertions so the shipped CLI tells users that primary harness configs are copied into profiles and do not pass through.
 
-- [ ] `aip help` accurately distinguishes portable primary configs from machine-local auth/runtime paths.
-- [ ] Help, `--help`, and `-h` remain identical.
-- [ ] POSIX smoke coverage protects the wording contract.
-- Verify: `npx bats tests/posix/smoke.bats && npm run test:posix`
+- [x] `aip help` accurately distinguishes portable primary configs from machine-local auth/runtime paths.
+- [x] Help, `--help`, and `-h` remain identical.
+- [x] POSIX smoke coverage protects the wording contract.
+- Verify: `npx bats tests/posix/smoke.bats && npm run test:posix` · **Passed**
 - Deps: T19 · Files: `aip.sh`, `tests/posix/smoke.bats` · Size: S
 
 *Checkpoint 3 (final): `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` pass; documentation and CLI agree; release/version bump requires a separate explicit approval.*
