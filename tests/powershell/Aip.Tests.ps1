@@ -3165,17 +3165,23 @@ Describe 'pass-through' {
         (Get-AipGitIgnoreText 'work') | Should -Match "(?m)^pi/models.json$"
     }
 
-    It 'doctor reports ordinary pass-through links but rejects a primary-config link' {
+    It 'doctor tolerates a legacy primary-config link with a migration warning' {
         aip doctor work *> $null
         $script:AipCommandStatus | Should -Be 0
         $output = aip doctor work
         $output | Out-String | Should -Match 'OK: pass-through work/pi/models.json'
         New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Target (Join-Path $script:Pidir 'settings.json') | Out-Null
         aip doctor work *> $null
-        $script:AipCommandStatus | Should -Be 1
-        $output = aip doctor work
-        $output | Out-String | Should -Match 'unsupported symbolic link'
+        $script:AipCommandStatus | Should -Be 0
+        $script:AipLastWarning | Should -Match 'legacy primary-config link'
     }
+
+    It 'the launch checkpoint tolerates a legacy primary-config link' {
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Target (Join-Path $script:Pidir 'settings.json') | Out-Null
+        & pi *> $null
+        $global:LASTEXITCODE | Should -Be 0
+    }
+
 
     It 'security: an off-allowlist symlink still fails doctor' {
         New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'work/pi/evil.json') -Target (Join-Path $TestDrive 'outside') | Out-Null
@@ -3509,14 +3515,20 @@ Describe 'pi settings and packages' {
             [IO.File]::WriteAllText($source, "source-$rel")
             New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) -Target $source | Out-Null
         }
+        # The genuine legacy shape: the block entries that kept the links untracked
+        # must be cleared before staging or git add refuses the ignored paths.
+        Set-AipPassthroughGitIgnoreBlock (Join-Path $script:AipProfileRoot 'legacy/.gitignore') @($globalRels.Keys)
 
         aip update *> $null
         $script:AipCommandStatus | Should -Be 0
         foreach ($rel in $globalRels.Keys) {
+            $source = Join-Path $script:AipImportHome $globalRels[$rel]
             $destination = Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)
             (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
+            [IO.File]::ReadAllBytes($destination) | Should -Be ([IO.File]::ReadAllBytes($source))
             (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain "legacy/$rel"
         }
+        (Get-AipPassthroughGitIgnoreEntry (Join-Path $script:AipProfileRoot 'legacy/.gitignore')) | Should -BeNullOrEmpty
     }
 
     It 'leaves malformed and foreign primary-config links untouched during migration' {
@@ -3531,6 +3543,22 @@ Describe 'pi settings and packages' {
 
         (Get-Item -LiteralPath $link -Force).LinkType | Should -Be 'SymbolicLink'
         [string](Get-Item -LiteralPath $link -Force).Target | Should -Be $foreign
+    }
+
+    It 'aip update removes untracked legacy links whose primary config targets are absent' {
+        New-FakeHarness 'npx'
+        $source = Join-Path $script:AipImportHome '.pi/agent/settings.json'
+        Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force -ErrorAction SilentlyContinue
+        aip create legacy *> $null
+        New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Target $source | Out-Null
+        Set-AipPassthroughGitIgnoreBlock (Join-Path $script:AipProfileRoot 'legacy/.gitignore') @('pi/settings.json')
+
+        (& { $output = aip update 2>&1; $output | Out-String }) | Should -Match 'removed legacy link legacy/pi/settings.json'
+        $script:AipCommandStatus | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') | Should -BeFalse
+        (Get-AipPassthroughGitIgnoreEntry (Join-Path $script:AipProfileRoot 'legacy/.gitignore')) | Should -Not -Contain 'pi/settings.json'
+        (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Not -Contain 'legacy/pi/settings.json'
     }
 
     It 'aip update removes tracked legacy links whose primary config targets are absent' {
@@ -3557,6 +3585,19 @@ Describe 'pi settings and packages' {
             Test-Path -LiteralPath (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) | Should -BeFalse
             (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain "legacy/$rel"
         }
+    }
+
+    It 'aip update never overwrites a regular owned primary config' {
+        New-FakeHarness 'npx'
+        aip create legacy *> $null
+        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
+        & git -C $script:AipProfileRoot add legacy/pi/settings.json
+        & git -C $script:AipProfileRoot commit -qm 'owned settings'
+
+        aip update *> $null
+        $script:AipCommandStatus | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Raw) | Should -Match '"theme":"light"'
+        (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Not -Contain 'legacy/pi/settings.json'
     }
 
     It 'aip update stages an untracked owned pi/settings.json without committing' {

@@ -877,6 +877,10 @@ function Test-AipProfileReparsePoints {
                     # inside it are npm's, not the profile's.
                     if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*') { continue }
                     if ($item.LinkType -ne 'SymbolicLink' -or (-not $required.Contains($relative) -and -not (Test-AipPassthroughLink $relative $ProfilePath))) {
+                        if ($item.LinkType -eq 'SymbolicLink' -and (Test-AipLegacyPrimaryConfigLink $relative $ProfilePath)) {
+                            Write-AipWarning "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
+                            continue
+                        }
                         $script:AipProfileBoundaryError = "profile contains an unsupported symbolic link, junction, or mount that could escape its boundary: $relative"
                         return $false
                     }
@@ -1972,6 +1976,10 @@ function Test-AipLegacyPrimaryConfigLink {
     $raw = ([string]$item.Target).Replace('\\', '/')
     $expected = ConvertTo-AipRelativePath (Join-Path $ProfilePath $harness) (Join-Path $root $rel)
     if ($raw -eq $expected) { return $true }
+    # Lexical absolute form: matches the exact config path even when the target is
+    # absent (a broken link), so migration can still retire it.
+    $sep = [IO.Path]::DirectorySeparatorChar
+    if ([IO.Path]::GetFullPath($raw.Replace('/', $sep)) -eq [IO.Path]::GetFullPath((Join-Path $root $rel))) { return $true }
     try {
         $resolved = $item.ResolveLinkTarget($true)
         if ($null -eq $resolved) { return $false }
@@ -1985,27 +1993,50 @@ function Invoke-AipMigrateLegacyPrimaryConfigLinks {
     if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container)) { return }
     foreach ($name in @(Get-AipProfileNames)) {
         $profile = Get-AipProfilePath $name
+        $gitignore = Join-Path $profile '.gitignore'
         foreach ($relative in @(Get-AipPrimaryConfigRel)) {
             if (-not (Test-AipLegacyPrimaryConfigLink $relative $profile)) { continue }
             $slash = $relative.IndexOf('/')
             $harness = $relative.Substring(0, $slash); $rel = $relative.Substring($slash + 1)
             $source = Join-Path (Get-AipImportHarnessRoot $harness) $rel
             $destination = Join-Path $profile $relative
-            try {
-                Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
-                if (Test-Path -LiteralPath $source -PathType Leaf) {
-                    Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                # Copy to a sibling temporary file first so a failed copy never
+                # destroys the link.
+                $temporary = "$destination.$([IO.Path]::GetRandomFileName())"
+                try {
+                    Copy-Item -LiteralPath $source -Destination $temporary -Force -ErrorAction Stop
+                    Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
+                    Move-Item -LiteralPath $temporary -Destination $destination -Force -ErrorAction Stop
+                    Remove-AipPassthroughGitIgnoreEntry $gitignore $relative
                     Invoke-AipGit -C $root add -- "$name/$relative"
                     if ($global:LASTEXITCODE -ne 0) { throw 'git add failed' }
                     Write-Output "aip: staged $name/$relative for sharing (the next checkpoint commits it)"
                 }
-                else {
-                    Invoke-AipGit -C $root add -u -- "$name/$relative"
-                    if ($global:LASTEXITCODE -ne 0) { throw 'git add -u failed' }
-                    Write-Output "aip: staged deletion of $name/$relative (the global config is absent)"
+                catch {
+                    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+                    Write-AipWarning "could not migrate legacy link $name/$relative"
                 }
             }
-            catch { Write-AipWarning "could not migrate legacy link $name/$relative" }
+            else {
+                # A legacy link is normally untracked (the pass-through block
+                # ignored it), so there is nothing to stage for its removal
+                # unless it was force-tracked.
+                $tracked = Test-AipTrackedPath "$name/$relative"
+                try {
+                    Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
+                    Remove-AipPassthroughGitIgnoreEntry $gitignore $relative
+                    if ($tracked) {
+                        Invoke-AipGit -C $root add -u -- "$name/$relative"
+                        if ($global:LASTEXITCODE -ne 0) { throw 'git add -u failed' }
+                        Write-Output "aip: staged deletion of $name/$relative (the global config is absent)"
+                    }
+                    else {
+                        Write-Output "aip: removed legacy link $name/$relative (the global config is absent)"
+                    }
+                }
+                catch { Write-AipWarning "could not remove legacy link $name/$relative" }
+            }
         }
     }
 }

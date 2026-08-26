@@ -96,10 +96,17 @@ setup() {
   : >"$HOME/.codex/config.toml"
   printf ' { } \n' >"$HOME/.config/opencode/opencode.json"
 
-  ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
-  ln -s "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/legacy/claude/settings.json"
-  ln -s "$HOME/.codex/config.toml" "$_AIP_PROFILE_ROOT/legacy/codex/config.toml"
-  ln -s "$HOME/.config/opencode/opencode.json" "$_AIP_PROFILE_ROOT/legacy/opencode/opencode.json"
+  # The genuine legacy shape: the four paths sit in the .gitignore pass-through
+  # block (which made the links untracked) and the links use aip's historical
+  # relative-target form. Migration must clear the block entries before staging.
+  entries=$(mktemp)
+  printf '%s\n' pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json >"$entries"
+  _aip_gitignore_set_passthrough_block "$_AIP_PROFILE_ROOT/legacy/.gitignore" "$entries"
+  command rm -f "$entries"
+  ln -s "$(_aip_relative_path "$_AIP_PROFILE_ROOT/legacy/pi" "$HOME/.pi/agent/settings.json")" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  ln -s "$(_aip_relative_path "$_AIP_PROFILE_ROOT/legacy/claude" "$HOME/.claude/settings.json")" "$_AIP_PROFILE_ROOT/legacy/claude/settings.json"
+  ln -s "$(_aip_relative_path "$_AIP_PROFILE_ROOT/legacy/codex" "$HOME/.codex/config.toml")" "$_AIP_PROFILE_ROOT/legacy/codex/config.toml"
+  ln -s "$(_aip_relative_path "$_AIP_PROFILE_ROOT/legacy/opencode" "$HOME/.config/opencode/opencode.json")" "$_AIP_PROFILE_ROOT/legacy/opencode/opencode.json"
 
   run aip update
   [ "$status" -eq 0 ]
@@ -108,14 +115,56 @@ setup() {
     [ -f "$_AIP_PROFILE_ROOT/legacy/$rel" ]
     [ ! -L "$_AIP_PROFILE_ROOT/legacy/$rel" ]
     git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq "legacy/$rel"
+    ! grep -Fx "$rel" "$_AIP_PROFILE_ROOT/legacy/.gitignore"
   done
+  cmp "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  cmp "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/legacy/claude/settings.json"
+  cmp "$HOME/.codex/config.toml" "$_AIP_PROFILE_ROOT/legacy/codex/config.toml"
+  cmp "$HOME/.config/opencode/opencode.json" "$_AIP_PROFILE_ROOT/legacy/opencode/opencode.json"
 
   run aip update
   [ "$status" -eq 0 ]
   [[ "$output" != *'staged legacy/'* ]]
+  [[ "$output" != *'removed legacy'* ]]
 }
 
-@test "aip update removes a valid legacy primary-config link whose target is absent" {
+@test "aip update migrates absolute-target legacy primary-config links" {
+  create_profile legacy
+  mkdir -p "$HOME/.pi/agent"
+  printf '{}\n' >"$HOME/.pi/agent/settings.json"
+  entries=$(mktemp)
+  printf '%s\n' pi/settings.json >"$entries"
+  _aip_gitignore_set_passthrough_block "$_AIP_PROFILE_ROOT/legacy/.gitignore" "$entries"
+  command rm -f "$entries"
+  ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq 'legacy/pi/settings.json'
+  ! grep -Fx 'pi/settings.json' "$_AIP_PROFILE_ROOT/legacy/.gitignore"
+}
+
+@test "aip update removes an untracked legacy primary-config link whose target is absent" {
+  create_profile legacy
+  mkdir -p "$HOME/.pi/agent"
+  ln -s "$(_aip_relative_path "$_AIP_PROFILE_ROOT/legacy/pi" "$HOME/.pi/agent/settings.json")" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  entries=$(mktemp)
+  printf '%s\n' pi/settings.json >"$entries"
+  _aip_gitignore_set_passthrough_block "$_AIP_PROFILE_ROOT/legacy/.gitignore" "$entries"
+  command rm -f "$entries"
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [[ "$output" == *'removed legacy link legacy/pi/settings.json'* ]]
+  ! grep -Fx 'pi/settings.json' "$_AIP_PROFILE_ROOT/legacy/.gitignore"
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only -- legacy/pi/settings.json)" ]
+}
+
+@test "aip update stages deletion of a tracked legacy primary-config link whose target is absent" {
   create_profile legacy
   mkdir -p "$HOME/.pi/agent"
   ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
@@ -127,4 +176,32 @@ setup() {
   [ ! -e "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
   [ ! -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
   [[ "$output" == *'staged deletion of legacy/pi/settings.json'* ]]
+}
+
+@test "aip update leaves foreign and malformed primary-config links untouched" {
+  create_profile legacy
+  foreign=$BATS_TEST_TMPDIR/foreign-settings.json
+  printf '{}\n' >"$foreign"
+  ln -s "$foreign" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [ -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [ "$(readlink "$_AIP_PROFILE_ROOT/legacy/pi/settings.json")" = "$foreign" ]
+  [[ "$output" != *'legacy/pi/settings.json'* ]]
+}
+
+@test "aip update never overwrites a regular owned primary config" {
+  create_profile legacy
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
+  printf '{"theme":"light"}\n' >"$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  git -C "$_AIP_PROFILE_ROOT" add legacy/pi/settings.json
+  git -C "$_AIP_PROFILE_ROOT" commit -qm 'owned settings'
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/legacy/pi/settings.json")" = '{"theme":"light"}' ]
+  [[ "$output" != *'staged legacy/'* ]]
+  [[ "$output" != *'removed legacy'* ]]
 }
