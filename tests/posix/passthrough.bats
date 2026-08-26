@@ -188,16 +188,25 @@ setup() {
   grep -Fx 'pi/models.json' "$_AIP_PROFILE_ROOT/work/.gitignore"
 }
 
-@test "doctor reports ordinary pass-through links but rejects a primary-config link" {
+@test "doctor tolerates a legacy primary-config link with a migration warning" {
   run aip doctor work
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK: pass-through work/pi/models.json"* ]]
   rm -f "$_AIP_PROFILE_ROOT/work/pi/settings.json"
   ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/work/pi/settings.json"
   run aip doctor work
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"unsupported symbolic link"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"legacy primary-config link"* ]]
+  [[ "$output" == *"aip update"* ]]
 }
+
+@test "the launch checkpoint tolerates a legacy primary-config link" {
+  rm -f "$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  AIP_PROFILE=work pi >/dev/null 2>&1
+  [ "$?" -eq 0 ]
+}
+
 
 @test "security: an off-allowlist symlink still fails doctor and the checkpoint" {
   ln -s /etc/passwd "$_AIP_PROFILE_ROOT/work/pi/evil.json"

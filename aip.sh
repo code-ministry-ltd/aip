@@ -427,6 +427,10 @@ _aip_check_live_profile_links() {
       node_modules|node_modules/*|*/node_modules|*/node_modules/*) continue ;;
     esac
     if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
+      if _aip_is_legacy_primary_config_link "$relative" "$profile"; then
+        _aip_warn "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
+        continue
+      fi
       command rm -f "$entries"
       _aip_error "profile contains an unsupported symbolic link that could escape its boundary: $relative"
       return 1
@@ -469,11 +473,12 @@ _aip_is_legacy_primary_config_link() {
 
 _aip_migrate_legacy_primary_config_links() (
   _aip_clear_git_routing
-  local root name profile rel harness file source destination
+  local root name profile rel harness file source destination gitignore temporary tracked
   root=${_AIP_PROFILE_ROOT-}
   [ -n "$root" ] && [ -d "$root/.git" ] || return 0
   for name in $(_aip_list_profile_names); do
     profile=$(_aip_profile_path "$name")
+    gitignore=$profile/.gitignore
     while IFS= read -r rel; do
       destination=$profile/$rel
       [ -L "$destination" ] || continue
@@ -481,14 +486,33 @@ _aip_migrate_legacy_primary_config_links() (
       harness=${rel%%/*}; file=${rel#*/}
       source=$(_aip_import_harness_root "$harness")/$file || continue
       if [ -f "$source" ]; then
-        command rm -f "$destination" && command cp -- "$source" "$destination" &&
-          _aip_git -C "$root" add -- "$name/$rel" &&
-          printf 'aip: staged %s/%s for sharing (the next checkpoint commits it)\n' "$name" "$rel" ||
+        # Copy to a sibling temporary file first so a failed copy never destroys
+        # the link; the rename over the link is atomic.
+        temporary=$(command mktemp "$destination.XXXXXX") || { _aip_warn "could not migrate $name/$rel"; continue; }
+        if command cp -- "$source" "$temporary" &&
+           command mv -f -- "$temporary" "$destination" &&
+           _aip_gitignore_remove_passthrough_entry "$gitignore" "$rel" &&
+           _aip_git -C "$root" add -- "$name/$rel"; then
+          printf 'aip: staged %s/%s for sharing (the next checkpoint commits it)\n' "$name" "$rel"
+        else
+          command rm -f -- "$temporary"
           _aip_warn "could not migrate $name/$rel"
+        fi
       else
-        command rm -f "$destination" && _aip_git -C "$root" add -u -- "$name/$rel" &&
-          printf 'aip: staged deletion of %s/%s (the global config is absent)\n' "$name" "$rel" ||
+        # A legacy link is normally untracked (the pass-through block ignored it),
+        # so there is nothing to stage for its removal unless it was force-tracked.
+        tracked=0
+        _aip_git -C "$root" ls-files --error-unmatch -- "$name/$rel" >/dev/null 2>&1 && tracked=1
+        if command rm -f -- "$destination" &&
+           _aip_gitignore_remove_passthrough_entry "$gitignore" "$rel"; then
+          if [ "$tracked" -eq 1 ] && _aip_git -C "$root" add -u -- "$name/$rel"; then
+            printf 'aip: staged deletion of %s/%s (the global config is absent)\n' "$name" "$rel"
+          else
+            printf 'aip: removed legacy link %s/%s (the global config is absent)\n' "$name" "$rel"
+          fi
+        else
           _aip_warn "could not remove legacy link $name/$rel"
+        fi
       fi
     done < <(_aip_primary_config_rels)
   done

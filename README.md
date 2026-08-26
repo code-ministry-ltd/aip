@@ -297,7 +297,7 @@ calls `aip skills add` with the exact path.
 
 ## Profile-owned primary configuration
 
-New profiles own and Git-track these portable configuration files when their machine-global source exists: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. The source is copied byte-for-byte, including empty or trivial files; a missing source leaves that profile path absent. `aip update` migrates valid legacy links for these paths into staged profile files (or removes a legacy link whose global target is absent).
+New profiles own and Git-track these portable configuration files when their machine-global source exists: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. The source is copied byte-for-byte, including empty or trivial files; a missing source leaves that profile path absent. `aip update` migrates valid legacy links for these paths into staged profile files (or removes a legacy link whose global target is absent). Until migrated, a valid legacy link is tolerated with a warning; malformed or foreign links still fail validation.
 
 These files must not contain credentials. Authentication, session, cache, and runtime files remain machine-local and excluded from sync.
 
