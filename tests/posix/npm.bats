@@ -88,24 +88,43 @@ setup() {
   [ "$npm_version" = "$ps_version" ]
 }
 
-@test "aip update stages untracked pi/settings.json without committing or touching links" {
-  create_profile work
-  create_profile linked
+@test "aip update migrates every valid legacy primary-config link" {
+  create_profile legacy
+  mkdir -p "$HOME/.pi/agent" "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode"
+  printf '{}\n' >"$HOME/.pi/agent/settings.json"
+  printf '{"permissions":{}}\n' >"$HOME/.claude/settings.json"
+  : >"$HOME/.codex/config.toml"
+  printf ' { } \n' >"$HOME/.config/opencode/opencode.json"
+
+  ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  ln -s "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/legacy/claude/settings.json"
+  ln -s "$HOME/.codex/config.toml" "$_AIP_PROFILE_ROOT/legacy/codex/config.toml"
+  ln -s "$HOME/.config/opencode/opencode.json" "$_AIP_PROFILE_ROOT/legacy/opencode/opencode.json"
+
+  run aip update
+  [ "$status" -eq 0 ]
+  local rel
+  for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
+    [ -f "$_AIP_PROFILE_ROOT/legacy/$rel" ]
+    [ ! -L "$_AIP_PROFILE_ROOT/legacy/$rel" ]
+    git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq "legacy/$rel"
+  done
+
+  run aip update
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'staged legacy/'* ]]
+}
+
+@test "aip update removes a valid legacy primary-config link whose target is absent" {
+  create_profile legacy
   mkdir -p "$HOME/.pi/agent"
-  printf '{"theme":"dark"}\n' >"$HOME/.pi/agent/settings.json"
-  AIP_PROFILE=linked pi >/dev/null
-  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
-  printf '{"theme":"light"}\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  ln -s "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
+  git -C "$_AIP_PROFILE_ROOT" add -f legacy/pi/settings.json
+  git -C "$_AIP_PROFILE_ROOT" commit -qm 'legacy primary config link'
 
   run aip update
   [ "$status" -eq 0 ]
-  [[ "$output" == *'staged work/pi/settings.json for sharing'* ]]
-  # staged, not committed; the link profile is untouched
-  git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq 'work/pi/settings.json'
-  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain --untracked-files=no)" ] || true
-  [ -L "$_AIP_PROFILE_ROOT/linked/pi/settings.json" ]
-
-  run aip update
-  [ "$status" -eq 0 ]
-  [[ "$output" != *'staged'* ]]
+  [ ! -e "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
+  [[ "$output" == *'staged deletion of legacy/pi/settings.json'* ]]
 }

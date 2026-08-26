@@ -38,6 +38,7 @@ _aip_update() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
   (
     _aip_clear_git_routing
+    _aip_migrate_legacy_primary_config_links
     _aip_adopt_untracked_settings
     if ! command -v npx >/dev/null 2>&1; then
       _aip_error 'update requires Node.js (npx) on PATH'
@@ -450,6 +451,48 @@ _aip_materialize_primary_configs() {
     command cp -- "$source" "$profile_path/$rel" || return 1
   done < <(_aip_primary_config_rels)
 }
+
+_aip_is_legacy_primary_config_link() {
+  # Historical primary-config links are recognised independently of today's
+  # pass-through allowlist, so update can safely retire them.
+  local relative=$1 profile=$2 harness rel root expected raw canonical resolved_root
+  _aip_primary_config_rels | command grep -Fxq "$relative" || return 1
+  harness=${relative%%/*}; rel=${relative#*/}
+  root=$(_aip_import_harness_root "$harness") || return 1
+  resolved_root=$(_aip_resolve_path "$root") || resolved_root=$root
+  expected=$(_aip_relative_path "$profile/$harness" "$root/$rel")
+  raw=$(command readlink "$profile/$relative" 2>/dev/null) || return 1
+  [ "$raw" = "$expected" ] && return 0
+  canonical=$(_aip_resolve_path "$profile/$relative") || return 1
+  case $canonical in "$resolved_root/$rel") return 0 ;; *) return 1 ;; esac
+}
+
+_aip_migrate_legacy_primary_config_links() (
+  _aip_clear_git_routing
+  local root name profile rel harness file source destination
+  root=${_AIP_PROFILE_ROOT-}
+  [ -n "$root" ] && [ -d "$root/.git" ] || return 0
+  for name in $(_aip_list_profile_names); do
+    profile=$(_aip_profile_path "$name")
+    while IFS= read -r rel; do
+      destination=$profile/$rel
+      [ -L "$destination" ] || continue
+      _aip_is_legacy_primary_config_link "$rel" "$profile" || continue
+      harness=${rel%%/*}; file=${rel#*/}
+      source=$(_aip_import_harness_root "$harness")/$file || continue
+      if [ -f "$source" ]; then
+        command rm -f "$destination" && command cp -- "$source" "$destination" &&
+          _aip_git -C "$root" add -- "$name/$rel" &&
+          printf 'aip: staged %s/%s for sharing (the next checkpoint commits it)\n' "$name" "$rel" ||
+          _aip_warn "could not migrate $name/$rel"
+      else
+        command rm -f "$destination" && _aip_git -C "$root" add -u -- "$name/$rel" &&
+          printf 'aip: staged deletion of %s/%s (the global config is absent)\n' "$name" "$rel" ||
+          _aip_warn "could not remove legacy link $name/$rel"
+      fi
+    done < <(_aip_primary_config_rels)
+  done
+)
 
 _aip_primary_config_add_paths() {
   # $1 profile name, $2 profile path. Prints only owned regular config paths.
