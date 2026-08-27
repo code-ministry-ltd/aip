@@ -81,7 +81,7 @@ setup_aip_profile_and_skill() {
     (
       export _AIP_PROFILE_ROOT=$profile_root
       . "$installed_file"
-      aip create aip
+      _AIP_CREATE_SKIP_SKILL_SELECTION=1 aip create aip
     ) || {
       printf 'aip: warning: could not create the aip profile; run: aip create aip\n' >&2
       return 0

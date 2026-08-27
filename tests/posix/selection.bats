@@ -66,6 +66,29 @@ zeta	$(cd "$tree/c/pi/skills/zeta" && pwd -P)" ]
   [ "$output" = $'1\n3\n5' ]
 }
 
+@test "create skill selection accepts multiple values when sourced by zsh" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+
+  run zsh -c 'source "$AIP_SOURCE"; _aip_parse_create_skill_selection 5 "1, 3  5,,3"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = $'1\n3\n5' ]
+}
+
+@test "create skill discovery includes global agent skills" {
+  local agents="$BATS_TEST_TMPDIR/agent-skills"
+  mkdir -p "$agents/agent-skill"
+  touch "$agents/agent-skill/SKILL.md"
+  _AIP_CREATE_SKILLS_TREE_ROOT="$BATS_TEST_TMPDIR/no-tree"
+  _AIP_CREATE_SKILLS_GLOBAL_ROOT="$BATS_TEST_TMPDIR/no-pi-global-skills"
+  _AIP_CREATE_SKILLS_AGENTS_ROOT=$agents
+
+  run _aip_list_create_skills
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "agent-skill	$(cd "$agents/agent-skill" && pwd -P)" ]
+}
+
 @test "create skill selection rejects malformed and out-of-range input" {
   run _aip_parse_create_skill_selection 3 '1, nope'
   [ "$status" -ne 0 ]

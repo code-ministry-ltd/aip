@@ -95,6 +95,8 @@ BeforeEach {
     $script:AipRealPath = $script:FakeBin
     $script:AipCreateSkillsTreeRoot = $null
     $script:AipCreateSkillsGlobalRoot = $null
+    $script:AipCreateSkillsAgentsRoot = Join-Path $TestDrive 'no-agent-skills'
+    $script:AipCreateSkipSkillSelection = $false
     Remove-Variable -Name AipLockAttempts -Scope Script -ErrorAction SilentlyContinue
 }
 
@@ -275,16 +277,20 @@ Describe 'profile creation and selection' {
     It 'discovers and copies sorted Pi create skills into the shared profile root' {
         $tree = Join-Path $TestDrive 'skill-tree'
         $global = Join-Path $TestDrive 'global-skills'
-        New-Item -ItemType Directory -Path (Join-Path $tree 'profile/pi/skills/beta'), (Join-Path $tree 'profile/pi/skills/alpha'), (Join-Path $global 'alpha') -Force | Out-Null
+        $agents = Join-Path $TestDrive 'agent-skills'
+        New-Item -ItemType Directory -Path (Join-Path $tree 'profile/pi/skills/beta'), (Join-Path $tree 'profile/pi/skills/alpha'), (Join-Path $global 'alpha'), (Join-Path $agents 'gamma') -Force | Out-Null
         'tree alpha' | Set-Content -LiteralPath (Join-Path $tree 'profile/pi/skills/alpha/SKILL.md')
         'tree beta' | Set-Content -LiteralPath (Join-Path $tree 'profile/pi/skills/beta/SKILL.md')
         'global alpha' | Set-Content -LiteralPath (Join-Path $global 'alpha/SKILL.md')
+        'agent gamma' | Set-Content -LiteralPath (Join-Path $agents 'gamma/SKILL.md')
         $script:AipCreateSkillsTreeRoot = $tree
         $script:AipCreateSkillsGlobalRoot = $global
+        $script:AipCreateSkillsAgentsRoot = $agents
 
         $skills = @(Get-AipCreateSkills)
-        $skills.Name | Should -Be @('alpha', 'beta')
+        $skills.Name | Should -Be @('alpha', 'beta', 'gamma')
         $skills[0].Source | Should -Be (Join-Path $global 'alpha')
+        $skills[2].Source | Should -Be (Join-Path $agents 'gamma')
         $stage = Join-Path $TestDrive 'stage'
         New-Item -ItemType Directory -Path (Join-Path $stage 'skills') -Force | Out-Null
         Copy-AipCreateSkills $stage @($skills[0])
@@ -2200,6 +2206,29 @@ It 'returns a nonzero process status when installation fails' {
             $output | Should -Match 'aip manage pi'
         }
         finally {
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
+    It 'does not import selectable skills into the aip profile' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        $tree = Join-Path $TestDrive 'skill-tree'
+        New-Item -ItemType Directory -Path (Join-Path $tree 'profile/pi/skills/unwanted') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $tree 'profile/pi/skills/unwanted/SKILL.md') -Value 'name: unwanted'
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        Push-Location $tree
+        try {
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+            $LASTEXITCODE | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $env:_AIP_PROFILE_ROOT 'aip/skills/unwanted') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $env:_AIP_PROFILE_ROOT 'aip/skills/aip/SKILL.md') | Should -BeTrue
+        }
+        finally {
+            Pop-Location
             $env:_AIP_INSTALL_ROOT = $null
             $env:_AIP_SHELL_PROFILE = $null
         }

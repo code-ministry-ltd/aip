@@ -118,6 +118,20 @@ setup_git_identity() {
   [[ "$output" == *"aip manage pi"* ]]
 }
 
+@test "installer does not import selectable skills into the aip profile" {
+  local tree="$BATS_TEST_TMPDIR/skill-tree"
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  mkdir -p "$tree/profile/pi/skills/unwanted"
+  touch "$tree/profile/pi/skills/unwanted/SKILL.md"
+  setup_git_identity
+
+  run bash -c 'cd "$1" && bash "$2"' _ "$tree" "$BATS_TEST_DIRNAME/../../install.sh"
+
+  [ "$status" -eq 0 ]
+  [ ! -e "$_AIP_PROFILE_ROOT/aip/skills/unwanted" ]
+  [[ "$output" != *"Available Pi skills"* ]]
+}
+
 @test "re-running the installer with nothing changed leaves the tree byte-identical" {
   export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
   setup_git_identity
