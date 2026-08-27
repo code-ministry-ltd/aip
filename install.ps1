@@ -80,6 +80,7 @@ function Invoke-AipProfileSkillSetupBody {
         # at the target root before creating the profile.
         . $InstalledFile
         $script:AipProfileRoot = $profileRoot
+        $script:AipCreateSkipSkillSelection = $true
         aip create aip *> $null
         if ($global:LASTEXITCODE -ne 0) {
             Write-Error 'aip: warning: could not create the aip profile; run: aip create aip'

@@ -14,6 +14,8 @@ $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 $script:AipCreateSkillsTreeRoot = $null
 $script:AipCreateSkillsGlobalRoot = $null
+$script:AipCreateSkillsAgentsRoot = $null
+$script:AipCreateSkipSkillSelection = $false
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -514,15 +516,16 @@ function Get-AipGitIgnoreLines {
 function Get-AipCreateSkillRoots {
     $tree = if ($script:AipCreateSkillsTreeRoot) { $script:AipCreateSkillsTreeRoot } else { (Get-Location).Path }
     $global = if ($script:AipCreateSkillsGlobalRoot) { $script:AipCreateSkillsGlobalRoot } else { Join-Path $HOME '.pi/agent/skills' }
-    return @($tree, $global)
+    $agents = if ($script:AipCreateSkillsAgentsRoot) { $script:AipCreateSkillsAgentsRoot } else { Join-Path $HOME '.agents/skills' }
+    return @($tree, $global, $agents)
 }
 
 function Get-AipCreateSkills {
     $roots = Get-AipCreateSkillRoots
     $treeRoot = if (Test-Path -LiteralPath $roots[0] -PathType Container) { (Resolve-Path -LiteralPath $roots[0]).Path } else { $null }
-    $globalRoot = if (Test-Path -LiteralPath $roots[1] -PathType Container) { (Resolve-Path -LiteralPath $roots[1]).Path } else { $null }
+    $globalRoots = @($roots | Select-Object -Skip 1 | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | ForEach-Object { (Resolve-Path -LiteralPath $_).Path })
     $candidates = @()
-    if ($globalRoot) {
+    foreach ($globalRoot in $globalRoots) {
         foreach ($item in @(Get-ChildItem -LiteralPath $globalRoot -Directory -Force -ErrorAction SilentlyContinue)) {
             if (Test-Path -LiteralPath (Join-Path $item.FullName 'SKILL.md') -PathType Leaf) { $candidates += [pscustomobject]@{ Name = $item.Name; Source = $item.FullName; Priority = 0 } }
         }
@@ -539,7 +542,7 @@ function Get-AipCreateSkills {
 
 function Read-AipCreateSkillSelection {
     param([object[]]$Skills = @())
-    if ($Skills.Count -eq 0 -or [Console]::IsInputRedirected) { return @() }
+    if ($script:AipCreateSkipSkillSelection -or $Skills.Count -eq 0 -or [Console]::IsInputRedirected) { return @() }
     Write-Host 'Available Pi skills:'
     for ($i = 0; $i -lt $Skills.Count; $i++) { Write-Host "$($i + 1). $($Skills[$i].Name)" }
     while ($true) {

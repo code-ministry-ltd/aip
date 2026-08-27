@@ -649,6 +649,10 @@ _aip_create_skills_global_root() {
   printf '%s\n' "${_AIP_CREATE_SKILLS_GLOBAL_ROOT-${HOME}/.pi/agent/skills}"
 }
 
+_aip_create_skills_agents_root() {
+  printf '%s\n' "${_AIP_CREATE_SKILLS_AGENTS_ROOT-${HOME}/.agents/skills}"
+}
+
 _aip_canonical_directory() (
   [ -d "$1" ] || exit 1
   builtin cd "$1" 2>/dev/null && builtin pwd -P
@@ -676,9 +680,10 @@ _aip_add_create_skill_candidate() {
 _aip_list_create_skills() {
   # Prints name<TAB>canonical-source, with global skills taking precedence. Skills
   # from the current tree are recognised only at a Pi profile's pi/skills/NAME path.
-  local tree global tree_root global_root roots global_entries tree_entries all_entries skill_root child
+  local tree global agents tree_root global_root roots global_entries tree_entries all_entries skill_root child
   tree=$(_aip_create_skills_tree_root) || return 1
   global=$(_aip_create_skills_global_root) || return 1
+  agents=$(_aip_create_skills_agents_root) || return 1
   global_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-global-skills.XXXXXX") || return 1
   tree_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-tree-skills.XXXXXX") || { command rm -f "$global_entries"; return 1; }
   all_entries=$(command mktemp "${TMPDIR:-/tmp}/aip-create-skills.XXXXXX") || { command rm -f "$global_entries" "$tree_entries"; return 1; }
@@ -686,6 +691,12 @@ _aip_list_create_skills() {
   : >|"$tree_entries"
 
   if global_root=$(_aip_canonical_directory "$global"); then
+    while IFS= read -r child; do
+      _aip_add_create_skill_candidate "$global_root" "$child" "$global_entries"
+    done < <(command find -H "$global_root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
+  fi
+
+  if global_root=$(_aip_canonical_directory "$agents"); then
     while IFS= read -r child; do
       _aip_add_create_skill_candidate "$global_root" "$child" "$global_entries"
     done < <(command find -H "$global_root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print 2>/dev/null)
@@ -726,30 +737,30 @@ EOF
 
 _aip_parse_create_skill_selection() {
   # $1 menu size, $2 user input. Prints unique selected menu indices, one per line.
-  local count=$1 input=$2 normalised token selected='' old_ifs=$IFS
+  local count=$1 input=$2 token selected=''
   if ! printf '%s\n' "$input" | LC_ALL=C command grep -Eq '^[0-9,[:space:]]*$'; then
     _aip_error 'invalid skill selection; enter menu numbers separated by commas or spaces'
     return 1
   fi
-  normalised=$(printf '%s' "$input" | command tr ',' ' ') || return 1
-  IFS=$(printf ' \t')
-  for token in $normalised; do
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
     if ! [ "$token" -ge 1 ] 2>/dev/null || ! [ "$token" -le "$count" ] 2>/dev/null; then
-      IFS=$old_ifs
       _aip_error 'invalid skill selection; enter menu numbers separated by commas or spaces'
       return 1
     fi
     case " $selected " in *" $token "*) continue ;; esac
     selected=${selected:+$selected }$token
     printf '%s\n' "$token"
-  done
-  IFS=$old_ifs
+  done <<EOF
+$(printf '%s' "$input" | command tr ',[:space:]' '\n')
+EOF
 }
 
 _aip_prompt_create_skill_selection() {
   # Prints selected menu indices only. Automation has no terminal stdin, so it
   # deliberately gets the existing no-skills creation behaviour without blocking.
   local skills name source count=0 input selected
+  [ "${_AIP_CREATE_SKIP_SKILL_SELECTION-}" = 1 ] && return 0
   [ -t 0 ] || return 0
   skills=$(_aip_list_create_skills) || return 1
   [ -n "$skills" ] || return 0
@@ -776,7 +787,7 @@ _aip_create_skill_source_is_allowed() {
   local source=$1 canonical root
   canonical=$(_aip_canonical_directory "$source") || return 1
   [ -f "$canonical/SKILL.md" ] || return 1
-  for root in "$(_aip_create_skills_global_root)" "$(_aip_create_skills_tree_root)"; do
+  for root in "$(_aip_create_skills_global_root)" "$(_aip_create_skills_agents_root)" "$(_aip_create_skills_tree_root)"; do
     root=$(_aip_canonical_directory "$root") || continue
     if _aip_create_skill_is_within "$root" "$canonical"; then
       printf '%s\n' "$canonical"
