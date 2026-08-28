@@ -232,7 +232,7 @@ Describe 'profile creation and selection' {
         [int](& git -C $root rev-list --count HEAD) | Should -Be 1
     }
 
-    It 'creates byte-identical owned primary configs when global sources exist' {
+    It 'creates byte-identical untracked primary configs when global sources exist' {
         $sources = @{
             'pi/settings.json' = '{}'
             'claude/settings.json' = '{"permissions":{}}'
@@ -251,14 +251,19 @@ Describe 'profile creation and selection' {
             [IO.File]::WriteAllText($source, $sources[$rel])
         }
 
-        aip create portable
+        aip create portable | Out-String | Should -Match 'add -- portable/claude/settings.json'
         $global:LASTEXITCODE | Should -Be 0
         foreach ($rel in $sources.Keys) {
             $source = Join-Path $script:AipImportHome $globalRels[$rel]
             $destination = Join-Path $script:AipProfileRoot (Join-Path 'portable' $rel)
             (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
             [IO.File]::ReadAllBytes($destination) | Should -Be ([IO.File]::ReadAllBytes($source))
-            (& git -C $script:AipProfileRoot ls-files -- "portable/$rel") | Should -Be "portable/$rel"
+            (& git -C $script:AipProfileRoot ls-files -- "portable/$rel") | Should -BeNullOrEmpty
+        }
+        aip sync *> $null
+        $global:LASTEXITCODE | Should -Be 0
+        foreach ($rel in $sources.Keys) {
+            (& git -C $script:AipProfileRoot ls-files -- "portable/$rel") | Should -BeNullOrEmpty
         }
     }
 
@@ -2211,6 +2216,44 @@ It 'returns a nonzero process status when installation fails' {
         }
     }
 
+    It 'installer migrates a legacy primary-config link on the first update' {
+        $installRoot = Join-Path $TestDrive 'installed aip'
+        $profilePath = Join-Path $TestDrive 'profile.ps1'
+        $temporaryHome = Join-Path $TestDrive 'home'
+        $previousHome = $env:HOME
+        Set-Content -LiteralPath $profilePath -Value 'keep'
+        $env:_AIP_INSTALL_ROOT = $installRoot
+        $env:_AIP_SHELL_PROFILE = $profilePath
+        $env:HOME = $temporaryHome
+        $env:_AIP_IMPORT_HOME = $temporaryHome
+        try {
+            New-Item -ItemType Directory -Path $temporaryHome -Force | Out-Null
+            . (Join-Path $script:RepositoryRoot 'aip.ps1')
+            $script:AipProfileRoot = $env:_AIP_PROFILE_ROOT
+            $script:AipImportHome = $temporaryHome
+            aip create legacy *> $null
+            $global:LASTEXITCODE | Should -Be 0
+            $source = Join-Path $temporaryHome '.claude/settings.json'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $source) -Force | Out-Null
+            Set-Content -LiteralPath $source -Value 'model = "safe"' -Encoding utf8NoBOM -NoNewline
+            New-Item -ItemType SymbolicLink -Path (Join-Path $env:_AIP_PROFILE_ROOT 'legacy/claude/settings.json') -Target $source | Out-Null
+
+            & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
+
+            $LASTEXITCODE | Should -Be 0
+            $destination = Join-Path $env:_AIP_PROFILE_ROOT 'legacy/claude/settings.json'
+            (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
+            (Get-Content -LiteralPath $destination -Raw) | Should -Be 'model = "safe"'
+            (& git -C $env:_AIP_PROFILE_ROOT ls-files -- legacy/claude/settings.json) | Should -BeNullOrEmpty
+        }
+        finally {
+            $env:HOME = $previousHome
+            $env:_AIP_IMPORT_HOME = $null
+            $env:_AIP_INSTALL_ROOT = $null
+            $env:_AIP_SHELL_PROFILE = $null
+        }
+    }
+
     It 'does not import selectable skills into the aip profile' {
         $installRoot = Join-Path $TestDrive 'installed aip'
         $profilePath = Join-Path $TestDrive 'profile.ps1'
@@ -2672,6 +2715,11 @@ Describe 'import' {
         $help = aip help | Out-String
         $help | Should -Match 'aip import HARNESS'
         $help | Should -Match 'aip skills add\|update\|remove'
+        $help | Should -Match 'aip sync-packages \[NAME\]'
+        $help | Should -Match 'aip update\s+Migrate legacy configs'
+        $help | Should -Match 'aip uninstall \[--force\]'
+        $help | Should -Match 'Pi skills: when stdin is a terminal'
+        $help | Should -Match 'Primary configs are copied when present but remain untracked'
     }
 }
 
@@ -3391,32 +3439,30 @@ Describe 'pi settings and packages' {
         $env:AIP_PROFILE = $null
     }
 
-    It 'create materialises and tracks pi/settings.json from the global settings' {
+    It 'create materialises but leaves pi/settings.json untracked' {
         $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')
         $item.LinkType | Should -BeNullOrEmpty
         (Get-ProfileSettings) | Should -Match '"theme": "dark"'
         (Get-ProfileSettings) | Should -Match '"npm:context-mode"'
-        & git -C $script:AipProfileRoot ls-files --error-unmatch -- work/pi/settings.json *> $null
-        $global:LASTEXITCODE | Should -Be 0
-        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot ls-files -- work/pi/settings.json) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -Match '\?\? work/pi/settings.json'
     }
 
-    It 'create copies and tracks settings when the global file is trivial' {
+    It 'create copies trivial settings without tracking them' {
         Set-Content -LiteralPath (Join-Path $script:Pidir 'settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
         aip create linked *> $null
         $settings = Join-Path $script:AipProfileRoot 'linked/pi/settings.json'
         (Get-Item -LiteralPath $settings).LinkType | Should -BeNullOrEmpty
         [IO.File]::ReadAllBytes($settings) | Should -Be ([IO.File]::ReadAllBytes((Join-Path $script:Pidir 'settings.json')))
-        (& git -C $script:AipProfileRoot ls-files -- linked/pi/settings.json) | Should -Be 'linked/pi/settings.json'
+        (& git -C $script:AipProfileRoot ls-files -- linked/pi/settings.json) | Should -BeNullOrEmpty
     }
 
-    It 'clone carries the tracked settings.json into the new profile' {
+    It 'clone leaves an untracked settings.json on its source profile' {
         aip clone work copy *> $null
         $global:LASTEXITCODE | Should -Be 0
-        $item = Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'copy/pi/settings.json')
-        $item.LinkType | Should -BeNullOrEmpty
-        & git -C $script:AipProfileRoot ls-files --error-unmatch -- copy/pi/settings.json *> $null
-        $global:LASTEXITCODE | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot 'copy/pi/settings.json') | Should -BeFalse
+        (& git -C $script:AipProfileRoot ls-files -- copy/pi/settings.json) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -Match '\?\? work/pi/settings.json'
     }
 
     It 'new profile gitignore excludes the pi model-catalog cache' {
@@ -3497,7 +3543,6 @@ Describe 'pi settings and packages' {
     }
 
     It 'sync-packages edits an owned untracked settings file without changing the global file' {
-        & git -C $script:AipProfileRoot rm --cached -q work/pi/settings.json
         Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{}' -Encoding utf8NoBOM -NoNewline
         & pi *> $null
         (Get-Item -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json')).LinkType | Should -BeNullOrEmpty
@@ -3511,7 +3556,6 @@ Describe 'pi settings and packages' {
         New-Item -ItemType Directory -Path (Join-Path $script:Pidir 'npm/node_modules') -Force | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $script:AipProfileRoot 'work/pi/npm/node_modules') -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
-        & git -C $script:AipProfileRoot rm --cached -q work/pi/settings.json  # legacy untracked state
 
         aip doctor work *> $null
         $script:AipCommandStatus | Should -Be 0
@@ -3544,8 +3588,8 @@ Describe 'pi settings and packages' {
             [IO.File]::WriteAllText($source, "source-$rel")
             New-Item -ItemType SymbolicLink -Path (Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)) -Target $source | Out-Null
         }
-        # The genuine legacy shape: the block entries that kept the links untracked
-        # must be cleared before staging or git add refuses the ignored paths.
+        # The genuine legacy shape: the block entries kept the links untracked.
+        # Migration clears them but leaves copied configs for explicit review.
         Set-AipPassthroughGitIgnoreBlock (Join-Path $script:AipProfileRoot 'legacy/.gitignore') @($globalRels.Keys)
 
         aip update *> $null
@@ -3555,7 +3599,7 @@ Describe 'pi settings and packages' {
             $destination = Join-Path $script:AipProfileRoot (Join-Path 'legacy' $rel)
             (Get-Item -LiteralPath $destination -Force).LinkType | Should -BeNullOrEmpty
             [IO.File]::ReadAllBytes($destination) | Should -Be ([IO.File]::ReadAllBytes($source))
-            (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain "legacy/$rel"
+            (& git -C $script:AipProfileRoot ls-files -- "legacy/$rel") | Should -BeNullOrEmpty
         }
         (Get-AipPassthroughGitIgnoreEntry (Join-Path $script:AipProfileRoot 'legacy/.gitignore')) | Should -BeNullOrEmpty
     }
@@ -3629,22 +3673,6 @@ Describe 'pi settings and packages' {
         (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Not -Contain 'legacy/pi/settings.json'
     }
 
-    It 'aip update stages an untracked owned pi/settings.json without committing' {
-        New-FakeHarness 'npx'
-        Remove-Item -LiteralPath (Join-Path $script:Pidir 'settings.json') -Force
-        aip create legacy *> $null
-        Set-Content -LiteralPath (Join-Path $script:AipProfileRoot 'legacy/pi/settings.json') -Value '{"theme":"light"}' -Encoding utf8NoBOM -NoNewline
-
-        $savedPath = $env:PATH
-        $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
-        try {
-            aip update | Out-String | Should -Match 'staged legacy/pi/settings.json for sharing'
-            $script:AipCommandStatus | Should -Be 0
-            (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain 'legacy/pi/settings.json'
-            aip update | Out-String | Should -Not -Match 'staged'
-        }
-        finally { $env:PATH = $savedPath }
-    }
 }
 
 Describe 'skills update' {

@@ -297,7 +297,13 @@ calls `aip skills add` with the exact path.
 
 ## Profile-owned primary configuration
 
-New profiles own and Git-track these portable configuration files when their machine-global source exists: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. The source is copied byte-for-byte, including empty or trivial files; a missing source leaves that profile path absent. `aip update` migrates valid legacy links for these paths into staged profile files (or removes a legacy link whose global target is absent). Until migrated, a valid legacy link is tolerated with a warning; malformed or foreign links still fail validation.
+New profiles own these portable configuration files when their machine-global source exists: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. The source is copied byte-for-byte, including empty or trivial files; a missing source leaves that profile path absent. The copies are intentionally left untracked: inspect each file, then explicitly add only the ones you choose to share. For example:
+
+```sh
+git -C ~/agent-profiles add -- work/claude/settings.json
+```
+
+`aip update` replaces valid legacy links with the same untracked local files (or removes a legacy link whose global target is absent). Until migrated, a valid legacy link is tolerated with a warning; malformed or foreign links still fail validation. Neither `aip create`, `aip update`, nor `aip sync` automatically adds these files.
 
 These files must not contain credentials. Authentication, session, cache, and runtime files remain machine-local and excluded from sync.
 
@@ -329,12 +335,10 @@ deliberately with `aip import`.
 |---|---|---|---|
 | Pi | `~/.pi/agent` | `models.json` | custom models & providers (gateways, proxies, Ollama/LM Studio, model overrides) |
 | | | `auth.json` | provider credentials (API keys, OAuth tokens) |
-| | | `settings.json` | global settings: model, keybindings, theme, session dir, trust policy |
 | | | `themes/` | custom themes |
 | | | `prompts/` | custom prompt templates |
 | | | `extensions/` | installed extensions (auto-discovered) |
-| Claude Code | `~/.claude` | `settings.json` | global settings: permissions, model, env, hooks |
-| | | `settings.local.json` | machine-local settings overrides (merged over `settings.json`) |
+| Claude Code | `~/.claude` | `settings.local.json` | machine-local settings overrides |
 | | | `.credentials.json` | OAuth credentials |
 | | | `agents/` | custom subagents |
 | | | `commands/` | custom slash commands |
@@ -343,11 +347,9 @@ deliberately with `aip import`.
 | | | `workflows/` | custom workflows |
 | | | `keybindings.json` | custom keybindings |
 | | | `plugins/` | installed plugins |
-| OpenAI Codex | `~/.codex` | `config.toml` | main configuration: model, approval policy, sandbox, MCP servers, hooks, plugins |
-| | | `auth.json` | API credentials |
+| OpenAI Codex | `~/.codex` | `auth.json` | API credentials |
 | | | `plugins/` | installed plugins |
-| OpenCode | `~/.config/opencode` | `opencode.json` | main configuration: providers, models, MCP, agents, permissions |
-| | | `auth.json` | provider credentials |
+| OpenCode | `~/.config/opencode` | `auth.json` | provider credentials |
 | | | `tui.json` | TUI settings |
 | | | `agent/` | custom agents |
 | | | `command/` | custom commands |
@@ -397,6 +399,8 @@ aip clone SOURCE TARGET            copy a profile into a new profile
 aip delete NAME [--force]          delete a profile
 aip manage HARNESS [ARGS...]       launch a harness with the aip profile
 aip sync                           checkpoint and sync every profile
+aip sync-packages [NAME] [--add SPEC | --remove PKG | --replace]
+                                   sync a profile's pi package list with global settings
 aip remote add URL                 connect the profiles repository to a remote
 aip remote show                    show the configured remote (if any)
 aip remote remove                  disconnect the remote
@@ -405,7 +409,7 @@ aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
                                    copy config from a harness into profiles
 aip doctor [NAME]                  diagnose the repository and profiles
 aip run [NAME] HARNESS [ARGS...]   launch a harness with a profile
-aip update                         update the aip npm package
+aip update                         migrate legacy configs and update the aip npm package
 aip uninstall [--force]            remove the aip installation (not your profiles)
 aip version                        show the aip version
 aip help                           show help (--help and -h work too)

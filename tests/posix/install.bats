@@ -118,6 +118,44 @@ setup_git_identity() {
   [[ "$output" == *"aip manage pi"* ]]
 }
 
+@test "installer does not open the skill picker for the aip management profile" {
+  command -v python3 >/dev/null || skip 'python3 is not installed'
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  mkdir -p "$HOME/.pi/agent/skills/alpha"
+  printf '%s\n' '---' 'name: alpha' '---' >"$HOME/.pi/agent/skills/alpha/SKILL.md"
+
+  run python3 -c '
+import os
+import pty
+import sys
+
+status = pty.spawn(["bash", sys.argv[1]])
+sys.exit(os.waitstatus_to_exitcode(status))
+' "$BATS_TEST_DIRNAME/../../install.sh"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'Available Pi skills'* ]]
+  [[ "$output" != *'Select skills by number'* ]]
+}
+
+@test "installer migrates a legacy primary-config link on the first update" {
+  export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"
+  setup_git_identity
+  bash -c '. "$1"; aip create legacy' _ "$BATS_TEST_DIRNAME/../../aip.sh"
+  mkdir -p "$HOME/.claude"
+  printf 'model = "safe"\n' >"$HOME/.claude/settings.json"
+  ln -s "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/legacy/claude/settings.json"
+
+  run bash "$BATS_TEST_DIRNAME/../../install.sh"
+
+  [ "$status" -eq 0 ]
+  [ -f "$_AIP_PROFILE_ROOT/legacy/claude/settings.json" ]
+  [ ! -L "$_AIP_PROFILE_ROOT/legacy/claude/settings.json" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- legacy/claude/settings.json)" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/legacy/claude/settings.json")" = 'model = "safe"' ]
+}
+
 @test "installer does not import selectable skills into the aip profile" {
   local tree="$BATS_TEST_TMPDIR/skill-tree"
   export _AIP_PROFILE_ROOT="$BATS_TEST_TMPDIR/profile root"

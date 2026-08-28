@@ -8,7 +8,7 @@ setup() {
   create_profile work
 }
 
-@test "create copies and tracks every available primary harness config" {
+@test "create copies primary harness configs without tracking them" {
   mkdir -p "$HOME/.pi/agent" "$HOME/.claude" "$HOME/.codex" "$HOME/.config/opencode"
   printf '{}\n' >"$HOME/.pi/agent/settings.json"
   printf '{"permissions":{}}\n' >"$HOME/.claude/settings.json"
@@ -18,16 +18,23 @@ setup() {
   run aip create portable
 
   [ "$status" -eq 0 ]
+  [[ "$output" == *'add -- portable/claude/settings.json'* ]]
   local rel
   for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
     [ -f "$_AIP_PROFILE_ROOT/portable/$rel" ]
     [ ! -L "$_AIP_PROFILE_ROOT/portable/$rel" ]
-    [ -n "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- "portable/$rel")" ]
+    [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- "portable/$rel")" ]
   done
   cmp "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/portable/pi/settings.json"
   cmp "$HOME/.claude/settings.json" "$_AIP_PROFILE_ROOT/portable/claude/settings.json"
   cmp "$HOME/.codex/config.toml" "$_AIP_PROFILE_ROOT/portable/codex/config.toml"
   cmp "$HOME/.config/opencode/opencode.json" "$_AIP_PROFILE_ROOT/portable/opencode/opencode.json"
+
+  run aip sync
+  [ "$status" -eq 0 ]
+  for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
+    [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- "portable/$rel")" ]
+  done
 }
 
 @test "create leaves missing primary configs absent rather than linking them" {
@@ -212,7 +219,7 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'WARN: work/pi/npm is a local directory shadowing the machine-wide pi npm dir'* ]]
   [[ "$output" == *'WARN: work/pi/settings.json is not shared (untracked)'* ]]
-  [[ "$output" == *'add work/pi/settings.json'* ]]
+  [[ "$output" == *'add -- work/pi/settings.json'* ]]
 
   # healthy states go quiet: npm becomes the link, settings becomes tracked
   rm -rf "$_AIP_PROFILE_ROOT/work/pi/npm"

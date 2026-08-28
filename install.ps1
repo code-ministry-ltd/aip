@@ -130,9 +130,11 @@ try {
     }
         Set-Content -LiteralPath $versionFile -Value $packageVersion -Encoding utf8NoBOM
         Invoke-AipProfileSkillSetup -InstalledFile $installedFile -PackageVersion $packageVersion -ScriptDirectory $PSScriptRoot
-        # Adopt profiles' untracked pi/settings.json (created before aip tracked them).
-        $adoptCommand = ". '$($installedFile.Replace("'", "''"))'; Invoke-AipAdoptUntrackedSettings"
-        & (Get-Process -Id $PID).Path -NoProfile -Command $adoptCommand
+        # Retire legacy primary-config links immediately after replacing the
+        # script, so the first update from an older installation migrates them.
+        $migrationRoot = if ($env:_AIP_PROFILE_ROOT) { $env:_AIP_PROFILE_ROOT } else { Join-Path $HOME 'agent-profiles' }
+        $migrateCommand = ". '$($installedFile.Replace("'", "''"))'; `$script:AipProfileRoot = '$($migrationRoot.Replace("'", "''"))'; Invoke-AipMigrateLegacyPrimaryConfigLinks"
+        & (Get-Process -Id $PID).Path -NoProfile -Command $migrateCommand
         if ($previousVersion -and $previousVersion -ne $packageVersion) {
             Write-Output "Updated aip from $previousVersion to $packageVersion. Restart PowerShell or run: $sourceLine"
         }

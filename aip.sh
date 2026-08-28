@@ -11,35 +11,11 @@ _aip_warn() {
   printf 'aip: warning: %s\n' "$*" >&2
 }
 
-_aip_adopt_untracked_settings() (
-  # One-time adoption for profiles created before aip tracked pi/settings.json:
-  # stage (never commit) every profile's real, untracked file so the next
-  # checkpoint shares it. Warn-only; never fails.
-  _aip_clear_git_routing
-  local root name profile settings
-  root=${_AIP_PROFILE_ROOT-}
-  [ -n "$root" ] && [ -d "$root/.git" ] || return 0
-  for name in $(_aip_list_profile_names); do
-    profile=$(_aip_profile_path "$name")
-    settings=$profile/pi/settings.json
-    if [ -f "$settings" ] && [ ! -L "$settings" ] &&
-       ! _aip_git -C "$root" ls-files --error-unmatch -- "$name/pi/settings.json" >/dev/null 2>&1; then
-      if _aip_git -C "$root" add -- "$name/pi/settings.json"; then
-        printf 'aip: staged %s/pi/settings.json for sharing (the next checkpoint commits it)\n' "$name"
-      else
-        _aip_warn "could not stage $name/pi/settings.json"
-      fi
-    fi
-  done
-  return 0
-)
-
 _aip_update() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
   (
     _aip_clear_git_routing
     _aip_migrate_legacy_primary_config_links
-    _aip_adopt_untracked_settings
     if ! command -v npx >/dev/null 2>&1; then
       _aip_error 'update requires Node.js (npx) on PATH'
       return 1
@@ -456,6 +432,16 @@ _aip_materialize_primary_configs() {
   done < <(_aip_primary_config_rels)
 }
 
+_aip_note_untracked_primary_configs() {
+  # $1 profile name, $2 profile path. Copied primary configs require an
+  # explicit review-and-add decision; checkpointing never makes it for users.
+  local name=$1 profile_path=$2 rel
+  while IFS= read -r rel; do
+    [ -f "$profile_path/$rel" ] && [ ! -L "$profile_path/$rel" ] || continue
+    printf 'aip: note: %s/%s is local and untracked; inspect it, then explicitly add it: git -C "%s" add -- %s/%s\n' "$name" "$rel" "$_AIP_PROFILE_ROOT" "$name" "$rel"
+  done < <(_aip_primary_config_rels)
+}
+
 _aip_is_legacy_primary_config_link() {
   # Historical primary-config links are recognised independently of today's
   # pass-through allowlist, so update can safely retire them.
@@ -489,11 +475,20 @@ _aip_migrate_legacy_primary_config_links() (
         # Copy to a sibling temporary file first so a failed copy never destroys
         # the link; the rename over the link is atomic.
         temporary=$(command mktemp "$destination.XXXXXX") || { _aip_warn "could not migrate $name/$rel"; continue; }
+        tracked=0
+        _aip_git -C "$root" ls-files --error-unmatch -- "$name/$rel" >/dev/null 2>&1 && tracked=1
         if command cp -- "$source" "$temporary" &&
            command mv -f -- "$temporary" "$destination" &&
-           _aip_gitignore_remove_passthrough_entry "$gitignore" "$rel" &&
-           _aip_git -C "$root" add -- "$name/$rel"; then
-          printf 'aip: staged %s/%s for sharing (the next checkpoint commits it)\n' "$name" "$rel"
+           _aip_gitignore_remove_passthrough_entry "$gitignore" "$rel"; then
+          if [ "$tracked" -eq 1 ]; then
+            if _aip_git -C "$root" rm --cached -q -- "$name/$rel"; then
+              printf 'aip: removed %s/%s from Git; inspect the local replacement before explicitly adding it to share\n' "$name" "$rel"
+            else
+              _aip_warn "could not untrack migrated config $name/$rel"
+            fi
+          else
+            printf 'aip: left %s/%s untracked; inspect it before explicitly adding it to share\n' "$name" "$rel"
+          fi
         else
           command rm -f -- "$temporary"
           _aip_warn "could not migrate $name/$rel"
@@ -517,15 +512,6 @@ _aip_migrate_legacy_primary_config_links() (
     done < <(_aip_primary_config_rels)
   done
 )
-
-_aip_primary_config_add_paths() {
-  # $1 profile name, $2 profile path. Prints only owned regular config paths.
-  local name=$1 profile_path=$2 rel
-  while IFS= read -r rel; do
-    [ -f "$profile_path/$rel" ] && [ ! -L "$profile_path/$rel" ] && printf '%s/%s\n' "$name" "$rel"
-  done < <(_aip_primary_config_rels)
-  return 0
-}
 
 _aip_passthrough_rels() {
   # The per-harness pass-through allowlist: machine-local configuration inputs that
@@ -1450,7 +1436,7 @@ _aip_publish_profile_directory() (
 
 _aip_create() (
   _aip_clear_git_routing
-  local name=${1-} destination stage temporary primary_config_add selection_file
+  local name=${1-} destination stage temporary selection_file
   [ -n "$name" ] || {
     _aip_error 'usage: aip create NAME'
     return 2
@@ -1497,14 +1483,12 @@ _aip_create() (
   # Add only the profile's owned paths, never the whole directory: pass-through
   # links exist on disk at this point (machine-local, untracked by design) and a
   # broad add would track any that reconciliation failed to ignore.
-  primary_config_add=$(_aip_primary_config_add_paths "$name" "$destination") || return
   _aip_git -C "$_AIP_PROFILE_ROOT" add \
     .gitignore \
     "$name/.gitignore" "$name/AGENTS.md" "$name/skills" \
     "$name/claude/CLAUDE.md" "$name/claude/skills" "$name/codex/AGENTS.md" "$name/codex/instructions.md" \
     "$name/codex/skills" "$name/pi/AGENTS.md" "$name/pi/APPEND_SYSTEM.md" "$name/pi/skills" \
-    "$name/opencode/AGENTS.md" "$name/opencode/skills" \
-    $primary_config_add || {
+    "$name/opencode/AGENTS.md" "$name/opencode/skills" || {
     _aip_error "could not commit profile '$name'; check Git identity and hooks"
     return 1
   }
@@ -1515,6 +1499,7 @@ _aip_create() (
     }
   fi
   printf "Created profile '%s' at %s\n" "$name" "$destination"
+  _aip_note_untracked_primary_configs "$name" "$destination"
 )
 
 _aip_use() {
@@ -1817,10 +1802,9 @@ _aip_resolve_doctor_profile() {
 }
 
 _aip_doctor_passthrough() {
-  # Reports pass-through links and warns (never fails) on broken ones, plus two
-  # pi-specific advisories: a shadowing real pi/npm dir, and a profile-owned
-  # settings.json that is not shared.
-  local profile_path=$1 name=$2 harness root rel dest pi_root npm_dir settings
+  # Reports pass-through links and warns (never fails) on broken ones, plus a
+  # shadowing real pi/npm dir and untracked portable primary configs.
+  local profile_path=$1 name=$2 harness root rel dest pi_root npm_dir config
   for harness in pi claude codex opencode; do
     root=$(_aip_import_harness_root "$harness") || continue
     [ -d "$root" ] || continue
@@ -1843,11 +1827,13 @@ _aip_doctor_passthrough() {
       printf 'WARN: %s/pi/npm is a local directory shadowing the machine-wide pi npm dir; inspect it, then remove it so the pass-through link can form (pi re-installs missing packages on next launch)\n' "$name"
     fi
   fi
-  settings=$profile_path/pi/settings.json
-  if [ -f "$settings" ] && [ ! -L "$settings" ] &&
-     ! _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/pi/settings.json" >/dev/null 2>&1; then
-    printf 'WARN: %s/pi/settings.json is not shared (untracked); run aip update, or: git -C %s add %s/pi/settings.json\n' "$name" "$_AIP_PROFILE_ROOT" "$name"
-  fi
+  while IFS= read -r rel; do
+    config=$profile_path/$rel
+    if [ -f "$config" ] && [ ! -L "$config" ] &&
+       ! _aip_git -C "$_AIP_PROFILE_ROOT" ls-files --error-unmatch -- "$name/$rel" >/dev/null 2>&1; then
+      printf 'WARN: %s/%s is not shared (untracked); inspect it, then explicitly add it: git -C "%s" add -- %s/%s\n' "$name" "$rel" "$_AIP_PROFILE_ROOT" "$name" "$rel"
+    fi
+  done < <(_aip_primary_config_rels)
 }
 
 _aip_doctor_profile_layout() {
@@ -3905,6 +3891,9 @@ Pi skills: when stdin is a terminal, `aip create NAME` lists eligible skills
 from Pi profiles below the current directory and `~/.pi/agent/skills`. Enter
 numbers separated by commas or spaces (or press Enter for none); selections are
 copied into the new profile's shared `skills/` directory.
+
+Primary configs are copied when present but remain untracked. Inspect each one
+before deliberately sharing it with Git; `aip sync` never adds it for you.
 
 Harness wrappers:
   claude, codex, pi, opencode [ARGS...] launch the named tool with the

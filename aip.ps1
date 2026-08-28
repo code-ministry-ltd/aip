@@ -6,7 +6,7 @@ if (-not (Get-Variable -Name AipProfileRoot -Scope Script -ErrorAction SilentlyC
     $script:AipProfileRoot = Join-Path $HOME 'agent-profiles'
 }
 if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyContinue)) {
-    $script:AipImportHome = $HOME
+    $script:AipImportHome = if ($env:_AIP_IMPORT_HOME) { $env:_AIP_IMPORT_HOME } else { $HOME }
 }
 $script:AipCommandStatus = 0
 $script:AipVersion = '0.8.0'
@@ -680,10 +680,6 @@ function Invoke-AipCreate {
     # links exist on disk at this point (machine-local, untracked by design) and a
     # broad add would track any that reconciliation failed to ignore.
     $owned = @('.gitignore', 'AGENTS.md', 'skills', 'claude/CLAUDE.md', 'claude/skills', 'codex/AGENTS.md', 'codex/instructions.md', 'codex/skills', 'pi/AGENTS.md', 'pi/APPEND_SYSTEM.md', 'pi/skills', 'opencode/AGENTS.md', 'opencode/skills')
-    foreach ($rel in @(Get-AipPrimaryConfigRel)) {
-        $ownedConfig = Join-Path $destination $rel
-        if ((Test-Path -LiteralPath $ownedConfig -PathType Leaf) -and $null -eq (Get-Item -LiteralPath $ownedConfig -Force).LinkType) { $owned += $rel }
-    }
     Invoke-AipGit -C $script:AipProfileRoot add .gitignore @($owned | ForEach-Object { "$($name)/$_" })
     if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
     Invoke-AipGit -C $script:AipProfileRoot diff --cached --quiet --
@@ -692,6 +688,13 @@ function Invoke-AipCreate {
         if ($LASTEXITCODE -ne 0) { Write-AipError "could not commit profile '$name'; check Git identity and hooks"; return }
     }
     Write-Output "Created profile '$name' at $destination"
+    foreach ($rel in @(Get-AipPrimaryConfigRel)) {
+        $config = Join-Path $destination $rel
+        $item = Get-Item -LiteralPath $config -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and $item.PSIsContainer -eq $false -and $null -eq $item.LinkType) {
+            Write-Output "aip: note: $name/$rel is local and untracked; inspect it, then explicitly add it: git -C `"$($script:AipProfileRoot)`" add -- $name/$rel"
+        }
+    }
 }
 
 function Test-AipUnfinishedGitOperation {
@@ -2012,9 +2015,14 @@ function Invoke-AipMigrateLegacyPrimaryConfigLinks {
                     Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
                     Move-Item -LiteralPath $temporary -Destination $destination -Force -ErrorAction Stop
                     Remove-AipPassthroughGitIgnoreEntry $gitignore $relative
-                    Invoke-AipGit -C $root add -- "$name/$relative"
-                    if ($global:LASTEXITCODE -ne 0) { throw 'git add failed' }
-                    Write-Output "aip: staged $name/$relative for sharing (the next checkpoint commits it)"
+                    if (Test-AipTrackedPath "$name/$relative") {
+                        Invoke-AipGit -C $root rm --cached -q -- "$name/$relative"
+                        if ($global:LASTEXITCODE -ne 0) { throw 'git rm --cached failed' }
+                        Write-Output "aip: removed $name/$relative from Git; inspect the local replacement before explicitly adding it to share"
+                    }
+                    else {
+                        Write-Output "aip: left $name/$relative untracked; inspect it before explicitly adding it to share"
+                    }
                 }
                 catch {
                     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
@@ -2040,27 +2048,6 @@ function Invoke-AipMigrateLegacyPrimaryConfigLinks {
                 }
                 catch { Write-AipWarning "could not remove legacy link $name/$relative" }
             }
-        }
-    }
-}
-
-function Invoke-AipAdoptUntrackedSettings {
-    # One-time adoption for profiles created before aip tracked pi/settings.json:
-    # stage (never commit) every profile's real, untracked file so the next
-    # checkpoint shares it. Warn-only; never fails.
-    $root = $script:AipProfileRoot
-    if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container)) { return }
-    foreach ($name in @(Get-AipProfileNames)) {
-        $settings = Join-Path (Get-AipProfilePath $name) 'pi/settings.json'
-        $item = Get-Item -LiteralPath $settings -Force -ErrorAction SilentlyContinue
-        if ($null -eq $item -or $item.PSIsContainer -or $null -ne $item.LinkType) { continue }
-        if (Test-AipTrackedPath "$name/pi/settings.json") { continue }
-        Invoke-AipGit -C $root add -- "$name/pi/settings.json"
-        if ($global:LASTEXITCODE -eq 0) {
-            Write-Output "aip: staged $name/pi/settings.json for sharing (the next checkpoint commits it)"
-        }
-        else {
-            Write-AipWarning "could not stage $name/pi/settings.json"
         }
     }
 }
@@ -2337,7 +2324,6 @@ function Invoke-AipUpdate {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
     Invoke-AipMigrateLegacyPrimaryConfigLinks
-    Invoke-AipAdoptUntrackedSettings
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
     & npx --yes '@code-ministry/aip@latest' update
     $script:AipCommandStatus = $LASTEXITCODE
@@ -3079,9 +3065,8 @@ function Invoke-AipPassthroughProfile {
 }
 
 function Write-AipDoctorPassthrough {
-    # Reports pass-through links and warns (never fails) on broken ones, plus two
-    # pi-specific advisories: a shadowing real pi/npm dir, and a profile-owned
-    # settings.json that is not shared.
+    # Reports pass-through links and warns (never fails) on broken ones, plus a
+    # shadowing real pi/npm dir and untracked portable primary configs.
     param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$Name)
     foreach ($harness in 'pi', 'claude', 'codex', 'opencode') {
         $root = Get-AipImportHarnessRoot $harness
@@ -3107,11 +3092,13 @@ function Write-AipDoctorPassthrough {
             Write-Output "WARN: $Name/pi/npm is a local directory shadowing the machine-wide pi npm dir; inspect it, then remove it so the pass-through link can form (pi re-installs missing packages on next launch)"
         }
     }
-    $settingsPath = Join-Path $ProfilePath 'pi/settings.json'
-    $settingsItem = Get-Item -LiteralPath $settingsPath -Force -ErrorAction SilentlyContinue
-    if ($null -ne $settingsItem -and $settingsItem.PSIsContainer -eq $false -and $null -eq $settingsItem.LinkType -and
-        -not (Test-AipTrackedPath "$Name/pi/settings.json")) {
-        Write-Output "WARN: $Name/pi/settings.json is not shared (untracked); run aip update, or: git -C $($script:AipProfileRoot) add $Name/pi/settings.json"
+    foreach ($relative in @(Get-AipPrimaryConfigRel)) {
+        $configPath = Join-Path $ProfilePath $relative
+        $configItem = Get-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+        if ($null -ne $configItem -and $configItem.PSIsContainer -eq $false -and $null -eq $configItem.LinkType -and
+            -not (Test-AipTrackedPath "$Name/$relative")) {
+            Write-Output "WARN: $Name/$relative is not shared (untracked); inspect it, then explicitly add it: git -C `"$($script:AipProfileRoot)`" add -- $Name/$relative"
+        }
     }
 }
 
@@ -4148,9 +4135,18 @@ Commands:
                                      Copy config from a harness into profiles
   aip doctor [NAME]                  Diagnose the repository and profiles
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
-  aip update                         Update the aip npm package
+  aip update                         Migrate legacy configs and update the aip npm package
+  aip uninstall [--force]            Remove the aip installation (not your profiles)
   aip version                        Show the aip version
   aip help                           Show this help
+
+Pi skills: when stdin is a terminal, `aip create NAME` lists eligible skills
+from Pi profiles below the current directory and `~/.pi/agent/skills`. Enter
+numbers separated by commas or spaces (or press Enter for none); selections are
+copied into the new profile's shared `skills/` directory.
+
+Primary configs are copied when present but remain untracked. Inspect each one
+before deliberately sharing it with Git; `aip sync` never adds it for you.
 
 Harness wrappers:
   claude, codex, pi, opencode [ARGS...] launch the named tool with the
@@ -4163,7 +4159,6 @@ Quick start:
   aip create work                 create your first profile
   aip remote add <git-url>        connect a shared remote (empty remote ok)
   aip default work                choose your everyday profile
-  aip uninstall [--force]         remove the aip installation (not your profiles)
   cd my-project && claude         work with your profile
 
 On a second machine:

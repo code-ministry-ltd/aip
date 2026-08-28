@@ -98,7 +98,8 @@ setup() {
 
   # The genuine legacy shape: the four paths sit in the .gitignore pass-through
   # block (which made the links untracked) and the links use aip's historical
-  # relative-target form. Migration must clear the block entries before staging.
+  # relative-target form. Migration must clear the block entries and leave the
+  # copied configs for an explicit user review before they are tracked.
   entries=$(mktemp)
   printf '%s\n' pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json >"$entries"
   _aip_gitignore_set_passthrough_block "$_AIP_PROFILE_ROOT/legacy/.gitignore" "$entries"
@@ -114,7 +115,7 @@ setup() {
   for rel in pi/settings.json claude/settings.json codex/config.toml opencode/opencode.json; do
     [ -f "$_AIP_PROFILE_ROOT/legacy/$rel" ]
     [ ! -L "$_AIP_PROFILE_ROOT/legacy/$rel" ]
-    git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq "legacy/$rel"
+    [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- "legacy/$rel")" ]
     ! grep -Fx "$rel" "$_AIP_PROFILE_ROOT/legacy/.gitignore"
   done
   cmp "$HOME/.pi/agent/settings.json" "$_AIP_PROFILE_ROOT/legacy/pi/settings.json"
@@ -124,7 +125,7 @@ setup() {
 
   run aip update
   [ "$status" -eq 0 ]
-  [[ "$output" != *'staged legacy/'* ]]
+  [[ "$output" != *'left legacy/'* ]]
   [[ "$output" != *'removed legacy'* ]]
 }
 
@@ -142,7 +143,7 @@ setup() {
   [ "$status" -eq 0 ]
   [ -f "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
   [ ! -L "$_AIP_PROFILE_ROOT/legacy/pi/settings.json" ]
-  git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only | grep -Fxq 'legacy/pi/settings.json'
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- legacy/pi/settings.json)" ]
   ! grep -Fx 'pi/settings.json' "$_AIP_PROFILE_ROOT/legacy/.gitignore"
 }
 
