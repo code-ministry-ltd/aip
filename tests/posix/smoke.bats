@@ -33,7 +33,7 @@
   run bash -c 'source "$0"; aip help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]
   local cmd
-  for cmd in skills create list which default use local clone delete manage sync remote doctor run update uninstall version help import; do
+  for cmd in skills create list which default use local clone delete manage sync sync-packages remote doctor run update uninstall version help import; do
     [[ "$output" == *"aip $cmd"* ]] || { echo "missing: aip $cmd"; return 1; }
   done
   [[ "$output" == *'aip skills add|update|remove'* ]]
@@ -46,6 +46,7 @@
   [[ "$output" == *'README'* ]]
   [[ "$output" == *'claude, codex, pi, opencode'* ]]
   [[ "$output" == *'Pi skills: when stdin is a terminal'* ]]
+  [[ "$output" == *'Primary configs are copied when present but remain untracked'* ]]
 
   run bash -c 'source "$0"; aip --help' "$AIP_SOURCE"
   [ "$status" -eq 0 ]

@@ -36,16 +36,19 @@ rather than re-offered.
 ## 2. Inventory settings
 
 Most machine settings need **no import**: aip pass-through automatically
-links each harness's machine-local config into every profile. The allowlist
-(names without a trailing slash; each maps to the same relative path under
-the harness default root):
+links each harness's machine-local config into every profile. The four primary
+configs (`pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and
+`opencode/opencode.json`) are the exception: aip copies an existing global
+file into a new profile but leaves it untracked for explicit review. The
+pass-through allowlist (names without a trailing slash; each maps to the same
+relative path under the harness default root):
 
 | Harness | Pass-through paths |
 |---|---|
-| pi | `models.json`, `auth.json`, `settings.json`, `themes`, `prompts`, `extensions`, `npm` |
-| claude | `settings.json`, `settings.local.json`, `.credentials.json`, `agents`, `commands`, `context-mode`, `output-styles`, `workflows`, `keybindings.json`, `plugins` |
-| codex | `config.toml`, `auth.json`, `plugins` |
-| opencode | `opencode.json`, `auth.json`, `tui.json`, `agent`, `command`, `plugins` |
+| pi | `models.json`, `auth.json`, `themes`, `prompts`, `extensions`, `npm` |
+| claude | `settings.local.json`, `.credentials.json`, `agents`, `commands`, `context-mode`, `output-styles`, `workflows`, `keybindings.json`, `plugins` |
+| codex | `auth.json`, `plugins` |
+| opencode | `auth.json`, `tui.json`, `agent`, `command`, `plugins` |
 
 Say so; it is the answer most users need.
 

@@ -161,4 +161,4 @@ one-line recap of what was set up.
 
 ## Primary configuration portability
 
-Profiles own `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json` when the corresponding global file exists; files are copied byte-for-byte. Missing sources stay absent. `aip update` migrates valid legacy links. Keep credentials and runtime state in their excluded machine-local paths.
+Profiles own `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json` when the corresponding global file exists; files are copied byte-for-byte but remain untracked. Missing sources stay absent. `aip update` migrates valid legacy links locally. Inspect a copied config and explicitly `git add` it only when the user has approved sharing it; keep credentials and runtime state in their excluded machine-local paths.

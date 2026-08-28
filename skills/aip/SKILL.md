@@ -38,15 +38,7 @@ Reference files live next to this SKILL.md — read them when directed:
   that harness's own file. During an interactive `aip create`, Pi skills from
   descendant Pi profiles and `~/.pi/agent/skills` can be selected by number;
   aip copies them into this shared `skills/` tree, never a harness link.
-- Each profile owns portable primary configuration: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. Existing global sources copy byte-for-byte; missing sources remain absent. `aip update` migrates legacy links; until then a valid legacy link is tolerated with a warning (foreign or malformed links still fail validation).
-- Each profile also owns its `pi/settings.json` (model, theme, and the
-  `packages` extension list) as tracked content: `aip create` seeds it from
-  the machine-wide pi settings, so the profile's model and extension set
-  travel with the repository. The extensions themselves are machine-local:
-  every profile passes through the machine-wide `~/.pi/agent/npm` install,
-  and pi installs whatever `packages` declares on the next launch. Never put
-  secrets in `pi/settings.json` — credentials live in `auth.json` and
-  environment variables by design.
+- Each profile owns portable primary configuration: `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`. Existing global sources copy byte-for-byte; missing sources remain absent. These copies remain untracked until the user explicitly approves a `git add` after review. `aip update` migrates legacy links locally; until then a valid legacy link is tolerated with a warning (foreign or malformed links still fail validation).
 - If the remote is unreachable, aip warns and continues with the committed
   local profile. If the remote and local changed the same path, aip
   **blocks** the launch or sync and picks no side — read `conflicts.md`.
@@ -55,17 +47,11 @@ Reference files live next to this SKILL.md — read them when directed:
   per-directory marker (`aip local`), the
   machine default (`aip default`), else no profile. A running session is
   locked to the profile it launched with.
-- `aip update` stages any profile-owned `pi/settings.json` that pre-v0.7
-  profiles still carry untracked; the next checkpoint commits it. `aip
-  doctor` names it until then.
 - `aip skills add`/`update`/`remove` and `aip import` commit nothing directly. Skill files are
   committed by the next checkpoint (the shared `skills/` tree is
   checkpoint-owned). Imported harness-native files (settings, config) stay
   untracked until someone deliberately `git add`s and commits them — do not
-  tell the user such a file is shared until it is tracked. Exception:
-  `pi/settings.json` is tracked profile content by design — `aip create`
-  seeds and tracks it, `aip update` stages any legacy copy, and the next
-  checkpoint commits it.
+  tell the user such a file is shared until it is tracked.
 - aip refuses to sync a fixed denylist of credential and runtime paths, for
   example: `.env`/`.env.*` files (`.env.example` allowed), private keys
   (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`-style),
@@ -90,9 +76,10 @@ Reference files live next to this SKILL.md — read them when directed:
   machine, decide with the user what is worth importing or copying, find the
   exact skill path inside a repository, and apply conflict resolutions the
   user has approved.
-- **Editing content:** `AGENTS.md`, `skills/`, the per-harness
-  instruction files, and `pi/settings.json` are tracked files — edit them
-  directly with your file tools; the next checkpoint commits the change.
+- **Editing content:** `AGENTS.md`, `skills/`, and the per-harness
+  instruction files are tracked files — edit them directly with your file
+  tools; the next checkpoint commits the change. Primary configs stay local
+  until the user explicitly reviews and tracks them.
   For the `packages` array prefer `aip sync-packages` (bulk sync, `--add`,
   `--remove`); a change takes effect on the next harness launch, and
   `pi list` shows the result. aip validates layout on

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Portable primary configs.** New profiles now own and track `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`, copying an existing global source byte-for-byte and leaving missing sources absent. `aip update` migrates valid legacy links without committing. Credentials and runtime state remain excluded.
+- **Portable primary configs.** New profiles now own untracked local copies of `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`, copying an existing global source byte-for-byte and leaving missing sources absent. `aip update` migrates valid legacy links without adding the replacement; inspect and explicitly add a config only when it is safe to share. Credentials and runtime state remain excluded.
 
 ## 0.8.0 — 2026-08-25
 
