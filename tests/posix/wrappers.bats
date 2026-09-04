@@ -48,6 +48,24 @@ setup() {
   [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
 }
 
+@test "Pi loads the bundled profile status extension alongside user extensions" {
+  local runtime_root
+  runtime_root=$(CDPATH='' cd -- "$BATS_TEST_DIRNAME/../.." && pwd -P)
+  export AIP_ACTIVE_PROFILE='original value'
+
+  pi --extension /user/other-extension.ts prompt >/dev/null
+
+  grep -Fx "AIP_ACTIVE_PROFILE=work" "$FAKE_CAPTURE"
+  expected=$(printf '%s\n' \
+    "arg=--extension" \
+    "arg=$runtime_root/extensions/aip-status.ts" \
+    'arg=--extension' \
+    'arg=/user/other-extension.ts' \
+    'arg=prompt')
+  [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
+  [ "$AIP_ACTIVE_PROFILE" = 'original value' ]
+}
+
 @test "Codex instructions are always encoded as one TOML string value" {
   printf 'true\nQuoted "text" and a backslash \\ — café\nsecond line\n' >"$_AIP_PROFILE_ROOT/work/codex/instructions.md"
 

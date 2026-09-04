@@ -13,6 +13,7 @@ setup() {
   run bash "$BATS_TEST_DIRNAME/../../install.sh"
   [ "$status" -eq 0 ]
   [ -f "$_AIP_INSTALL_ROOT/aip.sh" ]
+  [ -f "$_AIP_INSTALL_ROOT/extensions/aip-status.ts" ]
   grep -F 'export KEEP_THIS=yes' "$_AIP_SHELL_PROFILE"
   [ "$(grep -c '^# >>> aip >>>$' "$_AIP_SHELL_PROFILE")" -eq 1 ]
 
@@ -62,6 +63,8 @@ setup() {
   # source_file points at a bumped aip.sh.
   local bumped="$BATS_TEST_TMPDIR/newer.sh"
   local wrapper="$BATS_TEST_TMPDIR/inst.sh"
+  mkdir -p "$BATS_TEST_TMPDIR/extensions"
+  cp "$BATS_TEST_DIRNAME/../../extensions/aip-status.ts" "$BATS_TEST_TMPDIR/extensions/aip-status.ts"
   sed "s/^_AIP_VERSION='$current'$/_AIP_VERSION='$newer'/" "$BATS_TEST_DIRNAME/../../aip.sh" >"$bumped"
   sed "s|^source_file=.*$|source_file=$bumped|" "$BATS_TEST_DIRNAME/../../install.sh" >"$wrapper"
   chmod +x "$wrapper"

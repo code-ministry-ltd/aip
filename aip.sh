@@ -2,6 +2,17 @@
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
 _AIP_VERSION='0.8.0'
+if [ -z "${_AIP_RUNTIME_ROOT-}" ]; then
+  if [ -n "${BASH_VERSION-}" ]; then
+    _AIP_RUNTIME_SOURCE=${BASH_SOURCE[0]}
+  elif [ -n "${ZSH_VERSION-}" ]; then
+    _AIP_RUNTIME_SOURCE=$(eval 'printf %s "${(%):-%x}"')
+  else
+    _AIP_RUNTIME_SOURCE=$0
+  fi
+  _AIP_RUNTIME_ROOT=$(CDPATH='' cd -- "$(dirname -- "$_AIP_RUNTIME_SOURCE")" && pwd -P)
+fi
+: "${_AIP_STATUS_EXTENSION:=$_AIP_RUNTIME_ROOT/extensions/aip-status.ts}"
 
 _aip_error() {
   printf 'aip: %s\n' "$*" >&2
@@ -3162,8 +3173,14 @@ _aip_run_harness() (
       ;;
     pi)
       PI_CODING_AGENT_DIR=$profile_path/pi
-      export PI_CODING_AGENT_DIR
-      if "$real" "$@"; then child_status=0; else child_status=$?; fi
+      AIP_ACTIVE_PROFILE=$_AIP_RESOLVED_NAME
+      export PI_CODING_AGENT_DIR AIP_ACTIVE_PROFILE
+      if [ -f "$_AIP_STATUS_EXTENSION" ]; then
+        if "$real" --extension "$_AIP_STATUS_EXTENSION" "$@"; then child_status=0; else child_status=$?; fi
+      else
+        _aip_warn "bundled Pi status extension was not found: $_AIP_STATUS_EXTENSION"
+        if "$real" "$@"; then child_status=0; else child_status=$?; fi
+      fi
       ;;
     opencode)
       OPENCODE_CONFIG_DIR=$profile_path/opencode

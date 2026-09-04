@@ -28,6 +28,8 @@ else
 fi
 
 installed_file=$install_root/aip.sh
+extension_source=$script_directory/extensions/aip-status.ts
+installed_extension=$install_root/extensions/aip-status.ts
 package_version=$(sed -n "s/^_AIP_VERSION='\(.*\)'$/\1/p" "$source_file" | head -n 1)
 [ -n "$package_version" ] || { printf 'aip: cannot read the package version from %s\n' "$source_file" >&2; exit 1; }
 previous_version=''
@@ -37,9 +39,11 @@ fi
 printf 'aip will install: %s\n' "$installed_file"
 printf 'aip will update:  %s\n' "$shell_profile"
 
-mkdir -p "$install_root" "$(dirname -- "$shell_profile")"
+mkdir -p "$install_root/extensions" "$(dirname -- "$shell_profile")"
 cp "$source_file" "$installed_file"
+cp "$extension_source" "$installed_extension"
 chmod 0644 "$installed_file"
+chmod 0644 "$installed_extension"
 touch "$shell_profile"
 
 escaped_source=${installed_file//\'/\'\\\'\'}

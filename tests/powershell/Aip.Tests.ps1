@@ -19,6 +19,7 @@ param(
     "CODEX_HOME=$(if ($null -eq $env:CODEX_HOME) { '<unset>' } else { $env:CODEX_HOME })"
     "PI_CODING_AGENT_DIR=$(if ($null -eq $env:PI_CODING_AGENT_DIR) { '<unset>' } else { $env:PI_CODING_AGENT_DIR })"
     "OPENCODE_CONFIG_DIR=$(if ($null -eq $env:OPENCODE_CONFIG_DIR) { '<unset>' } else { $env:OPENCODE_CONFIG_DIR })"
+    "AIP_ACTIVE_PROFILE=$(if ($null -eq $env:AIP_ACTIVE_PROFILE) { '<unset>' } else { $env:AIP_ACTIVE_PROFILE })"
     foreach ($value in $Remaining) { "arg=$value" }
 ) | Set-Content -LiteralPath $env:FAKE_CAPTURE -Encoding utf8NoBOM
 exit [int]$env:FAKE_EXIT_STATUS
@@ -39,6 +40,7 @@ printf 'CLAUDE_CONFIG_DIR=%s\n' "${CLAUDE_CONFIG_DIR-<unset>}" >> "$capture"
 printf 'CODEX_HOME=%s\n' "${CODEX_HOME-<unset>}" >> "$capture"
 printf 'PI_CODING_AGENT_DIR=%s\n' "${PI_CODING_AGENT_DIR-<unset>}" >> "$capture"
 printf 'OPENCODE_CONFIG_DIR=%s\n' "${OPENCODE_CONFIG_DIR-<unset>}" >> "$capture"
+printf 'AIP_ACTIVE_PROFILE=%s\n' "${AIP_ACTIVE_PROFILE-<unset>}" >> "$capture"
 printf 'arg=%s\n' "$@" >> "$capture"
 exit "${FAKE_EXIT_STATUS:-0}"
 '@ | Set-Content -LiteralPath $path -Encoding utf8NoBOM
@@ -81,6 +83,7 @@ BeforeEach {
     $env:CODEX_HOME = $null
     $env:PI_CODING_AGENT_DIR = $null
     $env:OPENCODE_CONFIG_DIR = $null
+    $env:AIP_ACTIVE_PROFILE = $null
     $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'gitconfig'
     $env:GIT_CONFIG_NOSYSTEM = '1'
     if (Test-Path -LiteralPath $script:AipProfileRoot) { Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force }
@@ -107,6 +110,7 @@ AfterEach {
     $env:FAKE_EXIT_STATUS = $null
     $env:GIT_CONFIG_GLOBAL = $null
     $env:GIT_CONFIG_NOSYSTEM = $null
+    $env:AIP_ACTIVE_PROFILE = $null
 }
 
 It 'reports the embedded version and rejects extra arguments' {
@@ -541,6 +545,9 @@ Describe 'harness wrappers' {
                 $testArguments = @($testArguments | Where-Object { $_ -ne '%PATH%' })
                 $expectedArguments = @($expectedArguments | Where-Object { $_ -ne 'arg=%PATH%' })
             }
+            if ($harness -eq 'pi') {
+                $expectedArguments = @('arg=--extension', "arg=$(Join-Path $script:RepositoryRoot 'extensions/aip-status.ts')") + $expectedArguments
+            }
             & $harness @testArguments *> $null
             $global:LASTEXITCODE | Should -Be 0
             $capture = Get-Content $script:FakeCapture -Raw
@@ -555,6 +562,23 @@ Describe 'harness wrappers' {
             if ($harness -eq 'codex') { $capturedArguments = @($capturedArguments | Select-Object -Skip 2) }
             $capturedArguments | Should -Be $expectedArguments
         }
+    }
+
+    It 'loads the bundled Pi profile status extension alongside user extensions' {
+        $env:AIP_ACTIVE_PROFILE = 'original value'
+
+        pi --extension '/user/other-extension.ts' prompt *> $null
+
+        $capture = Get-Content $script:FakeCapture
+        $capture | Should -Contain 'AIP_ACTIVE_PROFILE=work'
+        @($capture | Where-Object { $_ -like 'arg=*' }) | Should -Be @(
+            'arg=--extension'
+            "arg=$(Join-Path $script:RepositoryRoot 'extensions/aip-status.ts')"
+            'arg=--extension'
+            'arg=/user/other-extension.ts'
+            'arg=prompt'
+        )
+        $env:AIP_ACTIVE_PROFILE | Should -Be 'original value'
     }
 
     It 'disambiguates an explicit profile whose name is also a harness' {
@@ -2272,6 +2296,7 @@ Describe 'installer' {
             & (Join-Path $script:RepositoryRoot 'install.ps1') *> $null
             $LASTEXITCODE | Should -Be 0
             Test-Path (Join-Path $installRoot 'aip.ps1') | Should -BeTrue
+            Test-Path (Join-Path $installRoot 'extensions/aip-status.ts') | Should -BeTrue
             $content = Get-Content -LiteralPath $profilePath -Raw
             $content | Should -Match 'Set-Variable KeepThis yes'
             @($content -split '\r?\n' | Where-Object { $_ -eq '# >>> aip >>>' }).Count | Should -Be 1
@@ -2304,9 +2329,11 @@ Describe 'installer' {
 
         $pkgCopy = Join-Path $TestDrive 'pkg'
         New-Item -ItemType Directory -Path $pkgCopy | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $pkgCopy 'extensions') | Out-Null
         $aipCopy = Join-Path $pkgCopy 'aip.ps1'
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'aip.ps1') -Destination $aipCopy
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'install.ps1') -Destination (Join-Path $pkgCopy 'install.ps1')
+        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'extensions/aip-status.ts') -Destination (Join-Path $pkgCopy 'extensions/aip-status.ts')
         $pattern = [regex]::Escape("`$script:AipVersion = '$current'")
         $replacement = "`$script:AipVersion = '$newer'"
         $content = (Get-Content -LiteralPath $aipCopy -Raw) -replace $pattern, $replacement

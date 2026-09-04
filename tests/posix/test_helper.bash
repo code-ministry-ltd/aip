@@ -9,7 +9,7 @@ setup_aip_test() {
   export AIP_SOURCE="$BATS_TEST_DIRNAME/../../aip.sh"
   # A host session (e.g. running the suite from inside an agent) may export
   # harness selector variables; unset them so wrapper assertions stay hermetic.
-  unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR OPENCODE_CONFIG_DIR AIP_PROFILE
+  unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR OPENCODE_CONFIG_DIR AIP_PROFILE AIP_ACTIVE_PROFILE
   mkdir -p "$HOME" "$_AIP_PROFILE_ROOT" "$FAKE_BIN"
   git config --global user.name "Aip Tests"
   git config --global user.email "aip@example.test"
@@ -39,6 +39,7 @@ make_fake_harness() {
     printf '%s\n' 'printf "CODEX_HOME=%s\n" "${CODEX_HOME-<unset>}" >> "$capture"'
     printf '%s\n' 'printf "PI_CODING_AGENT_DIR=%s\n" "${PI_CODING_AGENT_DIR-<unset>}" >> "$capture"'
     printf '%s\n' 'printf "OPENCODE_CONFIG_DIR=%s\n" "${OPENCODE_CONFIG_DIR-<unset>}" >> "$capture"'
+    printf '%s\n' 'printf "AIP_ACTIVE_PROFILE=%s\n" "${AIP_ACTIVE_PROFILE-<unset>}" >> "$capture"'
     printf '%s\n' 'printf "arg=%s\n" "$@" >> "$capture"'
     printf '%s\n' 'exit "${FAKE_EXIT_STATUS:-0}"'
   } >"$FAKE_BIN/$name"

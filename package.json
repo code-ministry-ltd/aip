@@ -14,6 +14,7 @@
     "aip.ps1",
     "install.sh",
     "install.ps1",
+    "extensions",
     "README.md",
     "CHANGELOG.md",
     "skills/aip"
@@ -22,10 +23,15 @@
     "node": ">=18"
   },
   "scripts": {
-    "test:posix": "bats tests/posix"
+    "test:posix": "bats tests/posix",
+    "test:extension": "tsc --noEmit && node tests/extensions/aip-status.smoke.mjs"
   },
   "devDependencies": {
-    "bats": "1.13.0"
+    "@earendil-works/pi-coding-agent": "^0.85.0",
+    "@types/node": "^26.4.1",
+    "bats": "1.13.0",
+    "jiti": "^2.7.0",
+    "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public"
