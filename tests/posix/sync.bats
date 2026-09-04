@@ -466,6 +466,34 @@ make_upstream() {
   [[ "$output" == *'alpha/codex/skills should link to ../skills'*'zeta/codex/skills should link to ../skills'* ]]
 }
 
+@test "doctor repair stages required, pass-through, and unsupported link fixes" {
+  local actions external
+  create_profile personal
+  mkdir -p "$HOME/.claude/commands"
+  rm "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/personal/claude/commands"
+  git -C "$_AIP_PROFILE_ROOT" add -f personal/claude/commands
+  external="$BATS_TEST_TMPDIR/external-link-target"
+  printf 'unchanged\n' >"$external"
+  ln -s "$external" "$_AIP_PROFILE_ROOT/work/pi/evil.json"
+  actions=$(mktemp)
+  printf 'required\twork\tcodex/skills\t../skills\n' >"$actions"
+  printf 'untrack\tpersonal\tclaude/commands\t\n' >>"$actions"
+  printf 'remove\twork\tpi/evil.json\t\n' >>"$actions"
+
+  run _aip_doctor_apply_actions "$_AIP_PROFILE_ROOT" "$actions"
+
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = ../skills ]
+  [ -L "$_AIP_PROFILE_ROOT/personal/claude/commands" ]
+  grep -Fx 'claude/commands' "$_AIP_PROFILE_ROOT/personal/.gitignore"
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- personal/claude/commands)" ]
+  [ ! -e "$_AIP_PROFILE_ROOT/work/pi/evil.json" ]
+  [ "$(cat "$external")" = unchanged ]
+  rm -f "$actions"
+}
+
 @test "a no-op sync does not create another commit" {
   local before
   before=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)

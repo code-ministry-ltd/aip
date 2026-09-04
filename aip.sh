@@ -446,6 +446,7 @@ _aip_doctor_check_live_profile_links() {
         _aip_warn "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
       else
         printf 'ERROR: profile contains an unsupported symbolic link that could escape its boundary: %s/%s\n' "$name" "$relative"
+        _aip_doctor_record_action remove "$name" "$relative" ''
         errors=1
       fi
     fi
@@ -1889,6 +1890,9 @@ _aip_doctor_profile_layout() {
     if [ ! -L "$profile_path/$link" ] || [ "$(command readlink "$profile_path/$link" 2>/dev/null)" != "$expected" ]; then
       printf 'ERROR: %s/%s should link to %s\n' "$name" "$link" "$expected"
       printf "FIX: ln -sfn '%s' '%s/%s'\n" "$expected" "$profile_path" "$link"
+      if [ ! -e "$profile_path/$link" ] || [ -L "$profile_path/$link" ]; then
+        _aip_doctor_record_action required "$name" "$link" "$expected"
+      fi
       errors=1
     fi
   done
@@ -1917,6 +1921,8 @@ _aip_doctor() (
   if [ "$#" -eq 1 ]; then _aip_resolve_doctor_profile "$1" || return
   else _aip_resolve_doctor_profile || return
   fi
+  _AIP_DOCTOR_ACTIONS=$(command mktemp "${TMPDIR:-/tmp}/aip-doctor-actions.XXXXXX") || return 1
+  trap 'command rm -f "${_AIP_DOCTOR_ACTIONS-}"' EXIT
   local root=$_AIP_PROFILE_ROOT profile_path profile_dir name checked='' errors=0 git_available=1 repo_readable=1 repo_ok=1 harness branch configured_remote configured_merge
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
   if [ -L "$profile_path" ]; then
@@ -1995,6 +2001,28 @@ _aip_doctor() (
        [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
       printf "ERROR: Git conflict or unfinished operation; run 'git -C \"%s\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'\n" "$root"
       errors=1
+    fi
+  fi
+  if [ -s "$_AIP_DOCTOR_ACTIONS" ]; then
+    if [ -t 0 ]; then
+      while :; do
+        printf 'Repair these link issues? [Y/n] '
+        IFS= read -r answer || answer=n
+        case $answer in
+          ''|y|Y|yes|YES|Yes)
+            if _aip_doctor_apply_actions "$root" "$_AIP_DOCTOR_ACTIONS"; then
+              printf 'Repaired link issues; changes are staged for the next normal sync.\n'
+            else
+              errors=1
+            fi
+            break
+            ;;
+          n|N|no|NO|No) printf 'Link repair declined.\n'; break ;;
+          *) printf 'Please enter y/yes or n/no.\n' ;;
+        esac
+      done
+    else
+      printf 'ERROR: link issues need repair; rerun aip doctor from a terminal to confirm.\n'
     fi
   fi
   if [ -d "$root/.git/aip-sync.lock" ]; then
@@ -2715,6 +2743,15 @@ _aip_doctor_check_tracked_links() {
     relative=${record#*$'\t'}
     if ! expected=$(_aip_required_link_target "$relative"); then
       printf 'ERROR: tracked profile contains an unsupported symbolic link: %s\n' "$relative"
+      case $relative in
+        */*)
+          if _aip_is_passthrough_link "${relative#*/}" "$root/${relative%%/*}"; then
+            _aip_doctor_record_action untrack "${relative%%/*}" "${relative#*/}" ''
+          else
+            _aip_doctor_record_action remove "${relative%%/*}" "${relative#*/}" ''
+          fi
+          ;;
+      esac
       errors=1
       continue
     fi
@@ -2727,10 +2764,64 @@ _aip_doctor_check_tracked_links() {
     fi
     if [ "$target" != "$expected" ]; then
       printf 'ERROR: tracked profile link has an unexpected target: %s\n' "$relative"
+      _aip_doctor_record_action required "${relative%%/*}" "${relative#*/}" "$expected"
       errors=1
     fi
   done <"$entries"
   command rm -f "$entries"
+  [ "$errors" -eq 0 ]
+}
+
+_aip_doctor_record_action() {
+  # $1 kind, $2 profile name, $3 profile-relative path, $4 expected target.
+  local kind=$1 name=$2 rel=$3 target=$4 line
+  [ -n "${_AIP_DOCTOR_ACTIONS-}" ] || return 0
+  line=$(printf '%s\t%s\t%s\t%s' "$kind" "$name" "$rel" "$target")
+  command grep -Fqx "$line" "$_AIP_DOCTOR_ACTIONS" 2>/dev/null || printf '%s\n' "$line" >>"$_AIP_DOCTOR_ACTIONS"
+}
+
+_aip_doctor_restore_passthrough_ignore() {
+  local profile=$1 rel=$2 current entries entry found=0
+  current=$(_aip_gitignore_passthrough_entries "$profile/.gitignore")
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-passthrough-entries.XXXXXX") || return 1
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    [ "$entry" = "$rel" ] && found=1
+    printf '%s\n' "$entry" >>"$entries"
+  done <<EOF
+$current
+EOF
+  [ "$found" -eq 1 ] || printf '%s\n' "$rel" >>"$entries"
+  LC_ALL=C command sort -u "$entries" >"$entries.sorted" && command mv "$entries.sorted" "$entries" || { command rm -f "$entries" "$entries.sorted"; return 1; }
+  _aip_gitignore_set_passthrough_block "$profile/.gitignore" "$entries" || { command rm -f "$entries"; return 1; }
+  command rm -f "$entries"
+}
+
+_aip_doctor_apply_actions() {
+  local root=$1 actions=$2 kind name rel target profile path errors=0
+  while IFS="$(printf '\t')" read -r kind name rel target; do
+    [ -n "$kind" ] || continue
+    profile=$root/$name
+    path=$profile/$rel
+    { [ -d "$profile" ] && [ ! -L "$profile" ] && _aip_path_is_under "$root" "$path"; } || { printf 'ERROR: refusing doctor repair outside a profile: %s/%s\n' "$name" "$rel"; errors=1; continue; }
+    case $kind in
+      required)
+        if [ -e "$path" ] && [ ! -L "$path" ]; then
+          printf 'ERROR: doctor will not replace ordinary path: %s/%s\n' "$name" "$rel"
+          errors=1
+        else
+          command rm -f "$path" && command ln -s "$target" "$path" && _aip_git -C "$root" add -- "$name/$rel" || { printf 'ERROR: could not restore required link: %s/%s\n' "$name" "$rel"; errors=1; }
+        fi
+        ;;
+      untrack)
+        _aip_doctor_restore_passthrough_ignore "$profile" "$rel" && _aip_git -C "$root" rm --cached -q -- "$name/$rel" || { printf 'ERROR: could not untrack pass-through link: %s/%s\n' "$name" "$rel"; errors=1; }
+        ;;
+      remove)
+        if [ -L "$path" ]; then command rm -f "$path" || { printf 'ERROR: could not remove unsupported link: %s/%s\n' "$name" "$rel"; errors=1; continue; }; fi
+        _aip_git -C "$root" update-index --force-remove -- "$name/$rel" || { printf 'ERROR: could not stage removed link: %s/%s\n' "$name" "$rel"; errors=1; }
+        ;;
+    esac
+  done <"$actions"
   [ "$errors" -eq 0 ]
 }
 
