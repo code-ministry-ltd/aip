@@ -56,14 +56,14 @@ PowerShell. It must report the same logical findings and ordering as POSIX,
 including the index-only defect that PowerShell currently stops on at first
 failure, without changing its existing sync gate.
 
-- [ ] Pester proves multiple live/index link findings across multiple profiles
+- [x] Pester proves multiple live/index link findings across multiple profiles
   are all shown before an interaction is attempted.
-- [ ] Required-link mismatch, tracked pass-through, and unsupported reparse
+- [x] Required-link mismatch, tracked pass-through, and unsupported reparse
   point are classified equivalently to POSIX; valid pass-through and
   `node_modules` links remain clean.
-- [ ] The implementation uses structured finding records rather than parsing
+- [x] The implementation uses structured finding records rather than parsing
   formatted doctor output.
-- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` · **Passed (269 tests)**
 - Deps: T21 (behavioral contract) · Files: `aip.ps1`,
   `tests/powershell/Aip.Tests.ps1` · Size: M
 
@@ -73,14 +73,14 @@ Implement the default-yes single prompt and all three repair classifications
 with PowerShell’s reparse-point and Git primitives. Stage and revalidate the
 final state only; never commit, sync, or dereference an external target.
 
-- [ ] Enter/`y`/`yes` accepts, `n`/`no` declines unchanged, malformed answers
+- [x] Enter/`y`/`yes` accepts, `n`/`no` declines unchanged, malformed answers
   reprompt, and redirected input remains non-mutating and non-zero.
-- [ ] Required managed links are restored exactly; a tracked valid
+- [x] Required managed links are restored exactly; a tracked valid
   pass-through link stays live but is removed from the index and ignored; an
   unsupported link is removed without modifying its target.
-- [ ] Pester verifies the repaired profile passes the existing pre-launch
+- [x] Pester verifies the repaired profile passes the existing pre-launch
   sync validation and leaves a staged (not committed) repair.
-- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` · **Passed (269 tests)**
 - Deps: T22, T23 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
 
 *Checkpoint 2: POSIX and PowerShell have matching findings, prompt answers,

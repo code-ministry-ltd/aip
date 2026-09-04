@@ -16,6 +16,7 @@ $script:AipCreateSkillsTreeRoot = $null
 $script:AipCreateSkillsGlobalRoot = $null
 $script:AipCreateSkillsAgentsRoot = $null
 $script:AipCreateSkipSkillSelection = $false
+$script:AipDoctorForceInteractive = $false
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -1015,6 +1016,198 @@ function Resolve-AipDoctorProfile {
     return [pscustomobject]@{ Name = $name; Path = $path }
 }
 
+function Get-AipDoctorProfileName {
+    # Include malformed profile directories so doctor can report missing layout
+    # markers and unsafe links which normal profile discovery deliberately hides.
+    $root = Get-Item -LiteralPath $script:AipProfileRoot -Force -ErrorAction SilentlyContinue
+    if ($null -eq $root -or -not $root.PSIsContainer) { return @() }
+    return @(Get-ChildItem -LiteralPath $root.FullName -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.PSIsContainer -and $null -eq $_.LinkType -and
+        -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -and
+        (Test-AipProfileName $_.Name)
+    } | Sort-Object Name | ForEach-Object { $_.Name })
+}
+
+function Get-AipDoctorLinkFinding {
+    param([Parameter(Mandatory)][string]$Root)
+    $required = [ordered]@{
+        'claude/skills' = '../skills'; 'codex/AGENTS.md' = '../AGENTS.md'
+        'codex/skills' = '../skills'; 'pi/AGENTS.md' = '../AGENTS.md'
+        'pi/skills' = '../skills'; 'opencode/AGENTS.md' = '../AGENTS.md'
+        'opencode/skills' = '../skills'
+    }
+    $found = [ordered]@{}
+    function Add-LinkFinding([string]$Kind, [string]$Name, [string]$Relative, [string]$Expected, [string]$Message) {
+        $key = "$Kind`0$Name`0$Relative"
+        if (-not $found.Contains($key)) {
+            $found[$key] = [pscustomobject]@{ Kind = $Kind; Name = $Name; Relative = $Relative; Expected = $Expected; Message = $Message }
+        }
+    }
+
+    foreach ($name in @(Get-AipDoctorProfileName)) {
+        $profile = Join-Path $Root $name
+        foreach ($pair in $required.GetEnumerator()) {
+            $path = Join-Path $profile $pair.Key
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            $target = if ($null -ne $item) { ([string]$item.Target).Replace('\', '/') } else { '' }
+            if ($null -eq $item -or $item.LinkType -ne 'SymbolicLink' -or $target -cne $pair.Value) {
+                if ($null -eq $item -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                    Add-LinkFinding required $name $pair.Key $pair.Value "$name/$($pair.Key) should link to $($pair.Value)"
+                }
+            }
+        }
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($profile)
+        while ($pending.Count) {
+            $directory = $pending.Pop()
+            foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue)) {
+                $relative = [IO.Path]::GetRelativePath($profile, $item.FullName).Replace('\', '/')
+                if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*') { continue }
+                    if ($required.Contains($relative)) { continue }
+                    if ($item.LinkType -eq 'SymbolicLink' -and ((Test-AipPassthroughLink $relative $profile) -or (Test-AipLegacyPrimaryConfigLink $relative $profile))) { continue }
+                    Add-LinkFinding remove $name $relative '' "profile contains an unsupported symbolic link, junction, or mount: $name/$relative"
+                    continue
+                }
+                if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+            }
+        }
+    }
+
+    foreach ($entry in @(Invoke-AipGit -C $Root ls-files --stage)) {
+        if ([string]$entry -notmatch '^120000 ([0-9a-f]+) \d+\t(.+)$') { continue }
+        $hash = [string]$Matches[1]
+        $relative = ([string]$Matches[2]).Replace('\', '/')
+        if ($relative -notmatch '^([^/]+)/(.+)$') { continue }
+        $name = [string]$Matches[1]
+        $profileRelative = [string]$Matches[2]
+        $profile = Join-Path $Root $name
+        $expected = Get-AipRequiredLinkTarget $relative
+        if ($null -ne $expected) {
+            $target = ((Invoke-AipGit -C $Root cat-file blob $hash 2>$null) -join "`n")
+            if ($target -cne $expected) { Add-LinkFinding required $name $profileRelative $expected "tracked profile link has an unexpected target: $relative" }
+        }
+        elseif (Test-AipPassthroughLink $profileRelative $profile) {
+            Add-LinkFinding untrack $name $profileRelative '' "tracked profile contains a pass-through symbolic link: $relative"
+        }
+        else {
+            Add-LinkFinding remove $name $profileRelative '' "tracked profile contains an unsupported symbolic link: $relative"
+        }
+    }
+    return @($found.Values | Sort-Object Name, Relative, Kind)
+}
+
+function Invoke-AipDoctorLinkRepair {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][object[]]$Findings)
+    $valid = $true
+    foreach ($finding in $Findings) {
+        if ($finding.Kind -notin @('required', 'untrack', 'remove') -or
+            -not (Test-AipProfileName ([string]$finding.Name)) -or
+            [string]::IsNullOrWhiteSpace([string]$finding.Relative)) {
+            Write-Output "ERROR: refusing invalid doctor repair action"
+            $valid = $false
+            continue
+        }
+        $profile = Join-Path $Root $finding.Name
+        $path = Join-Path $profile $finding.Relative
+        $profileItem = Get-Item -LiteralPath $profile -Force -ErrorAction SilentlyContinue
+        if ($null -eq $profileItem -or -not $profileItem.PSIsContainer -or $profileItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint) -or
+            -not (Test-AipPathUnder $Root $profile) -or -not (Test-AipPathUnder $profile $path)) {
+            Write-Output "ERROR: refusing doctor repair outside a profile: $($finding.Name)/$($finding.Relative)"
+            $valid = $false
+            continue
+        }
+        if ($finding.Kind -eq 'required') {
+            $repoRelative = "$($finding.Name)/$($finding.Relative)"
+            if ((Get-AipRequiredLinkTarget $repoRelative) -cne [string]$finding.Expected) {
+                Write-Output "ERROR: refusing non-canonical required link repair: $repoRelative"
+                $valid = $false
+                continue
+            }
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            if ($null -ne $item -and -not $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                Write-Output "ERROR: refusing to replace an ordinary path: $repoRelative"
+                $valid = $false
+            }
+            $parent = Split-Path -Parent $path
+            while ((Test-AipPathUnder $profile $parent) -and $parent -ne $profile) {
+                $parentItem = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+                if ($null -ne $parentItem) {
+                    if (-not $parentItem.PSIsContainer -or $parentItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+                        $parentRelative = [IO.Path]::GetRelativePath($profile, $parent).Replace('\', '/')
+                        $plannedRemoval = @($Findings | Where-Object { $_.Kind -eq 'remove' -and $_.Name -eq $finding.Name -and $_.Relative -eq $parentRelative }).Count -gt 0
+                        if (-not $plannedRemoval) {
+                            Write-Output "ERROR: refusing required link repair through an unsafe parent: $($finding.Name)/$parentRelative"
+                            $valid = $false
+                        }
+                    }
+                    break
+                }
+                $parent = Split-Path -Parent $parent
+            }
+        }
+        elseif ($finding.Kind -eq 'untrack') {
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+            if ($null -eq $item -or $item.LinkType -ne 'SymbolicLink' -or -not (Test-AipPassthroughLink $finding.Relative $profile)) {
+                Write-Output "ERROR: refusing to untrack an invalid pass-through link: $($finding.Name)/$($finding.Relative)"
+                $valid = $false
+            }
+        }
+    }
+    if (-not $valid) { return $false }
+
+    $orderedFindings = @($Findings | Sort-Object @{ Expression = { switch ($_.Kind) { 'remove' { 0 }; 'untrack' { 1 }; default { 2 } } } }, Name, Relative)
+    foreach ($finding in $orderedFindings) {
+        $profile = Join-Path $Root $finding.Name
+        $path = Join-Path $profile $finding.Relative
+        try {
+            switch ($finding.Kind) {
+                'required' {
+                    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                    if ($null -ne $item) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+                    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force -ErrorAction Stop | Out-Null
+                    New-Item -ItemType SymbolicLink -Path $path -Target $finding.Expected -ErrorAction Stop | Out-Null
+                    Invoke-AipGit -C $Root add -- "$($finding.Name)/$($finding.Relative)" *> $null
+                    if ($LASTEXITCODE -ne 0) { throw 'could not stage required link' }
+                }
+                'untrack' {
+                    $gitignore = Join-Path $profile '.gitignore'
+                    $entries = @(@(Get-AipPassthroughGitIgnoreEntry $gitignore) + @($finding.Relative) | Sort-Object -Unique)
+                    Set-AipPassthroughGitIgnoreBlock $gitignore $entries
+                    Invoke-AipGit -C $Root rm --cached -q -- "$($finding.Name)/$($finding.Relative)" *> $null
+                    if ($LASTEXITCODE -ne 0) { throw 'could not untrack pass-through link' }
+                    Invoke-AipGit -C $Root add -- "$($finding.Name)/.gitignore" *> $null
+                    if ($LASTEXITCODE -ne 0) { throw 'could not stage pass-through ignore rule' }
+                }
+                'remove' {
+                    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                    if ($null -ne $item -and $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+                    Invoke-AipGit -C $Root update-index --force-remove -- "$($finding.Name)/$($finding.Relative)" *> $null
+                    if ($LASTEXITCODE -ne 0) { throw 'could not stage removed link' }
+                }
+            }
+        }
+        catch {
+            Write-Output "ERROR: could not repair $($finding.Name)/$($finding.Relative): $($_.Exception.Message)"
+            $valid = $false
+        }
+    }
+    return $valid
+}
+
+function Read-AipDoctorRepairDecision {
+    if ([Console]::IsInputRedirected -and -not $script:AipDoctorForceInteractive) { return 'noninteractive' }
+    while ($true) {
+        try { $answer = Read-Host 'Repair these link issues? [Y/n]' }
+        catch { return 'noninteractive' }
+        switch -Regex ($answer) {
+            '^(?i:y|yes)?$' { return 'accept' }
+            '^(?i:n|no)$' { return 'decline' }
+            default { Write-Output 'Please enter y/yes or n/no.' }
+        }
+    }
+}
+
 function Invoke-AipDoctor {
     param([object[]]$Arguments)
     if ($Arguments.Count -gt 1) { Write-AipError 'usage: aip doctor [NAME]'; $script:AipCommandStatus = 2; return }
@@ -1023,6 +1216,7 @@ function Invoke-AipDoctor {
     if ($null -eq $profile) { return }
     $errors = 0
     $repoOk = $true
+    $linkFindings = @()
     $profileItem = Get-Item -LiteralPath $profile.Path -Force
     $safeProfile = $profileItem.PSIsContainer -and -not $profileItem.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
     if (-not $safeProfile) { Write-Output 'ERROR: profile path must be an ordinary directory'; $errors++ }
@@ -1078,9 +1272,12 @@ function Invoke-AipDoctor {
                 }
             }
         }
+        $linkFindings = @(Get-AipDoctorLinkFinding $script:AipProfileRoot)
+        foreach ($finding in $linkFindings) { Write-Output "ERROR: $($finding.Message)" }
+        if ($linkFindings.Count) { $errors++ }
     }
 
-    foreach ($name in (@(Get-AipProfileNames) + @($profile.Name)) | Where-Object { $_ } | Select-Object -Unique) {
+    foreach ($name in (@(Get-AipDoctorProfileName) + @($profile.Name)) | Where-Object { $_ } | Sort-Object -Unique) {
         $profilePath = Get-AipProfilePath $name
         $item = Get-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
         if ($null -eq $item -or -not $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { continue }
@@ -1094,7 +1291,7 @@ function Invoke-AipDoctor {
     }
 
     if ($gitAvailable -and $repoReadable) {
-        if (-not (Test-AipTrackedPathsSafe $script:AipProfileRoot)) {
+        if (-not (Test-AipTrackedPathsSafe $script:AipProfileRoot -SkipLinkCheck)) {
             Write-Output 'ERROR: tracked profile path validation failed; see the diagnostic above'
             $errors++
         }
@@ -1121,6 +1318,27 @@ function Invoke-AipDoctor {
     foreach ($harness in 'claude', 'codex', 'pi', 'opencode') {
         if (Get-AipRealCommand $harness) { Write-Output "OK: $harness executable found" }
         else { Write-Output "WARN: $harness executable was not found; install it before using this wrapper" }
+    }
+    if ($linkFindings.Count) {
+        $decisionOutput = @(Read-AipDoctorRepairDecision)
+        if ($decisionOutput.Count -gt 1) { $decisionOutput[0..($decisionOutput.Count - 2)] | Write-Output }
+        $decision = [string]$decisionOutput[-1]
+        switch ($decision) {
+            'accept' {
+                if (Invoke-AipDoctorLinkRepair $script:AipProfileRoot $linkFindings) {
+                    $remaining = @(Get-AipDoctorLinkFinding $script:AipProfileRoot)
+                    if ($remaining.Count -eq 0) {
+                        Write-Output 'Repaired link issues; changes are staged for the next normal sync.'
+                        Invoke-AipDoctor $Arguments
+                        return
+                    }
+                    Write-Output 'ERROR: link repair did not leave a valid profile link state'
+                }
+                $errors++
+            }
+            'decline' { Write-Output 'Link repair declined.' }
+            default { Write-Output 'ERROR: link issues need repair; rerun aip doctor from a terminal to confirm.' }
+        }
     }
     if ($errors -gt 0) { $script:AipCommandStatus = 1 }
 }
@@ -1310,7 +1528,7 @@ function Get-AipRequiredLinkTarget {
 }
 
 function Test-AipTrackedPathsSafe {
-    param([Parameter(Mandatory)][string]$Root)
+    param([Parameter(Mandatory)][string]$Root, [switch]$SkipLinkCheck)
     $raw = (Invoke-AipGit -C $Root ls-files -z) -join "`n"
     if ($LASTEXITCODE -ne 0) { Write-AipError 'could not inspect tracked profile paths'; return $false }
     $paths = @($raw -split "`0" | Where-Object { $_ })
@@ -1325,6 +1543,7 @@ function Test-AipTrackedPathsSafe {
             return $false
         }
     }
+    if ($SkipLinkCheck) { return $true }
     # Marker-free, like the remote-tree scan: a tracked 120000 entry is accepted
     # only when it is a profile-prefixed required link whose stored target is
     # exactly the target aip creates.
