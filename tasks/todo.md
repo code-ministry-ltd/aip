@@ -21,7 +21,7 @@ the existing launch/sync validators remain fail-fast and unchanged.
   pass-through link and a link below `node_modules` are omitted.
 - [x] POSIX doctor now detects a Git index mode-120000 defect that the
   pre-launch sync already rejects.
-- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed**
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed (331 tests)**
 - Deps: — · Files: `aip.sh`, `tests/posix/sync.bats`,
   `tests/posix/passthrough.bats` · Size: M
 
@@ -41,7 +41,7 @@ sync.
 - [x] A repaired legacy `claude/commands` link is ignored but remains live,
   required links have canonical targets and mode `120000`, and an
   `aip sync before` equivalent succeeds and creates the normal checkpoint.
-- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed**
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed (331 tests)**
 - Deps: T21 · Files: `aip.sh`, `tests/posix/sync.bats`,
   `tests/posix/passthrough.bats` · Size: M
 
@@ -101,7 +101,7 @@ and the conflict guidance consistent.
   staged repairs.
 - [x] POSIX help smoke coverage and both full suites pass with the documented
   wording contract.
-- Verify: `npm run test:posix && pwsh -NoProfile tests/powershell/Aip.Tests.ps1 && git diff --check` · **Passed (327 bats, 269 Pester)**
+- Verify: `npm run test:posix && pwsh -NoProfile tests/powershell/Aip.Tests.ps1 && git diff --check` · **Passed (331 bats, 269 Pester)**
 - Deps: T22, T24 · Files: `aip.sh`, `aip.ps1`,
   `skills/aip/conflicts.md`, `tests/posix/smoke.bats` · Size: M
 

@@ -2004,7 +2004,7 @@ _aip_doctor() (
     fi
   fi
   if [ -s "$_AIP_DOCTOR_ACTIONS" ]; then
-    if [ -t 0 ]; then
+    if [ -t 0 ] || [ "${_AIP_DOCTOR_FORCE_INTERACTIVE-}" = 1 ]; then
       while :; do
         printf 'Repair these link issues? [Y/n] '
         IFS= read -r answer || answer=n
@@ -2012,6 +2012,8 @@ _aip_doctor() (
           ''|y|Y|yes|YES|Yes)
             if _aip_doctor_apply_actions "$root" "$_AIP_DOCTOR_ACTIONS"; then
               printf 'Repaired link issues; changes are staged for the next normal sync.\n'
+              _aip_doctor "$@"
+              return
             else
               errors=1
             fi
@@ -2797,31 +2799,100 @@ EOF
   command rm -f "$entries"
 }
 
+_aip_doctor_has_action() {
+  # $1 actions file, $2 kind, $3 profile, $4 profile-relative path.
+  local actions=$1 wanted_kind=$2 wanted_name=$3 wanted_rel=$4 kind name rel target
+  while IFS="$(printf '\t')" read -r kind name rel target; do
+    [ "$kind" = "$wanted_kind" ] && [ "$name" = "$wanted_name" ] && [ "$rel" = "$wanted_rel" ] && return 0
+  done <"$actions"
+  return 1
+}
+
 _aip_doctor_apply_actions() {
-  local root=$1 actions=$2 kind name rel target profile path errors=0
+  local root=$1 actions=$2 kind name rel target profile path errors=0 canonical parent parent_rel desired
+  _aip_git -C "$root" status --porcelain >/dev/null 2>&1 || {
+    printf 'ERROR: refusing doctor repair because the profiles repository is unreadable\n'
+    return 1
+  }
+
+  # Validate the complete plan before applying its first mutation.
   while IFS="$(printf '\t')" read -r kind name rel target; do
     [ -n "$kind" ] || continue
     profile=$root/$name
     path=$profile/$rel
-    { [ -d "$profile" ] && [ ! -L "$profile" ] && _aip_path_is_under "$root" "$path"; } || { printf 'ERROR: refusing doctor repair outside a profile: %s/%s\n' "$name" "$rel"; errors=1; continue; }
+    case $kind in required|untrack|remove) ;; *) printf 'ERROR: refusing invalid doctor repair action\n'; errors=1; continue ;; esac
+    if ! _aip_validate_name "$name" >/dev/null 2>&1 || [ -z "$rel" ] ||
+       [ ! -d "$profile" ] || [ -L "$profile" ] ||
+       ! _aip_path_is_under "$root" "$profile" || ! _aip_path_is_under "$profile" "$path"; then
+      printf 'ERROR: refusing doctor repair outside a profile: %s/%s\n' "$name" "$rel"
+      errors=1
+      continue
+    fi
     case $kind in
       required)
         if [ -e "$path" ] && [ ! -L "$path" ]; then
           printf 'ERROR: doctor will not replace ordinary path: %s/%s\n' "$name" "$rel"
           errors=1
-        else
-          command rm -f "$path" && command ln -s "$target" "$path" && _aip_git -C "$root" add -- "$name/$rel" || { printf 'ERROR: could not restore required link: %s/%s\n' "$name" "$rel"; errors=1; }
         fi
+        canonical=$(_aip_required_link_target "$name/$rel" 2>/dev/null) || canonical=
+        if [ -z "$canonical" ] || [ "$target" != "$canonical" ]; then
+          printf 'ERROR: refusing non-canonical required link repair: %s/%s\n' "$name" "$rel"
+          errors=1
+        fi
+        parent=${path%/*}
+        while [ "$parent" != "$profile" ] && _aip_path_is_under "$profile" "$parent"; do
+          if [ -L "$parent" ]; then
+            parent_rel=${parent#"$profile"/}
+            _aip_doctor_has_action "$actions" remove "$name" "$parent_rel" || {
+              printf 'ERROR: refusing required link repair through an unsafe parent: %s/%s\n' "$name" "$parent_rel"
+              errors=1
+            }
+            break
+          fi
+          if [ -e "$parent" ] && [ ! -d "$parent" ]; then
+            printf 'ERROR: refusing required link repair through an unsafe parent: %s/%s\n' "$name" "${parent#"$profile"/}"
+            errors=1
+            break
+          fi
+          parent=${parent%/*}
+        done
         ;;
       untrack)
-        _aip_doctor_restore_passthrough_ignore "$profile" "$rel" && _aip_git -C "$root" rm --cached -q -- "$name/$rel" || { printf 'ERROR: could not untrack pass-through link: %s/%s\n' "$name" "$rel"; errors=1; }
-        ;;
-      remove)
-        if [ -L "$path" ]; then command rm -f "$path" || { printf 'ERROR: could not remove unsupported link: %s/%s\n' "$name" "$rel"; errors=1; continue; }; fi
-        _aip_git -C "$root" update-index --force-remove -- "$name/$rel" || { printf 'ERROR: could not stage removed link: %s/%s\n' "$name" "$rel"; errors=1; }
+        if [ ! -L "$path" ] || ! _aip_is_passthrough_link "$rel" "$profile"; then
+          printf 'ERROR: refusing to untrack an invalid pass-through link: %s/%s\n' "$name" "$rel"
+          errors=1
+        fi
         ;;
     esac
   done <"$actions"
+  [ "$errors" -eq 0 ] || return 1
+
+  # Remove unsafe ancestors first, then preserve pass-throughs, then rebuild
+  # required links. This lets malformed profiles converge without traversing a
+  # link target.
+  for desired in remove untrack required; do
+    while IFS="$(printf '\t')" read -r kind name rel target; do
+      [ "$kind" = "$desired" ] || continue
+      profile=$root/$name
+      path=$profile/$rel
+      case $kind in
+        remove)
+          if [ -L "$path" ]; then command rm -f "$path" || { printf 'ERROR: could not remove unsupported link: %s/%s\n' "$name" "$rel"; errors=1; continue; }; fi
+          _aip_git -C "$root" update-index --force-remove -- "$name/$rel" || { printf 'ERROR: could not stage removed link: %s/%s\n' "$name" "$rel"; errors=1; }
+          ;;
+        untrack)
+          _aip_doctor_restore_passthrough_ignore "$profile" "$rel" &&
+            _aip_git -C "$root" rm --cached -q -- "$name/$rel" &&
+            _aip_git -C "$root" add -- "$name/.gitignore" || { printf 'ERROR: could not untrack pass-through link: %s/%s\n' "$name" "$rel"; errors=1; }
+          ;;
+        required)
+          command mkdir -p "${path%/*}" && command rm -f "$path" && command ln -s "$target" "$path" &&
+            _aip_git -C "$root" add -- "$name/$rel" || { printf 'ERROR: could not restore required link: %s/%s\n' "$name" "$rel"; errors=1; }
+          ;;
+      esac
+    done <"$actions"
+    [ "$errors" -eq 0 ] || return 1
+  done
   [ "$errors" -eq 0 ]
 }
 
