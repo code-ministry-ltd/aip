@@ -42,6 +42,7 @@
   [[ "$output" == *'aip remote add URL'* ]]
   [[ "$output" == *'aip remote show'* ]]
   [[ "$output" == *'aip remote remove'* ]]
+  [[ "$output" == *'Diagnose profiles and offer safe link repairs'* ]]
   [[ "$output" == *'Quick start'* ]]
   [[ "$output" == *'README'* ]]
   [[ "$output" == *'claude, codex, pi, opencode'* ]]

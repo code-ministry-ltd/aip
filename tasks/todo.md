@@ -93,15 +93,15 @@ non-interactive safety, staged-only result, and the next-launch checkpoint
 using the legacy `claude/commands` case. Keep CLI help in both implementations
 and the conflict guidance consistent.
 
-- [ ] `aip help` in POSIX and PowerShell accurately states doctor’s link
+- [x] `aip help` in POSIX and PowerShell accurately states doctor’s link
   recovery behavior and does not promise repair for unrelated Git or
   environment failures.
-- [ ] `skills/aip/conflicts.md` explains the legacy tracked pass-through fix,
+- [x] `skills/aip/conflicts.md` explains the legacy tracked pass-through fix,
   the `y`/`n` prompt, default answer, and that the next normal launch commits
   staged repairs.
-- [ ] POSIX help smoke coverage and both full suites pass with the documented
+- [x] POSIX help smoke coverage and both full suites pass with the documented
   wording contract.
-- Verify: `npm run test:posix && pwsh -NoProfile tests/powershell/Aip.Tests.ps1 && git diff --check`
+- Verify: `npm run test:posix && pwsh -NoProfile tests/powershell/Aip.Tests.ps1 && git diff --check` · **Passed (327 bats, 269 Pester)**
 - Deps: T22, T24 · Files: `aip.sh`, `aip.ps1`,
   `skills/aip/conflicts.md`, `tests/posix/smoke.bats` · Size: M
 

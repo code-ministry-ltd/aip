@@ -4352,7 +4352,7 @@ Commands:
   aip skills add|update|remove       Install, refresh, or remove skills
   aip import HARNESS FILE... --profile NAME[,NAME...] | --all-profiles
                                      Copy config from a harness into profiles
-  aip doctor [NAME]                  Diagnose the repository and profiles
+  aip doctor [NAME]                  Diagnose profiles and offer safe link repairs
   aip run [NAME] HARNESS [ARGS...]   Launch a harness with a profile
   aip update                         Migrate legacy configs and update the aip npm package
   aip uninstall [--force]            Remove the aip installation (not your profiles)
@@ -4366,6 +4366,11 @@ copied into the new profile's shared `skills/` directory.
 
 Primary configs are copied when present but remain untracked. Inspect each one
 before deliberately sharing it with Git; `aip sync` never adds it for you.
+
+Doctor lists every profile-link defect before one `Repair these link issues?
+[Y/n]` prompt; Enter means yes. Accepted link-only repairs are staged, and the
+next normal launch checkpoints them. Non-interactive doctor runs never repair,
+and unrelated Git, environment, and harness findings remain report-only.
 
 Harness wrappers:
   claude, codex, pi, opencode [ARGS...] launch the named tool with the

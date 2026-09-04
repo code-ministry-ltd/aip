@@ -43,6 +43,26 @@ aip sync
 
 Never add credentials to Git to "make it work".
 
+## Profile link defects
+
+If a launch is blocked by an unsupported symbolic link—especially a legacy
+tracked pass-through such as `aip/claude/commands`—run `aip doctor NAME` from a
+terminal. Doctor inspects every profile, lists all link defects before changing
+anything, then asks once: `Repair these link issues? [Y/n]`.
+
+- Enter, `y`, or `yes` accepts every listed link repair. `n` or `no` declines
+  them all, and any other answer is rejected and asked again.
+- A valid pass-through link is kept on disk, removed from Git tracking, and
+  added back to aip's managed ignore entries. Invalid required links are
+  recreated; other unsupported links are removed without touching their
+  targets.
+- Repairs are staged, not committed or synced. The next normal harness launch
+  performs its usual pre-launch sync and checkpoints the staged repair before
+  starting the harness.
+- With redirected input, doctor only reports and exits non-zero; it never
+  prompts or repairs. Git, environment, remote, and missing-harness findings
+  are diagnostic only and are not included in this automatic repair.
+
 ## Other blocks
 
 aip's other block messages state their own remedy — read the message to the
@@ -55,8 +75,7 @@ user and follow it. The ones the recipes above do *not* fix:
   in the remote's history, not this machine's index; it has to be removed
   (and history rewritten) on the remote side. Explain, and leave the
   rewrite to the user.
-- **unsupported symbolic link** or **non-portable path** in the tracked
-  tree — show the named path; the fix is replacing the link with real
-  files, or renaming, with the user's approval.
+- **non-portable path** in the tracked tree — show the named path; the user
+  must approve renaming it. Link defects use the doctor recovery above.
 - **syncing would overwrite untracked local state** — show which paths;
   the user decides whether to move them aside or track them first.
