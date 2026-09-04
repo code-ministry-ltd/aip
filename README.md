@@ -477,6 +477,7 @@ Removes the aip installation without touching your data:
 Your profiles repository (at `~/agent-profiles` by default) and your harness configuration (`~/.claude`, `~/.codex`, `~/.pi/agent`, `~/.config/opencode`) are **untouched**. Restart your shell afterwards; the shell functions disappear.
 
 Outside a terminal, `aip uninstall` refuses without `--force`. If you ever have to uninstall by hand (for example after the install root was deleted but the shell block remains), remove the marked block as above and delete the installed directory yourself. To come back, re-run `npx -y @code-ministry/aip@latest install`.
+
 - PowerShell on macOS/Linux: `~/.local/share/aip/`
 - The managed skill, if you installed aip: `<profiles-root>/aip/skills/aip/` (including `.aip-managed`)
 
