@@ -33,15 +33,15 @@ retaining it and restoring its ignore entry, and remove all other invalid links
 without touching targets. Stage changes and revalidate, but do not commit or
 sync.
 
-- [ ] Empty input, `y`, and `yes` repair all planned actions; `n`/`no` leave
+- [x] Empty input, `y`, and `yes` repair all planned actions; `n`/`no` leave
   both worktree and index unchanged; invalid input reprompts.
-- [ ] Redirected stdin is non-mutating and non-zero when repairs are needed;
+- [x] Redirected stdin is non-mutating and non-zero when repairs are needed;
   no repair follows, reads, writes, or deletes an external sentinel link
   target.
-- [ ] A repaired legacy `claude/commands` link is ignored but remains live,
+- [x] A repaired legacy `claude/commands` link is ignored but remains live,
   required links have canonical targets and mode `120000`, and an
   `aip sync before` equivalent succeeds and creates the normal checkpoint.
-- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix`
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed**
 - Deps: T21 · Files: `aip.sh`, `tests/posix/sync.bats`,
   `tests/posix/passthrough.bats` · Size: M
 
