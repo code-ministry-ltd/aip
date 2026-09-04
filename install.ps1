@@ -17,6 +17,8 @@ else {
 }
 $shellProfile = if ($env:_AIP_SHELL_PROFILE) { $env:_AIP_SHELL_PROFILE } else { $PROFILE.CurrentUserAllHosts }
 $installedFile = Join-Path $installRoot 'aip.ps1'
+$extensionSource = Join-Path $PSScriptRoot 'extensions/aip-status.ts'
+$installedExtension = Join-Path $installRoot 'extensions/aip-status.ts'
 
 $packageVersion = if ((Get-Content -LiteralPath $sourceFile -Raw) -match "(?m)^\`$script:AipVersion = '([^']*)'") { $Matches[1] } else { $null }
 if (-not $packageVersion) {
@@ -110,9 +112,11 @@ function Invoke-AipProfileSkillSetupBody {
 
 try {
     New-Item -ItemType Directory -Path $installRoot -Force -ErrorAction Stop | Out-Null
+    New-Item -ItemType Directory -Path (Split-Path -Parent $installedExtension) -Force -ErrorAction Stop | Out-Null
     $profileParent = Split-Path -Parent $shellProfile
     if ($profileParent) { New-Item -ItemType Directory -Path $profileParent -Force -ErrorAction Stop | Out-Null }
     Copy-Item -LiteralPath $sourceFile -Destination $installedFile -Force -ErrorAction Stop
+    Copy-Item -LiteralPath $extensionSource -Destination $installedExtension -Force -ErrorAction Stop
     if (-not (Test-Path -LiteralPath $shellProfile)) { New-Item -ItemType File -Path $shellProfile -ErrorAction Stop | Out-Null }
 
     $quotedSource = $installedFile.Replace("'", "''")

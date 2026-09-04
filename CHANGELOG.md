@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Pi profile status.** Pi sessions launched through aip now show
+  `aip: PROFILE` in the footer. The bundled extension is loaded additively, so
+  existing global, profile, project, package, and command-line extensions keep
+  loading normally.
 - **Portable primary configs.** New profiles now own untracked local copies of `pi/settings.json`, `claude/settings.json`, `codex/config.toml`, and `opencode/opencode.json`, copying an existing global source byte-for-byte and leaving missing sources absent. `aip update` migrates valid legacy links without adding the replacement; inspect and explicitly add a config only when it is safe to share. Credentials and runtime state remain excluded.
 
 ## 0.8.0 — 2026-08-25

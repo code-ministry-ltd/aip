@@ -17,6 +17,8 @@ $script:AipCreateSkillsGlobalRoot = $null
 $script:AipCreateSkillsAgentsRoot = $null
 $script:AipCreateSkipSkillSelection = $false
 $script:AipDoctorForceInteractive = $false
+$script:AipRuntimeRoot = $PSScriptRoot
+$script:AipStatusExtension = Join-Path $script:AipRuntimeRoot 'extensions/aip-status.ts'
 
 function Write-AipError {
     param([Parameter(Mandatory)][string]$Message)
@@ -2121,12 +2123,17 @@ function Invoke-AipHarness {
     $variable = $variables[$Harness]
     $previous = [Environment]::GetEnvironmentVariable($variable, 'Process')
     $hadPrevious = $null -ne $previous
+    $previousActiveProfile = [Environment]::GetEnvironmentVariable('AIP_ACTIVE_PROFILE', 'Process')
+    $hadPreviousActiveProfile = $null -ne $previousActiveProfile
     $hadArgumentPassing = Test-Path Variable:PSNativeCommandArgumentPassing
     $previousArgumentPassing = $PSNativeCommandArgumentPassing
     $childStatus = $null
     $childStarted = $false
     try {
         [Environment]::SetEnvironmentVariable($variable, (Join-Path $profile.Path $Harness), 'Process')
+        if ($Harness -eq 'pi') {
+            [Environment]::SetEnvironmentVariable('AIP_ACTIVE_PROFILE', $profile.Name, 'Process')
+        }
         $PSNativeCommandArgumentPassing = 'Standard'
         $nativeArguments = @($Arguments)
         if ($Harness -eq 'codex') {
@@ -2135,6 +2142,9 @@ function Invoke-AipHarness {
             $instructions = (Get-AipUtf8TextFile $instructionPath).TrimEnd("`r", "`n")
             $tomlInstructions = ConvertTo-AipTomlString $instructions
             $nativeArguments = @('-c', "developer_instructions=$tomlInstructions") + $nativeArguments
+        }
+        elseif ($Harness -eq 'pi' -and (Test-Path -LiteralPath $script:AipStatusExtension -PathType Leaf)) {
+            $nativeArguments = @('--extension', $script:AipStatusExtension) + $nativeArguments
         }
         $childStarted = $true
         $global:LASTEXITCODE = 0
@@ -2168,6 +2178,8 @@ function Invoke-AipHarness {
         finally {
             if ($hadPrevious) { [Environment]::SetEnvironmentVariable($variable, $previous, 'Process') }
             else { [Environment]::SetEnvironmentVariable($variable, $null, 'Process') }
+            if ($hadPreviousActiveProfile) { [Environment]::SetEnvironmentVariable('AIP_ACTIVE_PROFILE', $previousActiveProfile, 'Process') }
+            else { [Environment]::SetEnvironmentVariable('AIP_ACTIVE_PROFILE', $null, 'Process') }
             if ($hadArgumentPassing) { $PSNativeCommandArgumentPassing = $previousArgumentPassing }
             else { Remove-Variable -Name PSNativeCommandArgumentPassing -Scope Local -ErrorAction SilentlyContinue }
             if ($IsWindows -and ($childStatus -eq 3221225786 -or $childStatus -eq -1073741510)) {

@@ -357,6 +357,11 @@ deliberately with `aip import`.
 
 (Windows equivalents live under `%USERPROFILE%`, e.g. `%USERPROFILE%\.pi\agent`.)
 
+On every Pi launch, aip also loads its bundled status extension explicitly. It
+adds `aip: PROFILE` to Pi's footer without changing the profile's `packages` or
+`extensions` settings and without replacing any auto-discovered or explicitly
+requested user extensions.
+
 Pass-through links are **machine-local and never synced**: aip adds each linked path to
 the profile's `.gitignore`, so the profiles repository stays portable and no machine's
 local paths leak to the remote. A profile that deliberately tracks one of these paths
