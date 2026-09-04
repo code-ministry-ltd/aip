@@ -397,6 +397,75 @@ make_upstream() {
   [[ "$output" == *'unsupported symbolic link'* ]]
 }
 
+@test "doctor reports live and tracked link defects across profiles" {
+  create_profile personal
+  mkdir -p "$HOME/.claude/commands"
+  rm "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/personal/claude/commands"
+  git -C "$_AIP_PROFILE_ROOT" add -f personal/claude/commands
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'work/codex/skills should link to ../skills'* ]]
+  [[ "$output" == *'tracked profile contains an unsupported symbolic link: personal/claude/commands'* ]]
+}
+
+@test "doctor does not stop after the first live or tracked link defect" {
+  create_profile personal
+  mkdir -p "$HOME/.claude/agents" "$HOME/.claude/commands"
+  rm "$_AIP_PROFILE_ROOT/work/codex/skills" "$_AIP_PROFILE_ROOT/work/pi/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/work/pi/skills"
+  ln -s "$HOME/.claude/agents" "$_AIP_PROFILE_ROOT/personal/claude/agents"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/personal/claude/commands"
+  git -C "$_AIP_PROFILE_ROOT" add -f personal/claude/agents personal/claude/commands
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'work/codex/skills should link to ../skills'* ]]
+  [[ "$output" == *'work/pi/skills should link to ../skills'* ]]
+  [[ "$output" == *'tracked profile contains an unsupported symbolic link: personal/claude/agents'* ]]
+  [[ "$output" == *'tracked profile contains an unsupported symbolic link: personal/claude/commands'* ]]
+}
+
+@test "doctor scans malformed profile directories that lack a gitignore" {
+  mkdir -p "$_AIP_PROFILE_ROOT/broken/pi"
+  ln -s /etc/passwd "$_AIP_PROFILE_ROOT/broken/pi/evil.json"
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'broken/pi/evil.json'* ]]
+}
+
+@test "doctor ignores valid pass-through and node_modules links" {
+  mkdir -p "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules/.bin"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/work/claude/commands"
+  ln -s /etc/passwd "$_AIP_PROFILE_ROOT/work/pi/npm/node_modules/.bin/example"
+
+  run aip doctor work
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'claude/commands'*'unsupported symbolic link'* ]]
+  [[ "$output" != *'node_modules/.bin/example'*'unsupported symbolic link'* ]]
+}
+
+@test "doctor orders profile link findings by profile name" {
+  create_profile zeta
+  create_profile alpha
+  rm "$_AIP_PROFILE_ROOT/zeta/codex/skills" "$_AIP_PROFILE_ROOT/alpha/codex/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/zeta/codex/skills"
+  ln -s ../AGENTS.md "$_AIP_PROFILE_ROOT/alpha/codex/skills"
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'alpha/codex/skills should link to ../skills'*'zeta/codex/skills should link to ../skills'* ]]
+}
+
 @test "a no-op sync does not create another commit" {
   local before
   before=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)

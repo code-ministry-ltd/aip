@@ -258,6 +258,22 @@ _aip_list_profile_names() {
   command rm -f "$entries"
 }
 
+_aip_list_doctor_profile_names() {
+  # Doctor includes malformed profile directories so it can describe every
+  # recoverable layout/link defect rather than hiding entries without .gitignore.
+  local profile_path name entries
+  [ -d "$_AIP_PROFILE_ROOT" ] || return 0
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || return 1
+  command find -H "$_AIP_PROFILE_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 >|"$entries" || { command rm -f "$entries"; return 1; }
+  while IFS= read -r -d '' profile_path; do
+    [ ! -L "$profile_path" ] || continue
+    name=${profile_path##*/}
+    _aip_validate_name "$name" || continue
+    printf '%s\n' "$name"
+  done <"$entries" | LC_ALL=C command sort
+  command rm -f "$entries"
+}
+
 _aip_write_root_gitignore() {
   printf '%s\n' \
     '# aip-managed root exclusions' \
@@ -413,6 +429,29 @@ _aip_check_live_profile_links() {
     fi
   done <"$entries"
   command rm -f "$entries"
+}
+
+_aip_doctor_check_live_profile_links() {
+  # Doctor reports every invalid live link; sync keeps the fail-fast checker above.
+  local profile=$1 name=$2 entries link_path relative errors=0
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-links.XXXXXX") || return 1
+  command find "$profile" -path "$profile/.git" -prune -o -type l -print0 >|"$entries" || { command rm -f "$entries"; return 1; }
+  while IFS= read -r -d '' link_path; do
+    relative=${link_path#"$profile"/}
+    case $relative in
+      node_modules|node_modules/*|*/node_modules|*/node_modules/*) continue ;;
+    esac
+    if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
+      if _aip_is_legacy_primary_config_link "$relative" "$profile"; then
+        _aip_warn "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
+      else
+        printf 'ERROR: profile contains an unsupported symbolic link that could escape its boundary: %s/%s\n' "$name" "$relative"
+        errors=1
+      fi
+    fi
+  done <"$entries"
+  command rm -f "$entries"
+  [ "$errors" -eq 0 ]
 }
 
 _aip_primary_config_rels() {
@@ -1837,11 +1876,11 @@ _aip_doctor_passthrough() {
 }
 
 _aip_doctor_profile_layout() {
-  local profile_path=$1 name=$2 pair link expected directory
+  local profile_path=$1 name=$2 pair link expected directory errors=0
   for directory in skills claude codex pi opencode; do
     if [ ! -d "$profile_path/$directory" ] || [ -L "$profile_path/$directory" ]; then
       printf 'ERROR: required directory is missing or linked: %s/%s\n' "$name" "$directory"
-      return 1
+      errors=1
     fi
   done
   for pair in 'claude/skills:../skills' 'codex/AGENTS.md:../AGENTS.md' 'codex/skills:../skills' 'pi/AGENTS.md:../AGENTS.md' 'pi/skills:../skills' 'opencode/AGENTS.md:../AGENTS.md' 'opencode/skills:../skills'; do
@@ -1850,16 +1889,17 @@ _aip_doctor_profile_layout() {
     if [ ! -L "$profile_path/$link" ] || [ "$(command readlink "$profile_path/$link" 2>/dev/null)" != "$expected" ]; then
       printf 'ERROR: %s/%s should link to %s\n' "$name" "$link" "$expected"
       printf "FIX: ln -sfn '%s' '%s/%s'\n" "$expected" "$profile_path" "$link"
-      return 1
+      errors=1
     fi
   done
-  if ! _aip_check_live_profile_links "$profile_path"; then return 1; fi
+  _aip_doctor_check_live_profile_links "$profile_path" "$name" || errors=1
   for link in .gitignore AGENTS.md skills/.gitkeep claude/CLAUDE.md codex/instructions.md pi/APPEND_SYSTEM.md; do
     if [ ! -f "$profile_path/$link" ] || [ -L "$profile_path/$link" ]; then
       printf 'ERROR: required file is missing or linked: %s/%s\n' "$name" "$link"
-      return 1
+      errors=1
     fi
   done
+  [ "$errors" -eq 0 ] || return 1
   if ! _aip_validate_sync_layout "$profile_path"; then
     printf 'ERROR: %s content or layout validation failed; repair the diagnostic above\n' "$name"
     return 1
@@ -1934,7 +1974,7 @@ _aip_doctor() (
     fi
   fi
 
-  for name in $(_aip_list_profile_names) "$_AIP_RESOLVED_NAME"; do
+  for name in $(_aip_list_doctor_profile_names) "$_AIP_RESOLVED_NAME"; do
     case " $checked " in *" $name "*) continue ;; esac
     checked="$checked $name"
     profile_dir=$(_aip_profile_path "$name")
@@ -1945,6 +1985,10 @@ _aip_doctor() (
   if [ "$git_available" -eq 1 ] && [ "$repo_readable" -eq 1 ]; then
     if ! _aip_check_tracked_forbidden "$root"; then
       printf 'ERROR: tracked profile path validation failed; see the diagnostic above\n'
+      errors=1
+    fi
+    if ! _aip_doctor_check_tracked_links "$root"; then
+      printf 'ERROR: tracked profile link validation failed; see the diagnostic above\n'
       errors=1
     fi
     if _aip_has_unfinished_git_operation "$root" ||
@@ -2658,6 +2702,36 @@ _aip_check_tracked_links() {
     fi
   done <"$entries"
   command rm -f "$entries"
+}
+
+_aip_doctor_check_tracked_links() {
+  # Doctor reports every invalid tracked link; sync keeps the fail-fast checker above.
+  local root=$1 entries record mode rest hash relative expected target errors=0
+  entries=$(command mktemp "${TMPDIR:-/tmp}/aip-index.XXXXXX") || return 1
+  _aip_git -C "$root" ls-files --stage -z >|"$entries" || { command rm -f "$entries"; return 1; }
+  while IFS= read -r -d '' record; do
+    mode=${record%% *}
+    [ "$mode" = 120000 ] || continue
+    relative=${record#*$'\t'}
+    if ! expected=$(_aip_required_link_target "$relative"); then
+      printf 'ERROR: tracked profile contains an unsupported symbolic link: %s\n' "$relative"
+      errors=1
+      continue
+    fi
+    rest=${record#* }
+    hash=${rest%% *}
+    if ! target=$(_aip_git -C "$root" cat-file blob "$hash" 2>/dev/null); then
+      printf 'ERROR: could not read the stored target of tracked link: %s\n' "$relative"
+      errors=1
+      continue
+    fi
+    if [ "$target" != "$expected" ]; then
+      printf 'ERROR: tracked profile link has an unexpected target: %s\n' "$relative"
+      errors=1
+    fi
+  done <"$entries"
+  command rm -f "$entries"
+  [ "$errors" -eq 0 ]
 }
 
 _aip_require_no_linked_profiles() {
