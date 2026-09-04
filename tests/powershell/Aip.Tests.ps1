@@ -97,6 +97,7 @@ BeforeEach {
     $script:AipCreateSkillsGlobalRoot = $null
     $script:AipCreateSkillsAgentsRoot = Join-Path $TestDrive 'no-agent-skills'
     $script:AipCreateSkipSkillSelection = $false
+    $script:AipDoctorForceInteractive = $false
     Remove-Variable -Name AipLockAttempts -Scope Script -ErrorAction SilentlyContinue
 }
 
@@ -1015,6 +1016,154 @@ exit `$global:LASTEXITCODE
         $output = aip doctor work 2>&1 | Out-String
         $global:LASTEXITCODE | Should -Not -Be 0
         $output | Should -Match 'codex/skills should link to ../skills'
+    }
+
+    It 'doctor collects structured link findings across every profile' {
+        $commands = Join-Path $script:AipImportHome '.claude/commands'
+        New-Item -ItemType Directory -Path $commands -Force | Out-Null
+        New-TestProfile personal
+        $required = Join-Path $script:AipProfileRoot 'work/codex/skills'
+        Remove-Item -LiteralPath $required -Force
+        New-Item -ItemType SymbolicLink -Path $required -Target '../other' | Out-Null
+        $passThrough = Join-Path $script:AipProfileRoot 'personal/claude/commands'
+        & git -C $script:AipProfileRoot add -f personal/claude/commands
+        $broken = Join-Path $script:AipProfileRoot 'broken'
+        New-Item -ItemType Directory -Path (Join-Path $broken 'pi') -Force | Out-Null
+        New-Item -ItemType SymbolicLink -Path (Join-Path $broken 'pi/evil.json') -Target (Join-Path $TestDrive 'outside') | Out-Null
+
+        $findings = @(Get-AipDoctorLinkFinding $script:AipProfileRoot)
+
+        ($findings | Where-Object { $_.Kind -eq 'required' -and $_.Name -eq 'work' -and $_.Relative -eq 'codex/skills' }).Count | Should -Be 1
+        ($findings | Where-Object { $_.Kind -eq 'untrack' -and $_.Name -eq 'personal' -and $_.Relative -eq 'claude/commands' }).Count | Should -Be 1
+        ($findings | Where-Object { $_.Kind -eq 'remove' -and $_.Name -eq 'broken' -and $_.Relative -eq 'pi/evil.json' }).Count | Should -Be 1
+        @($findings | Sort-Object Name, Relative | ForEach-Object { "$($_.Name)/$($_.Relative)" }) | Should -Be @($findings | ForEach-Object { "$($_.Name)/$($_.Relative)" })
+        Test-Path -LiteralPath $passThrough | Should -BeTrue
+    }
+
+    It 'doctor repairs all structured link findings without touching link targets' {
+        $commands = Join-Path $script:AipImportHome '.claude/commands'
+        New-Item -ItemType Directory -Path $commands -Force | Out-Null
+        $passThrough = Join-Path $script:AipProfileRoot 'work/claude/commands'
+        New-Item -ItemType SymbolicLink -Path $passThrough -Target $commands | Out-Null
+        & git -C $script:AipProfileRoot add -f work/claude/commands
+        $required = Join-Path $script:AipProfileRoot 'work/codex/skills'
+        Remove-Item -LiteralPath $required -Force
+        New-Item -ItemType SymbolicLink -Path $required -Target '../other' | Out-Null
+        $external = Join-Path $TestDrive 'external-link-target'
+        'unchanged' | Set-Content -LiteralPath $external
+        $unsupported = Join-Path $script:AipProfileRoot 'work/pi/evil.json'
+        New-Item -ItemType SymbolicLink -Path $unsupported -Target $external | Out-Null
+        $findings = @(Get-AipDoctorLinkFinding $script:AipProfileRoot)
+
+        Invoke-AipDoctorLinkRepair $script:AipProfileRoot $findings | Should -BeTrue
+
+        ((Get-Item -LiteralPath $required -Force).Target -join '').Replace('\', '/') | Should -Be '../skills'
+        (Get-Item -LiteralPath $passThrough -Force).LinkType | Should -Be 'SymbolicLink'
+        (& git -C $script:AipProfileRoot ls-files -- work/claude/commands) | Should -BeNullOrEmpty
+        (Get-AipPassthroughGitIgnoreEntry (Join-Path $script:AipProfileRoot 'work/.gitignore')) | Should -Contain 'claude/commands'
+        Get-Item -LiteralPath $unsupported -Force -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'unchanged'
+        (Test-AipTrackedPathsSafe $script:AipProfileRoot) | Should -BeTrue
+    }
+
+    It 'doctor validates the complete repair plan before mutating any path' {
+        $required = Join-Path $script:AipProfileRoot 'work/codex/skills'
+        Remove-Item -LiteralPath $required -Force
+        New-Item -ItemType SymbolicLink -Path $required -Target '../other' | Out-Null
+        $findings = @(
+            [pscustomobject]@{ Kind = 'required'; Name = 'work'; Relative = 'codex/skills'; Expected = '../skills' }
+            [pscustomobject]@{ Kind = 'remove'; Name = '../escape'; Relative = 'outside'; Expected = '' }
+        )
+
+        $result = @(Invoke-AipDoctorLinkRepair $script:AipProfileRoot $findings)
+
+        $result[-1] | Should -BeFalse
+        ($result -join "`n") | Should -Match 'refusing invalid doctor repair action'
+        ((Get-Item -LiteralPath $required -Force).Target -join '').Replace('\', '/') | Should -Be '../other'
+    }
+
+    It 'doctor defaults an empty interactive answer to repairing every link finding' {
+        $commands = Join-Path $script:AipImportHome '.claude/commands'
+        New-Item -ItemType Directory -Path $commands -Force | Out-Null
+        $link = Join-Path $script:AipProfileRoot 'work/claude/commands'
+        New-Item -ItemType SymbolicLink -Path $link -Target $commands | Out-Null
+        & git -C $script:AipProfileRoot add -f work/claude/commands
+        $before = & git -C $script:AipProfileRoot rev-parse HEAD
+        $script:AipDoctorForceInteractive = $true
+        Mock Read-Host { '' }
+
+        $output = aip doctor work 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'Repaired link issues; changes are staged'
+        Assert-MockCalled Read-Host -Times 1 -Exactly
+        (Get-Item -LiteralPath $link -Force).LinkType | Should -Be 'SymbolicLink'
+        (& git -C $script:AipProfileRoot ls-files -- work/claude/commands) | Should -BeNullOrEmpty
+        (& git -C $script:AipProfileRoot rev-parse HEAD) | Should -Be $before
+        (& git -C $script:AipProfileRoot diff --cached --name-only) | Should -Contain 'work/.gitignore'
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $script:AipProfileRoot rev-parse HEAD) | Should -Not -Be $before
+        (& git -C $script:AipProfileRoot status --porcelain) | Should -BeNullOrEmpty
+    }
+
+    It 'doctor declines n and reprompts invalid interactive answers' {
+        $link = Join-Path $script:AipProfileRoot 'work/codex/skills'
+        Remove-Item -LiteralPath $link -Force
+        New-Item -ItemType SymbolicLink -Path $link -Target '../other' | Out-Null
+        $script:AipDoctorForceInteractive = $true
+        $script:DoctorAnswers = [Collections.Generic.Queue[string]]::new()
+        $script:DoctorAnswers.Enqueue('maybe')
+        $script:DoctorAnswers.Enqueue('n')
+        Mock Read-Host { $script:DoctorAnswers.Dequeue() }
+
+        $output = aip doctor work 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $output | Should -Match 'Please enter y/yes or n/no'
+        $output | Should -Match 'Link repair declined'
+        Assert-MockCalled Read-Host -Times 2 -Exactly
+        ((Get-Item -LiteralPath $link -Force).Target -join '').Replace('\', '/') | Should -Be '../other'
+    }
+
+    It 'doctor accepts <answer> as an interactive repair answer' -TestCases @(
+        @{ answer = 'y' }
+        @{ answer = 'yes' }
+    ) {
+        param($answer)
+        $script:AipDoctorForceInteractive = $true
+        Mock Read-Host { $answer }
+
+        Read-AipDoctorRepairDecision | Should -Be 'accept'
+    }
+
+    It 'doctor never prompts or mutates when standard input is redirected' {
+        $link = Join-Path $script:AipProfileRoot 'work/codex/skills'
+        Remove-Item -LiteralPath $link -Force
+        New-Item -ItemType SymbolicLink -Path $link -Target '../other' | Out-Null
+        $runner = Join-Path $TestDrive 'noninteractive-doctor.ps1'
+        @"
+. `"$(Join-Path $script:RepositoryRoot 'aip.ps1')`"
+`$script:AipProfileRoot = `"$script:AipProfileRoot`"
+aip doctor work
+exit `$global:LASTEXITCODE
+"@ | Set-Content -LiteralPath $runner -Encoding utf8NoBOM
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = (Get-Process -Id $PID).Path
+        $start.UseShellExecute = $false
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        foreach ($argument in '-NoProfile', '-NonInteractive', '-File', $runner) { [void]$start.ArgumentList.Add($argument) }
+        $process = [Diagnostics.Process]::Start($start)
+        $process.StandardInput.Close()
+        $output = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+
+        $process.ExitCode | Should -Not -Be 0
+        $output | Should -Match 'rerun aip doctor from a terminal'
+        ((Get-Item -LiteralPath $link -Force).Target -join '').Replace('\', '/') | Should -Be '../other'
     }
 
     It 'doctor diagnoses a configured upstream that cannot be resolved' {
