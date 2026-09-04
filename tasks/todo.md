@@ -13,15 +13,15 @@ reports required managed links that are missing or wrong, tracked links that
 sync would reject, and invalid live links in deterministic profile/path order;
 the existing launch/sync validators remain fail-fast and unchanged.
 
-- [ ] A single `aip doctor NAME` report contains link findings from multiple
+- [x] A single `aip doctor NAME` report contains link findings from multiple
   profiles, including a malformed profile that lacks `.gitignore`, before any
   prompt or filesystem mutation.
-- [ ] The report distinguishes a wrong required-link target, a tracked
+- [x] The report distinguishes a wrong required-link target, a tracked
   allowlisted pass-through link, and an ordinary unsupported link; a valid
   pass-through link and a link below `node_modules` are omitted.
-- [ ] POSIX doctor now detects a Git index mode-120000 defect that the
+- [x] POSIX doctor now detects a Git index mode-120000 defect that the
   pre-launch sync already rejects.
-- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix`
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix` · **Passed**
 - Deps: — · Files: `aip.sh`, `tests/posix/sync.bats`,
   `tests/posix/passthrough.bats` · Size: M
 
