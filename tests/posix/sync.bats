@@ -494,6 +494,72 @@ make_upstream() {
   rm -f "$actions"
 }
 
+@test "doctor defaults Enter to repair, revalidates, and leaves the next sync checkpoint" {
+  local before
+  mkdir -p "$HOME/.claude/commands"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/work/claude/commands"
+  git -C "$_AIP_PROFILE_ROOT" add -f work/claude/commands
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  run bash -c 'source "$1"; printf "\n" | _AIP_DOCTOR_FORCE_INTERACTIVE=1 aip doctor work' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Repaired link issues; changes are staged'* ]]
+  [ -L "$_AIP_PROFILE_ROOT/work/claude/commands" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/claude/commands)" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
+  [ -n "$(git -C "$_AIP_PROFILE_ROOT" diff --cached --name-only)" ]
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" != "$before" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+}
+
+@test "doctor reprompts invalid input and decline leaves every repair unchanged" {
+  local before_index
+  rm "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s ../other "$_AIP_PROFILE_ROOT/work/codex/skills"
+  before_index=$(git -C "$_AIP_PROFILE_ROOT" write-tree)
+
+  run bash -c 'source "$1"; printf "maybe\nn\n" | _AIP_DOCTOR_FORCE_INTERACTIVE=1 aip doctor work' _ "$AIP_SOURCE"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'Please enter y/yes or n/no.'* ]]
+  [[ "$output" == *'Link repair declined.'* ]]
+  [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = ../other ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" write-tree)" = "$before_index" ]
+}
+
+@test "doctor accepts y and yes for interactive link repair" {
+  local answer
+  for answer in y yes; do
+    rm "$_AIP_PROFILE_ROOT/work/codex/skills"
+    ln -s ../other "$_AIP_PROFILE_ROOT/work/codex/skills"
+
+    run bash -c 'source "$1"; printf "%s\n" "$2" | _AIP_DOCTOR_FORCE_INTERACTIVE=1 aip doctor work' _ "$AIP_SOURCE" "$answer"
+
+    [ "$status" -eq 0 ]
+    [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = ../skills ]
+  done
+}
+
+@test "doctor validates every repair action before mutating any path" {
+  local actions
+  rm "$_AIP_PROFILE_ROOT/work/codex/skills"
+  ln -s ../other "$_AIP_PROFILE_ROOT/work/codex/skills"
+  actions=$(mktemp)
+  printf 'required\twork\tcodex/skills\t../skills\n' >"$actions"
+  printf 'remove\t../escape\toutside\t\n' >>"$actions"
+
+  run _aip_doctor_apply_actions "$_AIP_PROFILE_ROOT" "$actions"
+
+  [ "$status" -ne 0 ]
+  [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = ../other ]
+  rm -f "$actions"
+}
+
 @test "a no-op sync does not create another commit" {
   local before
   before=$(git -C "$_AIP_PROFILE_ROOT" rev-list --count HEAD)
