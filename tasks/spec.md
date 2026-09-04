@@ -1,3 +1,129 @@
+# Spec: doctor detects and repairs profile link defects (vNext)
+
+Living document — update before implementing a changed decision.
+
+## Assumptions requiring approval
+
+1. **Scope means aip-managed link layout plus all symbolic-link defects,
+   across all profiles.** `aip doctor` will collect every missing or invalid
+   required aip link and every tracked-link or live-link validation failure in
+   the profiles repository, regardless of the optional profile name. This does
+   not expand automatic repair to unrelated diagnostic failures such as Git not
+   being installed, an invalid Git identity, a missing harness executable, or
+   an unavailable remote.
+2. **Repair is an explicit second step.** A diagnostic-only run never changes
+   files. Once it has printed the complete list of repairable link defects,
+   doctor asks whether to fix them; `y`, `yes`, and an empty reply accept, and
+   `n` or `no` decline. Non-interactive invocation never prompts or changes
+   state; it prints the findings and exits non-zero.
+3. **Unsupported links may be removed.** A symlink has no copied payload of
+   its own, and the profiles repository is exclusively aip-owned. Therefore an
+   unsupported profile symlink is repaired by removing the link from both the
+   worktree and Git index. Its target is never followed, modified, or deleted.
+4. **Known machine-local pass-through links are preserved.** If an allowlisted
+   pass-through link has been mistakenly tracked, repair removes it from Git
+   tracking and restores the managed ignore entry, but leaves its working-tree
+   link intact. Required aip links with a bad/missing target are recreated with
+   aip's fixed relative target and staged.
+
+→ Correct me now or I’ll proceed with these.
+
+## Objective
+
+A stale version of aip could commit a harness pass-through link, such as
+`aip/claude/commands`. Current launch-time sync rejects that Git mode-120000
+entry, so every harness is blocked even though the profile can be repaired
+mechanically. The POSIX `doctor` path currently misses tracked-link validation
+altogether, while the PowerShell path stops at the first failure; neither
+implementation can repair a link defect.
+
+Make `aip doctor [NAME]` the discoverable recovery path for profile link
+defects: it must show the complete set before making a change, offer one
+default-yes confirmation, apply the deterministic repairs without traversing
+link targets, and verify that the repaired repository can pass the same link
+checks used before harness launch.
+
+## Success criteria
+
+- **SC1 — Complete tracked-link diagnosis:** On POSIX and PowerShell, doctor
+  inspects Git index entries for every profile and reports every tracked
+  symbolic link that is not one of aip's required links with its exact expected
+  target. It also reports required links whose stored target is wrong. A plain
+  `aip doctor` covers every profile; `aip doctor NAME` does not hide defects in
+  other profiles.
+- **SC2 — Complete managed-layout and live-link diagnosis:** Doctor reports
+  every missing required aip link, required link with the wrong live target,
+  and unsupported symlink/reparse point in profile trees (excluding the
+  existing `node_modules` exemption), without stopping after the first finding.
+  Legitimate untracked pass-through links remain clean.
+- **SC3 — Clear, default-yes repair interaction:** When one or more repairable
+  link findings exist in an interactive terminal, doctor prints all findings,
+  then asks once whether to repair them. Enter, `y`, or `yes` applies repairs;
+  `n` or `no` leaves both the worktree and index unchanged and doctor exits
+  non-zero. Invalid input reprompts. Non-interactive doctor never prompts or
+  mutates and exits non-zero when link defects are found.
+- **SC4 — Correct repairs:** Repair restores every missing or invalid required
+  managed link with aip's canonical relative target and stages it. It untracks
+  a tracked, allowlisted machine-local pass-through link while retaining the
+  valid live link and ensuring its managed `.gitignore` entry. It removes every
+  other unsupported link from the profile and index, never follows or modifies
+  a symlink target, and never touches the `node_modules` exemption.
+- **SC5 — All-or-nothing safety:** Before mutation doctor checks that every
+  planned path is within a real profile under the profiles root and that the
+  Git repository is usable. It presents the full repair set before prompting.
+  If preparing or applying a repair fails, it reports the failed path and does
+  not run sync or launch a harness; successful repairs are revalidated before
+  doctor reports success.
+- **SC6 — Launch parity after repair:** A profile blocked by a legacy tracked
+  `claude/commands` pass-through link can be repaired through doctor and the
+  next `aip run`/`aip manage` reaches its normal pre-launch sync check. No
+  unrelated profile content or machine-local link target is modified.
+- **SC7 — Test coverage and documentation:** POSIX bats and PowerShell Pester
+  cover multi-profile/multi-error aggregation, both confirmation branches plus
+  blank default, non-interactive safety, the three repair classes, target
+  non-dereference, and post-repair validation. `aip help` and
+  `skills/aip/conflicts.md` explain doctor’s prompt and the recovery behavior.
+
+## Boundaries
+
+**Always**
+
+- Keep `aip.sh` and `aip.ps1` behaviorally equivalent.
+- Use the same link policy as launch-time validation; doctor must not invent a
+  weaker allowlist or silently tolerate a link that sync rejects.
+- Print all findings before prompting and re-run validation after repair.
+- Use repository-relative, NUL-safe Git path handling; never dereference a
+  symlink as part of inspection, removal, or staging.
+- Run `npm run test:posix` and `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+  before each implementation commit.
+
+**Ask first**
+
+- Extending the pass-through allowlist or the `node_modules` exemption.
+- Repairing non-link doctor failures automatically.
+- Changing the default interactive answer away from yes.
+- Adding a command-line non-interactive force/repair flag.
+
+**Never**
+
+- Delete, write to, or otherwise follow a symlink target.
+- Remove normal files/directories merely because a sibling link is invalid.
+- Prompt or mutate in a non-interactive run.
+- Launch a harness or run sync as part of doctor repair.
+
+## Open questions
+
+1. **Commit behavior:** This spec stages deterministic repairs but does not
+   create a Git commit; the next normal checkpoint records them. This preserves
+   doctor as a repair tool rather than a hidden syncing action. Confirm this is
+   the intended behavior.
+2. **Scope wording:** The request says doctor should offer to fix “any issues.”
+   This specification interprets that as any *link* issue, because the requested
+   task is link detection and auto-fix. Confirm whether a later feature should
+   give other doctor errors their own repair flows.
+
+---
+
 # Spec: shared pi packages + pain-free machine-local config (v0.7.0)
 
 Living document — update before implementing any changed decision.

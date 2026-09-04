@@ -1,3 +1,115 @@
+# Todo: doctor detects and repairs profile link defects (vNext)
+
+Spec: `tasks/spec.md` (doctor link-repair addendum) · Plan:
+`tasks/plan.md` (same addendum). Every task leaves its affected suite green;
+run the full affected suite before committing. Commit one completed task at a
+time.
+
+## T21 — POSIX users see every profile-link problem in one doctor report
+
+Replace doctor’s fail-fast link checks with a doctor-only collecting inspection
+that scans all ordinary, valid-name profile directories and the Git index. It
+reports required managed links that are missing or wrong, tracked links that
+sync would reject, and invalid live links in deterministic profile/path order;
+the existing launch/sync validators remain fail-fast and unchanged.
+
+- [ ] A single `aip doctor NAME` report contains link findings from multiple
+  profiles, including a malformed profile that lacks `.gitignore`, before any
+  prompt or filesystem mutation.
+- [ ] The report distinguishes a wrong required-link target, a tracked
+  allowlisted pass-through link, and an ordinary unsupported link; a valid
+  pass-through link and a link below `node_modules` are omitted.
+- [ ] POSIX doctor now detects a Git index mode-120000 defect that the
+  pre-launch sync already rejects.
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix`
+- Deps: — · Files: `aip.sh`, `tests/posix/sync.bats`,
+  `tests/posix/passthrough.bats` · Size: M
+
+## T22 — POSIX users can repair every deterministic link problem at once
+
+Add the single default-yes doctor prompt and execute the approved repair plan:
+recreate required aip links, untrack a valid tracked pass-through link while
+retaining it and restoring its ignore entry, and remove all other invalid links
+without touching targets. Stage changes and revalidate, but do not commit or
+sync.
+
+- [ ] Empty input, `y`, and `yes` repair all planned actions; `n`/`no` leave
+  both worktree and index unchanged; invalid input reprompts.
+- [ ] Redirected stdin is non-mutating and non-zero when repairs are needed;
+  no repair follows, reads, writes, or deletes an external sentinel link
+  target.
+- [ ] A repaired legacy `claude/commands` link is ignored but remains live,
+  required links have canonical targets and mode `120000`, and an
+  `aip sync before` equivalent succeeds and creates the normal checkpoint.
+- Verify: `npx bats tests/posix/sync.bats tests/posix/passthrough.bats && npm run test:posix`
+- Deps: T21 · Files: `aip.sh`, `tests/posix/sync.bats`,
+  `tests/posix/passthrough.bats` · Size: M
+
+*Checkpoint 1: POSIX doctor lists the complete plan before one default-yes
+prompt; accepted repairs pass existing sync validation, while declined and
+non-interactive runs make no change.*
+
+## T23 — PowerShell users see the same complete link report
+
+Port collecting inspection and complete ordinary-profile discovery to
+PowerShell. It must report the same logical findings and ordering as POSIX,
+including the index-only defect that PowerShell currently stops on at first
+failure, without changing its existing sync gate.
+
+- [ ] Pester proves multiple live/index link findings across multiple profiles
+  are all shown before an interaction is attempted.
+- [ ] Required-link mismatch, tracked pass-through, and unsupported reparse
+  point are classified equivalently to POSIX; valid pass-through and
+  `node_modules` links remain clean.
+- [ ] The implementation uses structured finding records rather than parsing
+  formatted doctor output.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Deps: T21 (behavioral contract) · Files: `aip.ps1`,
+  `tests/powershell/Aip.Tests.ps1` · Size: M
+
+## T24 — PowerShell users can accept the same safe repair plan
+
+Implement the default-yes single prompt and all three repair classifications
+with PowerShell’s reparse-point and Git primitives. Stage and revalidate the
+final state only; never commit, sync, or dereference an external target.
+
+- [ ] Enter/`y`/`yes` accepts, `n`/`no` declines unchanged, malformed answers
+  reprompt, and redirected input remains non-mutating and non-zero.
+- [ ] Required managed links are restored exactly; a tracked valid
+  pass-through link stays live but is removed from the index and ignored; an
+  unsupported link is removed without modifying its target.
+- [ ] Pester verifies the repaired profile passes the existing pre-launch
+  sync validation and leaves a staged (not committed) repair.
+- Verify: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1`
+- Deps: T22, T23 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
+
+*Checkpoint 2: POSIX and PowerShell have matching findings, prompt answers,
+final link states, Git staging, and non-dereference guarantees.*
+
+## T25 — Users understand how doctor recovers a blocked profile
+
+Document doctor’s complete-report behavior, default-yes confirmation,
+non-interactive safety, staged-only result, and the next-launch checkpoint
+using the legacy `claude/commands` case. Keep CLI help in both implementations
+and the conflict guidance consistent.
+
+- [ ] `aip help` in POSIX and PowerShell accurately states doctor’s link
+  recovery behavior and does not promise repair for unrelated Git or
+  environment failures.
+- [ ] `skills/aip/conflicts.md` explains the legacy tracked pass-through fix,
+  the `y`/`n` prompt, default answer, and that the next normal launch commits
+  staged repairs.
+- [ ] POSIX help smoke coverage and both full suites pass with the documented
+  wording contract.
+- Verify: `npm run test:posix && pwsh -NoProfile tests/powershell/Aip.Tests.ps1 && git diff --check`
+- Deps: T22, T24 · Files: `aip.sh`, `aip.ps1`,
+  `skills/aip/conflicts.md`, `tests/posix/smoke.bats` · Size: M
+
+*Checkpoint 3: Both implementations pass their full suites; documentation,
+help, and the actual staged-only recovery flow agree.*
+
+---
+
 # Todo: v0.7.0 (POSIX)
 
 Spec: `tasks/spec.md` · Plan: `tasks/plan.md`. Every task: `npx bats` target green, then full `npm run test:posix` green before commit. Commit per task (sdlc-implement).

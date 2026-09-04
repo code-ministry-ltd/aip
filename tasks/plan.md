@@ -1,3 +1,147 @@
+# Plan: doctor detects and repairs profile link defects (vNext)
+
+Reads: `tasks/spec.md` (doctor link-repair addendum). **Planning only: no
+production-code changes in this phase.**
+
+## Overview
+
+Turn `aip doctor` into the recovery path for aip-managed link layout and
+invalid profile symlinks. Doctor will first build one complete, deterministic
+finding list across every discoverable profile and the tracked Git index, print
+that list, and—only when stdin is interactive—offer one default-yes repair.
+Repair acts only on aip's deterministic link policy: recreate the seven
+required links, untrack valid pass-through links and restore their ignore
+entries, and remove every other invalid link without dereferencing its target.
+It stages, revalidates, and leaves the normal launch checkpoint to commit.
+
+The POSIX doctor currently misses the index-link check that launch-time sync
+runs. PowerShell includes that check but returns at its first error. Both
+implementations need an independent, collecting diagnostic path rather than
+reusing their fail-fast validators directly.
+
+## Architecture decisions
+
+- **D1 — collecting doctor-only inspection, fail-fast sync unchanged.** Add
+  doctor inspection helpers that append structured findings instead of printing
+  and returning at the first failure. Keep launch/sync validation fail-fast;
+  doctor uses the exact same required-link and pass-through predicates so it
+  cannot bless a link that sync rejects. This closes the POSIX tracked-link gap
+  and gives both implementations aggregation.
+
+- **D2 — inspect all actual profile candidates.** For doctor only, enumerate
+  every ordinary, valid-name top-level profile directory, even when it is
+  malformed or missing `.gitignore`; retain the explicitly selected profile in
+  the scan. This lets a missing required link be reported rather than hidden by
+  the normal “profile has `.gitignore`” discovery rule. Findings are ordered by
+  profile then repository-relative path, with repository-level findings first.
+
+- **D3 — explicit three-way repair classification.** Each link finding becomes
+  one planned action only after containment is rechecked:
+  1. a required aip link is missing or wrong → recreate its exact fixed relative
+     target and stage it;
+  2. a valid allowlisted pass-through link is tracked → remove it from the Git
+     index only, retain the live link, and restore the managed pass-through
+     ignore entry;
+  3. every other invalid live or tracked link → remove the link itself and
+     stage the deletion. No repair ever resolves, traverses, copies, or deletes
+     the link target. The existing `node_modules` exception remains untouched.
+
+- **D4 — one interactive confirmation after complete output.** If at least one
+  repair action exists and standard input is a terminal, print `Repair these
+  link issues? [Y/n]`. Empty input, `y`, and `yes` accept; `n` and `no` decline;
+  any other input gives a concise error and reprompts. Redirected/noninteractive
+  input never prompts or mutates, preserving automation safety.
+
+- **D5 — stage, do not commit.** Before changing anything, validate that each
+  action path belongs to its ordinary profile under the profile root and that
+  the repository/index is usable. Apply the whole action list, update only the
+  relevant index entries and profile `.gitignore` files, then re-run the
+  collecting link inspection. A clean recheck means doctor succeeds with
+  repairs staged; the next harness pre-launch sync takes the ordinary
+  checkpoint commit. Any failure leaves doctor non-zero and prints the specific
+  failed action—no sync or harness launch is attempted.
+
+- **D6 — PowerShell uses equivalent native primitives.** Use a small finding
+  record collection (rather than parsing formatted output), `ReparsePoint`/
+  `SymbolicLink` predicates, `Remove-Item` on the link path only, and existing
+  `Invoke-AipGit` staging. Mirror POSIX’s action order, prompt acceptance, and
+  no-dereference guarantees rather than matching implementation details.
+
+## Phased task list
+
+### Phase 1 — shared diagnostic contract and POSIX recovery
+
+1. **Doctor shows every POSIX link defect before it changes anything**
+   - Add collecting, repository-index and live-profile link inspection with
+     deterministic ordering and complete-profile discovery; retain the current
+     sync validator unchanged.
+   - Cover multiple defects across multiple profiles, an index-only legacy
+     pass-through link, required-link target mismatch, ordinary unsupported
+     link, and the `node_modules` exemption.
+
+2. **A POSIX user can repair all deterministic link defects in one response**
+   - Add plan rendering, default-yes prompt, decline/invalid/noninteractive
+     behavior, the three repair classes, index staging, ignore restoration, and
+     post-repair validation.
+   - Cover exact target recreation, retained pass-through link with index
+     deletion, removal without target dereference, no mutation on decline,
+     and a launch-equivalent pre-sync succeeding after repair.
+
+*Checkpoint 1: `npm run test:posix` passes; a legacy tracked
+`claude/commands` link is diagnosed, accepted with blank input, staged out of
+Git, and no longer blocks the next pre-launch sync.*
+
+### Phase 2 — PowerShell parity
+
+1. **PowerShell doctor reports the same complete link-repair plan**
+   - Refactor Pester-visible validation into collecting index/live-link
+     inspections and match the POSIX ordering and classifications.
+
+2. **PowerShell doctor applies the same safe, default-yes repairs**
+   - Implement interactive confirmation and the required-link, pass-through,
+     and unsupported-link repairs; stage and revalidate without following a
+     reparse point target.
+
+*Checkpoint 2: `pwsh -NoProfile tests/powershell/Aip.Tests.ps1` passes; each
+repair matrix case has the same final index and filesystem state as POSIX.*
+
+### Phase 3 — user-facing guidance and full verification
+
+1. **Users can recover a blocked profile from doctor’s output**
+   - Update `aip help` and `skills/aip/conflicts.md` with the all-findings,
+     single-prompt, default-yes behavior; explain that repairs are staged and
+     the next normal launch checkpoints them.
+   - Add/adjust CLI help assertions and run both full test suites.
+
+*Checkpoint 3: both suites pass; docs describe the shipped behavior and the
+legacy `claude/commands` recovery path accurately.*
+
+## Risks and mitigations
+
+- **A collecting rewrite drifts from launch validation.** Keep classification
+  delegated to the existing required-link and pass-through predicates; matrix
+  tests prove doctor’s post-repair state passes the current sync validator.
+- **A broad scan follows an escaping link.** Discover with non-dereferencing
+  filesystem checks; record and mutate only the lexical link path after
+  root/profile containment checks. Tests use an external sentinel to prove the
+  target is unchanged.
+- **Prompt behavior blocks scripts.** Gate it on terminal input and test
+  redirected stdin; there is no `--force` behavior in this release.
+- **Partial repair leaves an index/worktree mismatch.** Make actions
+  idempotent, record the failing path, retain staged work for inspection, and
+  revalidate after the final action. The normal sync is never invoked by
+  doctor.
+- **Platform link semantics differ.** Assert behavior, final Git modes, and
+  target preservation independently in bats and Pester rather than sharing
+  shell-specific test helpers.
+
+## Open questions
+
+None. The approved policy is staged-only repair, interactive default-yes, and
+automatic repair of aip-managed links plus invalid profile symlinks only.
+
+---
+
 # Plan: v0.7.0 — shared pi packages, settings by default, trivial-file repair
 
 Reads: `tasks/spec.md` (governing). POSIX only (`aip.sh`); PS parity is v0.7.1 per spec Q4.
