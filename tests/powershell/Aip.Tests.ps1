@@ -157,6 +157,7 @@ It 'help, --help, and -h print the full command table and exit 0' {
     $helpOutput | Should -Match ([regex]::Escape('aip remote add URL'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote show'))
     $helpOutput | Should -Match ([regex]::Escape('aip remote remove'))
+    $helpOutput | Should -Match 'Diagnose profiles and offer safe link repairs'
     $helpOutput | Should -Match 'Quick start'
     $helpOutput | Should -Match 'README'
     $helpOutput | Should -Match 'claude, codex, pi, opencode'
