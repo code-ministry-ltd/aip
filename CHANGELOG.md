@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.8.1 — 2026-09-05
+
+- **Doctor link recovery.** `aip doctor` now checks every profile for invalid
+  tracked and live symbolic links, including broken and unexpected links, then
+  offers to stage safe repairs. Press Enter or answer `y` to accept; answer
+  `n` to leave the repository unchanged. The next normal launch syncs those
+  staged repairs before loading a harness.
 - **Pi profile status.** Pi sessions launched through aip now show
   `aip: PROFILE` in the footer. The bundled extension is loaded additively, so
   existing global, profile, project, package, and command-line extensions keep

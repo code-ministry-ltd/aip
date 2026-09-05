@@ -9,7 +9,7 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = if ($env:_AIP_IMPORT_HOME) { $env:_AIP_IMPORT_HOME } else { $HOME }
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.8.0'
+$script:AipVersion = '0.8.1'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 $script:AipCreateSkillsTreeRoot = $null
