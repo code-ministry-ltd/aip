@@ -3405,8 +3405,8 @@ Describe 'pass-through' {
     }
 
     It 'maintenance is idempotent: a second session changes nothing' {
-        $before = (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw)
         & pi *> $null
+        $before = (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw)
         & pi *> $null
         $after = (Get-Content -LiteralPath (Join-Path $script:AipProfileRoot 'work/.gitignore') -Raw)
         $after | Should -Be $before

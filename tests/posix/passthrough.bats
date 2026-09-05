@@ -46,8 +46,8 @@ setup() {
 }
 
 @test "maintenance is idempotent: a second session changes nothing" {
-  before=$(md5sum "$_AIP_PROFILE_ROOT/work/.gitignore" | cut -d' ' -f1)
   pi >/dev/null
+  before=$(md5sum "$_AIP_PROFILE_ROOT/work/.gitignore" | cut -d' ' -f1)
   run pi
   [ "$status" -eq 0 ]
   after=$(md5sum "$_AIP_PROFILE_ROOT/work/.gitignore" | cut -d' ' -f1)
