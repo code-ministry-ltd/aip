@@ -327,7 +327,8 @@ Only the fixed set of configuration inputs below is ever linked. These are exact
 machine-local settings, credentials, and user-authored agents/themes/commands that
 make sense to share by default. Instruction files aip already manages (`AGENTS.md`,
 `CLAUDE.md`, `instructions.md`, `APPEND_SYSTEM.md`, every `skills/` path) and runtime
-state (sessions, logs, caches, databases, shell snapshots, Codex `packages/`) are
+state (sessions, logs, caches, databases, shell snapshots, Codex `tmp/` and
+`packages/`) are
 never passed through — those stay per-profile, and anything off the list can be copied
 deliberately with `aip import`.
 
@@ -381,7 +382,7 @@ Tracked filenames must use printable ASCII and avoid Windows-reserved characters
 
 ## Secret boundary
 
-aip **refuses to sync** if known credential, session, transcript, log, cache or database paths are tracked — locally, under any profile's `skills/`, or arriving from the remote. Every sync checks the tracked trees against a denylist covering `.env` files, private keys, `.netrc`/`.npmrc`/`.pypirc`, Claude credentials/history, Codex `auth.json`/sessions/databases, and equivalent Pi/OpenCode runtime paths. The symbolic-link policy is the fail-closed half: the only links aip accepts in the tracked tree are its own relative links and the pass-through links below — anything else blocks the sync.
+aip **refuses to sync** if known credential, session, transcript, log, cache or database paths are tracked — locally, under any profile's `skills/`, or arriving from the remote. Every sync checks the tracked trees against a denylist covering `.env` files, private keys, `.netrc`/`.npmrc`/`.pypirc`, Claude credentials/history, Codex `auth.json`/sessions/logs/caches/`tmp`/databases, and equivalent Pi/OpenCode runtime paths. The symbolic-link policy is the fail-closed half: the only links aip accepts in the tracked tree are its own relative links and the pass-through links below — anything else blocks the sync.
 
 Native settings can still embed secrets. Inspect a file before deliberately tracking it:
 

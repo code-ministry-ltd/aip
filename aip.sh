@@ -423,11 +423,11 @@ _aip_check_live_profile_links() {
   # shellcheck disable=SC2094
   while IFS= read -r -d '' link_path; do
     relative=${link_path#"$profile"/}
-    # node_modules is machine-local and forbidden from ever being tracked
-    # (see _aip_is_forbidden_path); the links npm creates inside it are
-    # npm's, not the profile's, so they are exempt from this check.
+    # node_modules and codex/tmp are machine-local and forbidden from ever being
+    # tracked (see _aip_is_forbidden_path); links harnesses create inside them
+    # are runtime state, not profile content, so they are exempt from this check.
     case $relative in
-      node_modules|node_modules/*|*/node_modules|*/node_modules/*) continue ;;
+      node_modules|node_modules/*|*/node_modules|*/node_modules/*|codex/tmp|codex/tmp/*) continue ;;
     esac
     if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
       if _aip_is_legacy_primary_config_link "$relative" "$profile"; then
@@ -450,7 +450,7 @@ _aip_doctor_check_live_profile_links() {
   while IFS= read -r -d '' link_path; do
     relative=${link_path#"$profile"/}
     case $relative in
-      node_modules|node_modules/*|*/node_modules|*/node_modules/*) continue ;;
+      node_modules|node_modules/*|*/node_modules|*/node_modules/*|codex/tmp|codex/tmp/*) continue ;;
     esac
     if ! _aip_is_required_profile_link "$relative" && ! _aip_is_passthrough_link "$relative" "$profile"; then
       if _aip_is_legacy_primary_config_link "$relative" "$profile"; then
@@ -1448,7 +1448,7 @@ _aip_write_profile_files() {
     '.netrc' '.npmrc' '.pypirc' 'id_rsa' 'id_dsa' 'id_ecdsa' 'id_ed25519' 'node_modules/' \
     '**/.credentials.json' '**/auth.json' \
     'claude/.credentials.json' 'claude/history.jsonl' 'claude/projects/' 'claude/session-env/' 'claude/shell-snapshots/' 'claude/statsig/' 'claude/todos/' 'claude/debug/' 'claude/cache/' 'claude/logs/' 'claude/file-history/' \
-    'codex/auth.json' 'codex/history.jsonl' 'codex/sessions/' 'codex/archived_sessions/' 'codex/log/' 'codex/logs/' 'codex/cache/' 'codex/*.db' 'codex/*.db-*' 'codex/*.sqlite' 'codex/*.sqlite-*' \
+    'codex/auth.json' 'codex/history.jsonl' 'codex/sessions/' 'codex/archived_sessions/' 'codex/log/' 'codex/logs/' 'codex/cache/' 'codex/tmp/' 'codex/*.db' 'codex/*.db-*' 'codex/*.sqlite' 'codex/*.sqlite-*' \
     'pi/auth.json' 'pi/sessions/' 'pi/logs/' 'pi/cache/' 'pi/models-store.json' \
     'opencode/auth.json' 'opencode/sessions/' 'opencode/logs/' 'opencode/cache/' \
     >"$profile_path/.gitignore" || return
@@ -2240,7 +2240,7 @@ _aip_is_forbidden_path() {
     .env|.env.*|*/.env|*/.env.*|*.pem|*.key|*.p12|*.pfx|.netrc|*/.netrc|.npmrc|*/.npmrc|.pypirc|*/.pypirc|id_rsa|*/id_rsa|id_dsa|*/id_dsa|id_ecdsa|*/id_ecdsa|id_ed25519|*/id_ed25519) return 0 ;;
     .credentials.json|*/.credentials.json|auth.json|*/auth.json) return 0 ;;
     claude/.credentials.json|claude/history.jsonl|claude/projects|claude/projects/*|claude/session-env|claude/session-env/*|claude/shell-snapshots|claude/shell-snapshots/*|claude/statsig|claude/statsig/*|claude/todos|claude/todos/*|claude/debug|claude/debug/*|claude/cache|claude/cache/*|claude/logs|claude/logs/*|claude/file-history|claude/file-history/*) return 0 ;;
-    codex/auth.json|codex/history.jsonl|codex/sessions|codex/sessions/*|codex/archived_sessions|codex/archived_sessions/*|codex/log|codex/log/*|codex/logs|codex/logs/*|codex/cache|codex/cache/*|codex/*.db|codex/*.db-*|codex/*.sqlite|codex/*.sqlite-*) return 0 ;;
+    codex/auth.json|codex/history.jsonl|codex/sessions|codex/sessions/*|codex/archived_sessions|codex/archived_sessions/*|codex/log|codex/log/*|codex/logs|codex/logs/*|codex/cache|codex/cache/*|codex/tmp|codex/tmp/*|codex/*.db|codex/*.db-*|codex/*.sqlite|codex/*.sqlite-*) return 0 ;;
     pi/auth.json|pi/sessions|pi/sessions/*|pi/logs|pi/logs/*|pi/cache|pi/cache/*|pi/models-store.json) return 0 ;;
     opencode/auth.json|opencode/sessions|opencode/sessions/*|opencode/logs|opencode/logs/*|opencode/cache|opencode/cache/*) return 0 ;;
     node_modules|node_modules/*|*/node_modules|*/node_modules/*) return 0 ;;

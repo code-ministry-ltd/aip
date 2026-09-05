@@ -510,7 +510,7 @@ function Get-AipGitIgnoreLines {
         '.netrc', '.npmrc', '.pypirc', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'node_modules/',
         '**/.credentials.json', '**/auth.json',
         'claude/.credentials.json', 'claude/history.jsonl', 'claude/projects/', 'claude/session-env/', 'claude/shell-snapshots/', 'claude/statsig/', 'claude/todos/', 'claude/debug/', 'claude/cache/', 'claude/logs/', 'claude/file-history/',
-        'codex/auth.json', 'codex/history.jsonl', 'codex/sessions/', 'codex/archived_sessions/', 'codex/log/', 'codex/logs/', 'codex/cache/', 'codex/*.db', 'codex/*.db-*', 'codex/*.sqlite', 'codex/*.sqlite-*',
+        'codex/auth.json', 'codex/history.jsonl', 'codex/sessions/', 'codex/archived_sessions/', 'codex/log/', 'codex/logs/', 'codex/cache/', 'codex/tmp/', 'codex/*.db', 'codex/*.db-*', 'codex/*.sqlite', 'codex/*.sqlite-*',
         'pi/auth.json', 'pi/sessions/', 'pi/logs/', 'pi/cache/', 'pi/models-store.json',
         'opencode/auth.json', 'opencode/sessions/', 'opencode/logs/', 'opencode/cache/'
     )
@@ -881,10 +881,10 @@ function Test-AipProfileReparsePoints {
                 if ([IO.Path]::GetFullPath($item.FullName) -eq $gitPath) { continue }
                 $relative = [IO.Path]::GetRelativePath($ProfilePath, $item.FullName).Replace('\', '/')
                 if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-                    # node_modules is machine-local and forbidden from ever being
-                    # tracked (see Test-AipForbiddenPath); the links npm creates
-                    # inside it are npm's, not the profile's.
-                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*') { continue }
+                    # node_modules and codex/tmp are machine-local and forbidden
+                    # from ever being tracked (see Test-AipForbiddenPath); links
+                    # harnesses create inside them are runtime state, not profile content.
+                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*' -or $relative -eq 'codex/tmp' -or $relative -like 'codex/tmp/*') { continue }
                     if ($item.LinkType -ne 'SymbolicLink' -or (-not $required.Contains($relative) -and -not (Test-AipPassthroughLink $relative $ProfilePath))) {
                         if ($item.LinkType -eq 'SymbolicLink' -and (Test-AipLegacyPrimaryConfigLink $relative $ProfilePath)) {
                             Write-AipWarning "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
@@ -1065,7 +1065,7 @@ function Get-AipDoctorLinkFinding {
             foreach ($item in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue)) {
                 $relative = [IO.Path]::GetRelativePath($profile, $item.FullName).Replace('\', '/')
                 if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
-                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*') { continue }
+                    if ($relative -eq 'node_modules' -or $relative -like 'node_modules/*' -or $relative -like '*/node_modules' -or $relative -like '*/node_modules/*' -or $relative -eq 'codex/tmp' -or $relative -like 'codex/tmp/*') { continue }
                     if ($required.Contains($relative)) { continue }
                     if ($item.LinkType -eq 'SymbolicLink' -and ((Test-AipPassthroughLink $relative $profile) -or (Test-AipLegacyPrimaryConfigLink $relative $profile))) { continue }
                     Add-LinkFinding remove $name $relative '' "profile contains an unsupported symbolic link, junction, or mount: $name/$relative"
@@ -1422,6 +1422,8 @@ function Test-AipForbiddenPath {
         'codex/logs/*' { return $true }
         'codex/cache' { return $true }
         'codex/cache/*' { return $true }
+        'codex/tmp' { return $true }
+        'codex/tmp/*' { return $true }
         'codex/*.db' { return $true }
         'codex/*.db-*' { return $true }
         'codex/*.sqlite' { return $true }

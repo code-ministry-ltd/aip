@@ -6,6 +6,9 @@
   now installed in Pi's normal machine-local extension directory instead of
   being injected as a command-line option, so `pi` subcommands and flags pass
   through unchanged.
+- **Tolerate Codex runtime links.** Codex's machine-local `tmp/` scratch tree
+  is ignored and excluded from live profile-link validation, while tracked
+  files and links there remain forbidden from sync.
 
 ## 0.8.1 — 2026-09-05
 
