@@ -48,7 +48,7 @@ setup() {
   [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
 }
 
-@test "Pi loads the bundled profile status extension alongside user extensions" {
+@test "Pi discovers the bundled profile status extension without changing user arguments" {
   local runtime_root
   runtime_root=$(CDPATH='' cd -- "$BATS_TEST_DIRNAME/../.." && pwd -P)
   export AIP_ACTIVE_PROFILE='original value'
@@ -56,14 +56,18 @@ setup() {
   pi --extension /user/other-extension.ts prompt >/dev/null
 
   grep -Fx "AIP_ACTIVE_PROFILE=work" "$FAKE_CAPTURE"
-  expected=$(printf '%s\n' \
-    "arg=--extension" \
-    "arg=$runtime_root/extensions/aip-status.ts" \
-    'arg=--extension' \
-    'arg=/user/other-extension.ts' \
-    'arg=prompt')
+  [ -f "$HOME/.pi/agent/extensions/aip-status.ts" ]
+  cmp -s "$runtime_root/extensions/aip-status.ts" "$HOME/.pi/agent/extensions/aip-status.ts"
+  expected=$(printf '%s\n' 'arg=--extension' 'arg=/user/other-extension.ts' 'arg=prompt')
   [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
   [ "$AIP_ACTIVE_PROFILE" = 'original value' ]
+}
+
+@test "Pi subcommands and options are forwarded unchanged" {
+  pi update --all >/dev/null
+
+  expected=$(printf '%s\n' 'arg=update' 'arg=--all')
+  [ "$(grep '^arg=' "$FAKE_CAPTURE")" = "$expected" ]
 }
 
 @test "Codex instructions are always encoded as one TOML string value" {

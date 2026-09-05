@@ -545,9 +545,6 @@ Describe 'harness wrappers' {
                 $testArguments = @($testArguments | Where-Object { $_ -ne '%PATH%' })
                 $expectedArguments = @($expectedArguments | Where-Object { $_ -ne 'arg=%PATH%' })
             }
-            if ($harness -eq 'pi') {
-                $expectedArguments = @('arg=--extension', "arg=$(Join-Path $script:RepositoryRoot 'extensions/aip-status.ts')") + $expectedArguments
-            }
             & $harness @testArguments *> $null
             $global:LASTEXITCODE | Should -Be 0
             $capture = Get-Content $script:FakeCapture -Raw
@@ -564,16 +561,17 @@ Describe 'harness wrappers' {
         }
     }
 
-    It 'loads the bundled Pi profile status extension alongside user extensions' {
+    It 'discovers the bundled Pi profile status extension without changing user arguments' {
         $env:AIP_ACTIVE_PROFILE = 'original value'
 
         pi --extension '/user/other-extension.ts' prompt *> $null
 
         $capture = Get-Content $script:FakeCapture
         $capture | Should -Contain 'AIP_ACTIVE_PROFILE=work'
+        Test-Path (Join-Path $script:AipImportHome '.pi/agent/extensions/aip-status.ts') | Should -BeTrue
+        (Get-FileHash -LiteralPath (Join-Path $script:AipImportHome '.pi/agent/extensions/aip-status.ts')).Hash |
+            Should -Be (Get-FileHash -LiteralPath (Join-Path $script:RepositoryRoot 'extensions/aip-status.ts')).Hash
         @($capture | Where-Object { $_ -like 'arg=*' }) | Should -Be @(
-            'arg=--extension'
-            "arg=$(Join-Path $script:RepositoryRoot 'extensions/aip-status.ts')"
             'arg=--extension'
             'arg=/user/other-extension.ts'
             'arg=prompt'

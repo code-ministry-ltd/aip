@@ -2110,6 +2110,7 @@ function Invoke-AipHarness {
         $global:LASTEXITCODE = 127
         return
     }
+    if ($Harness -eq 'pi') { Install-AipPiStatusExtension }
     Invoke-AipPassthrough $Harness $profile.Name
     Invoke-AipSync 'before'
     if ($script:AipCommandStatus -ne 0) { $global:LASTEXITCODE = $script:AipCommandStatus; return }
@@ -2142,9 +2143,6 @@ function Invoke-AipHarness {
             $instructions = (Get-AipUtf8TextFile $instructionPath).TrimEnd("`r", "`n")
             $tomlInstructions = ConvertTo-AipTomlString $instructions
             $nativeArguments = @('-c', "developer_instructions=$tomlInstructions") + $nativeArguments
-        }
-        elseif ($Harness -eq 'pi' -and (Test-Path -LiteralPath $script:AipStatusExtension -PathType Leaf)) {
-            $nativeArguments = @('--extension', $script:AipStatusExtension) + $nativeArguments
         }
         $childStarted = $true
         $global:LASTEXITCODE = 0
@@ -2992,6 +2990,52 @@ function Get-AipImportHarnessRoot {
         'codex' { return Join-Path $script:AipImportHome '.codex' }
         'opencode' { return Join-Path $script:AipImportHome '.config/opencode' }
         default { return $null }
+    }
+}
+
+function Install-AipPiStatusExtension {
+    # Pi discovers extensions from its normal machine-local extensions directory.
+    # Install aip's status extension there so the wrapper can pass every user
+    # argument through unchanged, including arbitrary Pi subcommands and flags.
+    $source = $script:AipStatusExtension
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        Write-AipWarning "bundled Pi status extension was not found: $source"
+        return
+    }
+    $root = Get-AipImportHarnessRoot 'pi'
+    if (-not $root) { return }
+    $extensions = Join-Path $root 'extensions'
+    try {
+        if (-not (Test-Path -LiteralPath $extensions -PathType Container)) {
+            New-Item -ItemType Directory -Path $extensions -Force -ErrorAction Stop | Out-Null
+        }
+        $target = Join-Path $extensions 'aip-status.ts'
+        $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+        if ($null -ne $item -and $item.LinkType) {
+            Write-AipWarning "Pi's machine-local status extension path is a symbolic link; leaving it untouched: $target"
+            return
+        }
+        if ($null -ne $item -and -not $item.PSIsContainer -and
+            (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash) {
+            return
+        }
+        if ($null -ne $item) {
+            Write-AipWarning "Pi's machine-local status extension already exists and differs; leaving it untouched: $target"
+            return
+        }
+        $temporary = Join-Path $extensions ('.aip-status-{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+        try {
+            Copy-Item -LiteralPath $source -Destination $temporary -ErrorAction Stop
+            Move-Item -LiteralPath $temporary -Destination $target -ErrorAction Stop
+        }
+        finally {
+            if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+                Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    catch {
+        Write-AipWarning "could not install Pi's machine-local status extension: $($_.Exception.Message)"
     }
 }
 
