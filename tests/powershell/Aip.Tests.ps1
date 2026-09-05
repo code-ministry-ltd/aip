@@ -1578,6 +1578,37 @@ Describe 'Git checkpoint and sync' {
         (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'outside'
     }
 
+    It 'tolerates Codex runtime symlinks under codex/tmp' {
+        $profile = Join-Path $script:AipProfileRoot 'work'
+        $scratch = Join-Path $profile 'codex/tmp/arg0'
+        New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+        $external = Join-Path $TestDrive 'external-codex-bin'
+        'outside' | Set-Content -LiteralPath $external
+        New-Item -ItemType SymbolicLink -Path (Join-Path $scratch 'apply_patch') -Target $external | Out-Null
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        (Get-Content -LiteralPath (Join-Path $profile '.gitignore')) | Should -Contain 'codex/tmp/'
+        $doctorOutput = aip doctor work | Out-String
+        $global:LASTEXITCODE | Should -Be 0
+        $doctorOutput | Should -Not -Match 'codex/tmp/arg0/apply_patch.*unsupported symbolic link'
+    }
+
+    It 'rejects tracked Codex runtime paths' {
+        $profile = Join-Path $script:AipProfileRoot 'work'
+        $scratch = Join-Path $profile 'codex/tmp'
+        New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+        'runtime' | Set-Content -LiteralPath (Join-Path $scratch 'state')
+        & git -C $script:AipProfileRoot add -f work/codex/tmp/state
+        & git -C $script:AipProfileRoot commit -q -m 'unsafe tracked Codex runtime'
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'forbidden credential or runtime path is tracked'
+    }
+
     It 'tolerates a profile whose tracked .gitignore is missing when its links are intact' {
         $root = $script:AipProfileRoot
         & git -C $root rm -q --cached work/.gitignore

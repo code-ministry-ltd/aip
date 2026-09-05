@@ -365,6 +365,34 @@ make_upstream() {
   [ "$(cat "$external")" = outside ]
 }
 
+@test "sync tolerates Codex runtime symlinks under codex/tmp" {
+  local external="$BATS_TEST_TMPDIR/external-codex-bin"
+  mkdir -p "$_AIP_PROFILE_ROOT/work/codex/tmp/arg0"
+  printf 'outside\n' >"$external"
+  # Codex creates these links while bootstrapping its machine-local scratch tree.
+  ln -s "$external" "$_AIP_PROFILE_ROOT/work/codex/tmp/arg0/apply_patch"
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  grep -Fx 'codex/tmp/' "$_AIP_PROFILE_ROOT/work/.gitignore"
+  run aip doctor work
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'codex/tmp/arg0/apply_patch'*'unsupported symbolic link'* ]]
+}
+
+@test "sync rejects tracked Codex runtime paths" {
+  mkdir -p "$_AIP_PROFILE_ROOT/work/codex/tmp"
+  printf 'runtime\n' >"$_AIP_PROFILE_ROOT/work/codex/tmp/state"
+  git -C "$_AIP_PROFILE_ROOT" add -f work/codex/tmp/state
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'unsafe tracked Codex runtime'
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'forbidden credential or runtime path is tracked'* ]]
+}
+
 @test "sync tolerates a profile whose tracked .gitignore is missing when its links are intact" {
   git -C "$_AIP_PROFILE_ROOT" rm -q --cached work/.gitignore
   git -C "$_AIP_PROFILE_ROOT" commit -q -m 'drop tracked gitignore'
