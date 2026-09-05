@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.8.0'
+_AIP_VERSION='0.8.1'
 if [ -z "${_AIP_RUNTIME_ROOT-}" ]; then
   if [ -n "${BASH_VERSION-}" ]; then
     _AIP_RUNTIME_SOURCE=${BASH_SOURCE[0]}
