@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.2 — 2026-09-05
+
 - **Preserve Pi command arguments.** The bundled profile-status extension is
   now installed in Pi's normal machine-local extension directory instead of
   being injected as a command-line option, so `pi` subcommands and flags pass
