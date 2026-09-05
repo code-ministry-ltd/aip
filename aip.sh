@@ -3125,6 +3125,48 @@ _aip_toml_string() {
   printf '"%s"' "$value"
 }
 
+_aip_install_pi_status_extension() {
+  # Pi discovers extensions from its normal machine-local extensions directory.
+  # Install aip's small status extension there so the wrapper never has to add
+  # command-line arguments before (or after) the user's arguments. This keeps
+  # every Pi subcommand and option intact while retaining the existing
+  # pass-through link for profiles that use the machine-local extension store.
+  local source=$_AIP_STATUS_EXTENSION root target temporary
+  [ -f "$source" ] || {
+    _aip_warn "bundled Pi status extension was not found: $source"
+    return 0
+  }
+  root=$(_aip_import_harness_root pi) || return 0
+  if [ ! -d "$root/extensions" ] && ! command mkdir -p -- "$root/extensions" 2>/dev/null; then
+    _aip_warn "could not create Pi's machine-local extension directory: $root/extensions"
+    return 0
+  fi
+  target=$root/extensions/aip-status.ts
+  if [ -L "$target" ]; then
+    _aip_warn "Pi's machine-local status extension path is a symbolic link; leaving it untouched: $target"
+    return 0
+  fi
+  if [ -e "$target" ] && [ ! -f "$target" ]; then
+    _aip_warn "Pi's machine-local status extension path is not a regular file; leaving it untouched: $target"
+    return 0
+  fi
+  if [ -e "$target" ] && ! command cmp -s -- "$source" "$target"; then
+    _aip_warn "Pi's machine-local status extension already exists and differs; leaving it untouched: $target"
+    return 0
+  fi
+  [ -f "$target" ] && return 0
+  temporary=$(command mktemp "$root/extensions/.aip-status.ts.XXXXXX") || {
+    _aip_warn "could not stage Pi's machine-local status extension: $target"
+    return 0
+  }
+  if command cp -- "$source" "$temporary" && command mv -f -- "$temporary" "$target"; then
+    :
+  else
+    command rm -f -- "$temporary"
+    _aip_warn "could not install Pi's machine-local status extension: $target"
+  fi
+}
+
 _aip_run_harness() (
   local explicit_supplied=$1 explicit=$2 harness=$3 profile_path real child_status instructions _AIP_CHILD_SIGNAL_STATUS=
   shift 3
@@ -3137,6 +3179,9 @@ _aip_run_harness() (
   else _aip_resolve_profile || return
   fi
   profile_path=$(_aip_profile_path "$_AIP_RESOLVED_NAME")
+  if [ "$harness" = pi ]; then
+    _aip_install_pi_status_extension
+  fi
   _aip_passthrough "$harness" "$_AIP_RESOLVED_NAME"
   real=$(_aip_find_real_command "$harness") || {
     _aip_error "$harness executable was not found in PATH"
@@ -3175,12 +3220,7 @@ _aip_run_harness() (
       PI_CODING_AGENT_DIR=$profile_path/pi
       AIP_ACTIVE_PROFILE=$_AIP_RESOLVED_NAME
       export PI_CODING_AGENT_DIR AIP_ACTIVE_PROFILE
-      if [ -f "$_AIP_STATUS_EXTENSION" ]; then
-        if "$real" --extension "$_AIP_STATUS_EXTENSION" "$@"; then child_status=0; else child_status=$?; fi
-      else
-        _aip_warn "bundled Pi status extension was not found: $_AIP_STATUS_EXTENSION"
-        if "$real" "$@"; then child_status=0; else child_status=$?; fi
-      fi
+      if "$real" "$@"; then child_status=0; else child_status=$?; fi
       ;;
     opencode)
       OPENCODE_CONFIG_DIR=$profile_path/opencode
