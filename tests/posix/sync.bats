@@ -348,6 +348,7 @@ make_upstream() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported symbolic link'* ]]
+  [[ "$output" == *"run 'aip doctor' to repair it"* ]]
   [ "$(cat "$external")" = outside ]
 }
 
@@ -412,6 +413,7 @@ make_upstream() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unexpected target'* ]]
+  [[ "$output" == *"run 'aip doctor' to repair it"* ]]
 }
 
 @test "sync rejects a tracked optional link even under a healthy profile" {
@@ -423,6 +425,19 @@ make_upstream() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *'unsupported symbolic link'* ]]
+  [[ "$output" == *"run 'aip doctor' to repair it"* ]]
+}
+
+@test "sync points a tracked pass-through link at aip doctor" {
+  mkdir -p "$HOME/.claude/commands"
+  ln -s "$HOME/.claude/commands" "$_AIP_PROFILE_ROOT/work/claude/commands"
+  git -C "$_AIP_PROFILE_ROOT" add -f work/claude/commands
+
+  run aip sync
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'tracked profile contains an unsupported symbolic link: work/claude/commands'* ]]
+  [[ "$output" == *"run 'aip doctor' to repair it"* ]]
 }
 
 @test "doctor reports live and tracked link defects across profiles" {
@@ -586,6 +601,29 @@ make_upstream() {
   [ "$status" -ne 0 ]
   [ "$(readlink "$_AIP_PROFILE_ROOT/work/codex/skills")" = ../other ]
   rm -f "$actions"
+}
+
+@test "doctor names the cause when the profiles repository is unreadable" {
+  printf 'not a git index' >"$_AIP_PROFILE_ROOT/.git/index"
+
+  run aip doctor work
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"profiles Git repository is unreadable: $_AIP_PROFILE_ROOT"* ]]
+  [[ "$output" == *'Git reported:'* ]]
+  [[ "$output" == *'index.lock'* ]]
+  [[ "$output" == *'safe.directory'* ]]
+}
+
+@test "the unreadable-repository detail reports Git's own error and the root" {
+  printf 'not a git index' >"$_AIP_PROFILE_ROOT/.git/index"
+
+  run _aip_git_status_failure_detail "$_AIP_PROFILE_ROOT"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Git reported:'* ]]
+  [[ "$output" == *"$_AIP_PROFILE_ROOT"* ]]
+  [[ "$output" == *'index.lock'* ]]
 }
 
 @test "a no-op sync does not create another commit" {
