@@ -2261,8 +2261,9 @@ _aip_is_forbidden_path() {
 }
 
 _aip_validate_portable_paths_file() {
-  local paths_file=$1 lines keys sorted relative remaining component base utf8_locale
-  utf8_locale=$(_aip_find_utf8_locale) || { _AIP_PORTABLE_PATH_ERROR='no UTF-8 locale is available'; return 1; }
+  local paths_file=$1 lines keys sorted relative remaining component base
+  # The lookup is a pure availability check; only its status matters here.
+  _aip_find_utf8_locale >/dev/null || { _AIP_PORTABLE_PATH_ERROR='no UTF-8 locale is available'; return 1; }
   command iconv -f UTF-8 -t UTF-8 "$paths_file" >/dev/null 2>&1 || {
     _AIP_PORTABLE_PATH_ERROR='invalid UTF-8 path'
     return 1
