@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.3 — 2026-09-11
+
 - **Actionable link errors.** The link failures that block a sync or a harness
   launch now end with `run 'aip doctor' to repair it`, so a blocked user is
   pointed at the documented recovery path instead of being left to guess. The
