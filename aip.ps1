@@ -890,7 +890,7 @@ function Test-AipProfileReparsePoints {
                             Write-AipWarning "legacy primary-config link $relative is tolerated until migration; run 'aip update' to make it profile-owned"
                             continue
                         }
-                        $script:AipProfileBoundaryError = "profile contains an unsupported symbolic link, junction, or mount that could escape its boundary: $relative"
+                        $script:AipProfileBoundaryError = "profile contains an unsupported symbolic link, junction, or mount that could escape its boundary: $relative; run 'aip doctor' to repair it"
                         return $false
                     }
                     continue
@@ -1558,7 +1558,7 @@ function Test-AipTrackedPathsSafe {
             $relative = ([string]$Matches[1]).Replace('\', '/')
             $expected = Get-AipRequiredLinkTarget $relative
             if ($null -eq $expected) {
-                Write-AipError "tracked profile contains an unsupported symbolic link: $relative"
+                Write-AipError "tracked profile contains an unsupported symbolic link: $relative; run 'aip doctor' to repair it"
                 return $false
             }
             $hash = ([string]$entry -split ' ')[1]
@@ -1568,7 +1568,7 @@ function Test-AipTrackedPathsSafe {
                 return $false
             }
             if ($target -cne $expected) {
-                Write-AipError "tracked profile link has an unexpected target: $relative"
+                Write-AipError "tracked profile link has an unexpected target: $relative; run 'aip doctor' to repair it"
                 return $false
             }
         }

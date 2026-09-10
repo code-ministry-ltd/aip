@@ -435,7 +435,7 @@ _aip_check_live_profile_links() {
         continue
       fi
       command rm -f "$entries"
-      _aip_error "profile contains an unsupported symbolic link that could escape its boundary: $relative"
+      _aip_error "profile contains an unsupported symbolic link that could escape its boundary: $relative; run 'aip doctor' to repair it"
       return 1
     fi
   done <"$entries"
@@ -1923,6 +1923,17 @@ _aip_doctor_profile_layout() {
   printf 'OK: profile layout and links (%s)\n' "$name"
 }
 
+_aip_git_status_failure_detail() {
+  # $1 profiles root. Explains why `git status` failed there, so a doctor repair
+  # refusal names the real cause instead of leaving the user to guess. The usual
+  # causes are a stale .git/index.lock from an interrupted aip run, a corrupt
+  # index, or a repository owned by another user (Git's dubious-ownership guard).
+  local root=$1 git_error
+  git_error=$(LC_ALL=C _aip_git -C "$root" status --porcelain 2>&1 >/dev/null)
+  [ -z "$git_error" ] || printf 'Git reported: %s\n' "$git_error"
+  printf "FIX: inspect it with 'git -C \"%s\" status'; usual causes are a stale .git/index.lock left by an interrupted aip run, a corrupt index, or a repository owned by another user (git config --global --add safe.directory \"%s\")\n" "$root" "$root"
+}
+
 _aip_doctor() (
   _aip_clear_git_routing
   [ "$#" -le 1 ] || {
@@ -1968,7 +1979,8 @@ _aip_doctor() (
       repo_ok=0
     }
     _aip_git -C "$root" status --porcelain >/dev/null 2>&1 || {
-      printf 'ERROR: profiles Git repository is unreadable\n'
+      printf 'ERROR: profiles Git repository is unreadable: %s\n' "$root"
+      _aip_git_status_failure_detail "$root"
       errors=1
       repo_ok=0
     }
@@ -2726,7 +2738,7 @@ _aip_check_tracked_links() {
     relative=${record#*$'\t'}
     if ! expected=$(_aip_required_link_target "$relative"); then
       command rm -f "$entries"
-      _aip_error "tracked profile contains an unsupported symbolic link: $relative"
+      _aip_error "tracked profile contains an unsupported symbolic link: $relative; run 'aip doctor' to repair it"
       return 1
     fi
     rest=${record#* }
@@ -2738,7 +2750,7 @@ _aip_check_tracked_links() {
     fi
     if [ "$target" != "$expected" ]; then
       command rm -f "$entries"
-      _aip_error "tracked profile link has an unexpected target: $relative"
+      _aip_error "tracked profile link has an unexpected target: $relative; run 'aip doctor' to repair it"
       return 1
     fi
   done <"$entries"
@@ -2822,7 +2834,8 @@ _aip_doctor_has_action() {
 _aip_doctor_apply_actions() {
   local root=$1 actions=$2 kind name rel target profile path errors=0 canonical parent parent_rel desired
   _aip_git -C "$root" status --porcelain >/dev/null 2>&1 || {
-    printf 'ERROR: refusing doctor repair because the profiles repository is unreadable\n'
+    printf 'ERROR: refusing doctor repair because the profiles repository is unreadable: %s\n' "$root"
+    _aip_git_status_failure_detail "$root"
     return 1
   }
 

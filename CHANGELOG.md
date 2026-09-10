@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Actionable link errors.** The link failures that block a sync or a harness
+  launch now end with `run 'aip doctor' to repair it`, so a blocked user is
+  pointed at the documented recovery path instead of being left to guess. The
+  hint is added only where doctor can actually help: an unsupported live link,
+  an unsupported tracked link (such as a tracked pass-through like
+  `claude/commands`), and a tracked link with an unexpected target. Failures
+  doctor cannot repair—an unreadable stored link target, and invalid links
+  inside an incoming remote tree—keep their original wording.
+
+- **Diagnostic doctor refusals.** Doctor's two "repository is unreadable"
+  guards no longer discard Git's own error. Each now names the profiles root,
+  prints what Git reported, and lists the usual causes—a stale
+  `.git/index.lock` left by an interrupted run, a corrupt index, or a
+  repository owned by another user—with the command that fixes the last one,
+  so a blocked user can tell which it is instead of guessing.
+
 ## 0.8.2 — 2026-09-05
 
 - **Preserve Pi command arguments.** The bundled profile-status extension is

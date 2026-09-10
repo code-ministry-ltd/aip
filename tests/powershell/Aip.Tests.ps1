@@ -1559,6 +1559,7 @@ Describe 'Git checkpoint and sync' {
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unsupported symbolic link'
+        $script:AipLastError | Should -Match "run 'aip doctor' to repair it"
         (Get-Content -LiteralPath $external -Raw).Trim() | Should -Be 'outside'
     }
 
@@ -1631,6 +1632,7 @@ Describe 'Git checkpoint and sync' {
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unexpected target'
+        $script:AipLastError | Should -Match "run 'aip doctor' to repair it"
     }
 
     It 'rejects a tracked optional link even under a healthy profile' {
@@ -1644,6 +1646,7 @@ Describe 'Git checkpoint and sync' {
 
         $global:LASTEXITCODE | Should -Not -Be 0
         $script:AipLastError | Should -Match 'unsupported symbolic link'
+        $script:AipLastError | Should -Match "run 'aip doctor' to repair it"
     }
 
     It 'pulls and pushes through a local bare upstream' {
