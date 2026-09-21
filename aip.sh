@@ -3058,6 +3058,131 @@ _aip_format_conflict_list() {
   '
 }
 
+_aip_collision_keeps_local() {
+  # $1 profiles root, $2 fetched upstream commit, $3 conflict records. Returns 0
+  # when every conflicting path can be kept as the local version: an ordinary
+  # untracked file that the incoming commit replaces at the same exact path,
+  # inside a profile, and outside the credential and runtime denylist. An
+  # ignored path, a link or directory, a case-only or directory-level
+  # collision, and a forbidden path are all excluded, because keeping any of
+  # them would leave a tracked state the validators before a push reject.
+  local root=$1 upstream_commit=$2 records=$3 record kind path rel name
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    kind=${record%%$'\t'*}
+    path=${record#*$'\t'}
+    [ "$kind" = untracked ] || return 1
+    case $path in */*) ;; *) return 1 ;; esac
+    name=${path%%/*}
+    rel=${path#*/}
+    _aip_validate_name "$name" || return 1
+    [ -f "$root/$path" ] && [ ! -L "$root/$path" ] || return 1
+    _aip_git -C "$root" cat-file -e "$upstream_commit:$path" 2>/dev/null || return 1
+    _aip_is_forbidden_path "$rel" && return 1
+  done <<EOF
+$records
+EOF
+  return 0
+}
+
+_aip_park_local_paths() {
+  # $1 profiles root, $2 conflict records. Moves every listed path into one
+  # ignored '.aip-parked-<timestamp>-XXXXXX' directory under the root, keeping
+  # its relative path, and prints that directory. The root .gitignore already
+  # excludes '.aip-*/', so a park survives a sync untracked. On failure the
+  # directory holding the paths already moved is named, so no local file is
+  # ever lost to a partial park.
+  local root=$1 records=$2 dir path target record
+  dir=$(command mktemp -d "$root/.aip-parked-$(command date +%Y%m%dT%H%M%S)-XXXXXX") || return 1
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    case $record in
+      *$'\t'*) path=${record#*$'\t'} ;;
+      *)
+        _aip_error "cannot park a local path whose name contains a newline; the paths already moved are in $dir"
+        return 1
+        ;;
+    esac
+    target=$dir/$path
+    if ! _aip_path_is_under "$root" "$root/$path" ||
+       ! command mkdir -p "${target%/*}" ||
+       ! command mv -- "$root/$path" "$target"; then
+      _aip_error "could not park $path; the paths already moved are in $dir"
+      return 1
+    fi
+  done <<EOF
+$records
+EOF
+  printf '%s\n' "$dir"
+}
+
+_aip_restore_parked_local() {
+  # $1 profiles root, $2 park directory, $3 conflict records. Moves every parked
+  # path back over the version the incoming commit checked out and stages it, so
+  # the caller's commit records the local version, then removes the emptied park
+  # directory. Prints the restored paths. On failure the paths still parked are
+  # named and left for the user.
+  local root=$1 dir=$2 records=$3 record path target restored=''
+  case ${dir##*/} in
+    .aip-parked-*) ;;
+    *) _aip_error "refusing to restore local paths from $dir"; return 1 ;;
+  esac
+  _aip_path_is_under "$root" "$dir" || { _aip_error "refusing to restore local paths from $dir"; return 1; }
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    case $record in
+      *$'\t'*) path=${record#*$'\t'} ;;
+      *)
+        _aip_error "cannot restore a local path whose name contains a newline; the paths still parked are in $dir"
+        return 1
+        ;;
+    esac
+    target=$dir/$path
+    if ! command mv -- "$target" "$root/$path" || ! _aip_git -C "$root" add -- "$path"; then
+      _aip_error "could not restore $path; the paths still parked are in $dir"
+      return 1
+    fi
+    restored=${restored:+$restored, }$path
+  done <<EOF
+$records
+EOF
+  command rm -rf -- "$dir" || _aip_warn "could not remove the emptied park directory $dir"
+  printf '%s\n' "$restored"
+}
+
+_aip_prompt_collision_resolution() {
+  # $1 display list, $2 1 when a local version can be kept. Prints 'remote',
+  # 'local', or 'skip' and returns 0. Enter skips: of the three it is the only
+  # choice that changes nothing, so it is the safe default. Returns 1 when the
+  # answer cannot be read at all.
+  local list=$1 keep_local=$2 answer
+  {
+    printf 'aip: the incoming commit changes paths Git does not track locally:\n'
+    printf '      %s\n' "$list"
+    printf 'Take which version?\n'
+    printf '  [r] remote (overwrite local)\n'
+    [ "$keep_local" -eq 1 ] && printf '  [l] local  (keep yours and update the remote)\n'
+    printf '  [s] skip for now (Enter also skips)\n'
+  } >&2
+  while :; do
+    printf '> ' >&2
+    IFS= read -r answer || { printf '\n' >&2; return 1; }
+    case $answer in
+      r|R|remote) printf 'remote\n'; return 0 ;;
+      l|L|local)
+        [ "$keep_local" -eq 1 ] && { printf 'local\n'; return 0; }
+        printf 'These paths cannot be kept locally; enter r or s.\n' >&2
+        ;;
+      s|S|skip|'') printf 'skip\n'; return 0 ;;
+      *)
+        if [ "$keep_local" -eq 1 ]; then printf 'Please enter r, l, or s.\n' >&2
+        else printf 'Please enter r or s.\n' >&2
+        fi
+        ;;
+    esac
+  done
+}
+
 _aip_sync() (
   local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
@@ -3122,22 +3247,36 @@ _aip_sync() (
   fi
   upstream_commit=$(_aip_git -C "$root" rev-parse --verify "$upstream^{commit}") || return
   _aip_validate_git_tree "$root" "$upstream_commit" || return
-  local conflicts='' conflict_list='' preserve_status=0
+  local conflicts='' conflict_list='' preserve_status=0 resolution=skip park_dir='' keep_local=0 kept=''
   conflicts=$(_aip_rebase_untracked_conflicts "$root" "$upstream_commit") || preserve_status=$?
   case $preserve_status in
     0) ;;
     # A collision is recoverable and leaves no unfinished Git state, so the
     # committed local profiles stay in use exactly as when the remote is
     # unreachable, instead of leaving the user without a harness.
-    # An after-run sync repeats the launch's before-run detection for an
-    # unchanged state, so only the before-run sync speaks; a collision that
-    # first appears because the run changed files is reported by the next
-    # launch. The state persists until it is resolved, so nothing is lost.
-    2) if [ "$mode" != after ]; then
-         conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
-         _aip_warn "remote integration skipped: the incoming commit changes untracked or ignored local paths: $conflict_list; move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
-       fi
-       return 0 ;;
+    2)
+      conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
+      # Only an explicit command asks: a harness launch never blocks on input,
+      # and a non-interactive run keeps the warn-and-skip contract.
+      if [ "$mode" = manual ] && { [ -t 0 ] || [ "${_AIP_SYNC_FORCE_INTERACTIVE-}" = 1 ]; }; then
+        _aip_collision_keeps_local "$root" "$upstream_commit" "$conflicts" && keep_local=1
+        resolution=$(_aip_prompt_collision_resolution "$conflict_list" "$keep_local") || resolution=skip
+      fi
+      if [ "$resolution" = skip ]; then
+        # An after-run sync repeats the launch's before-run detection for an
+        # unchanged state, so only the before-run sync speaks; a collision that
+        # first appears because the run changed files is reported by the next
+        # launch. The state persists until it is resolved, so nothing is lost.
+        [ "$mode" = after ] || _aip_warn "remote integration skipped: the incoming commit changes untracked or ignored local paths: $conflict_list; run 'aip sync' in a terminal to choose a version"
+        return 0
+      fi
+      # Both resolutions move the local paths aside so the incoming commit
+      # applies cleanly. Keeping local moves them back on top afterwards.
+      park_dir=$(_aip_park_local_paths "$root" "$conflicts") || return 1
+      if [ "$resolution" = remote ]; then
+        printf 'Parked the replaced local paths in %s.\n' "$park_dir"
+      fi
+      ;;
     *) return 1 ;;
   esac
   if ! LC_ALL=C _aip_git -C "$root" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
@@ -3146,7 +3285,17 @@ _aip_sync() (
     else
       _aip_error "local Git integration failed in $root; inspect it with 'git -C \"$root\" status'"
     fi
+    [ -z "$park_dir" ] || _aip_error "the local paths moved aside before integrating are in $park_dir"
     return 1
+  fi
+  if [ "$resolution" = local ] && [ -n "$park_dir" ]; then
+    kept=$(_aip_restore_parked_local "$root" "$park_dir" "$conflicts") || return 1
+    park_dir=
+    _aip_git -C "$root" commit -q -m 'aip: keep the local version of colliding paths' || {
+      _aip_error 'could not commit the local version of the colliding paths'
+      return 1
+    }
+    printf 'Kept the local version of %s.\n' "$kept"
   fi
   for name in $(_aip_list_profile_names); do
     profile_path=$(_aip_profile_path "$name")
@@ -3158,6 +3307,7 @@ _aip_sync() (
   if ! GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_SSH_COMMAND="$_AIP_SSH_COMMAND" GIT_SSH_VARIANT="$_AIP_SSH_VARIANT" LC_ALL=C _aip_git -C "$root" push --quiet "$remote" "HEAD:$merge_ref" >|"$_AIP_GIT_OUTPUT" 2>&1; then
     _aip_require_git_mutation_state "$root" || return
     _aip_error 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
+    [ -z "$park_dir" ] || _aip_error "the local paths moved aside before integrating are in $park_dir"
     return 0
   fi
   printf 'Profiles synced with %s.\n' "$upstream"

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Choose which version wins when a remote collides with local state.** An
+  explicit `aip sync` or `aip remote add` run from a terminal now asks how to
+  resolve a fetched commit that changes untracked or ignored local paths:
+  `[r] remote` overwrites the local paths and parks the copies it replaced,
+  `[l] local` keeps them and pushes, so the remote matches local before the
+  command returns, and `[s] skip` leaves everything as it is (Enter skips).
+  `[l] local` is offered only where keeping the path leaves a state aip accepts:
+  an ordinary untracked file the incoming commit replaces at the same exact
+  path. Parked paths go to one ignored `.aip-parked-<timestamp>/` directory
+  under the profiles root and are named in the output, so nothing is deleted to
+  resolve a collision. A harness launch, a non-interactive run, and `aip clone`
+  never prompt; they keep the warn-and-skip behaviour.
+
 - **Recoverable remote collisions.** An incoming commit that would overwrite or
   replace untracked or ignored local paths no longer blocks the session. The
   sync names each conflicting path with its kind (`untracked` or `ignored`),

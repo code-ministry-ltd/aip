@@ -101,6 +101,7 @@ BeforeEach {
     $script:AipCreateSkillsAgentsRoot = Join-Path $TestDrive 'no-agent-skills'
     $script:AipCreateSkipSkillSelection = $false
     $script:AipDoctorForceInteractive = $false
+    $script:AipSyncForceInteractive = $null
     Remove-Variable -Name AipLockAttempts -Scope Script -ErrorAction SilentlyContinue
 }
 
@@ -1857,7 +1858,7 @@ exit 1
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
     }
 
-    It 'warns, names the path, still launches a wrapper, and keeps the after-run pass quiet' {
+    It 'warns, names the path, and still launches a wrapper without asking for a version' {
         Initialize-TestUpstream
         $root = $script:AipProfileRoot
         $settings = Join-Path $root 'work/pi/settings.json'
@@ -1878,19 +1879,131 @@ exit 1
         (& git -C $root ls-files -- work/pi/settings.json) | Should -BeNullOrEmpty
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
 
+        # A launch never blocks on input, even when a terminal is available, and
+        # the after-run sync stays quiet so the collision is reported once.
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'r' }
         claude prompt *> $null
 
         $global:LASTEXITCODE | Should -Be 0
         $script:AipLastWarning | Should -Match 'remote integration skipped'
         Test-Path -LiteralPath $script:FakeCapture | Should -BeTrue
+        Assert-MockCalled Read-Host -Times 0 -Exactly
+        [IO.File]::ReadAllText($settings) | Should -Be "local bytes`n"
+    }
 
-        # The after-run sync repeats the same detection for an unchanged state
-        # and stays quiet, so a launch reports the collision once. Write-AipWarning
-        # writes to Console.Error, which *> $null and 2>&1 do not capture here, so
-        # assert the switch the after-run pass relies on.
-        $script:AipLastWarning = $null
-        Test-AipRebasePreservesUntracked -ProfilePath $root -UpstreamCommit origin/main -Quiet | Should -BeFalse
-        $script:AipLastWarning | Should -BeNullOrEmpty
+    It 'offers the version choice on an explicit sync and can take the remote' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'work/pi/settings.json'
+        [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/pi/settings.json'), "remote bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/pi/settings.json
+        & git -C $other commit -q -m 'track shared settings'
+        & git -C $other push -q
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'r' }
+
+        & git -C $root fetch -q origin
+        $records = @((Get-AipRebaseUntrackedConflicts -ProfilePath $root -UpstreamCommit origin/main).Records)
+        Test-AipCollisionKeepsLocal -ProfilePath $root -UpstreamCommit origin/main -Records $records | Should -BeTrue
+
+        $output = aip sync 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        Assert-MockCalled Read-Host -Times 1 -Exactly
+        $output | Should -Match 'Parked the replaced local paths in '
+        [IO.File]::ReadAllText($settings) | Should -Be "remote bytes`n"
+        (& git -C $root show HEAD:work/pi/settings.json) -join "`n" | Should -Match 'remote bytes'
+        (& git -C $script:TestRemote show main:work/pi/settings.json) -join "`n" | Should -Match 'remote bytes'
+        # the local version is parked, not deleted
+        $parked = @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*' | Select-Object -First 1)[0]
+        $null -eq $parked | Should -BeFalse
+        [IO.File]::ReadAllText((Join-Path $parked.FullName 'work/pi/settings.json')) | Should -Be "local bytes`n"
+    }
+
+    It 'can keep the local version on an explicit sync and update the remote' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'work/pi/settings.json'
+        [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/pi/settings.json'), "remote bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/pi/settings.json
+        & git -C $other commit -q -m 'track shared settings'
+        & git -C $other push -q
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'l' }
+
+        $output = aip sync 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'Kept the local version of work/pi/settings.json\.'
+        $output | Should -Match 'Profiles synced with origin/main\.'
+        [IO.File]::ReadAllText($settings) | Should -Be "local bytes`n"
+        (& git -C $root show HEAD:work/pi/settings.json) -join "`n" | Should -Match 'local bytes'
+        (& git -C $script:TestRemote show main:work/pi/settings.json) -join "`n" | Should -Match 'local bytes'
+        @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
+    }
+
+    It 'skips the version choice on Enter and reprompts invalid answers' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'work/pi/settings.json'
+        [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/pi/settings.json'), "remote bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/pi/settings.json
+        & git -C $other commit -q -m 'track shared settings'
+        & git -C $other push -q
+        $script:AipSyncForceInteractive = $true
+        $script:SyncAnswers = [System.Collections.Queue]::new()
+        $script:SyncAnswers.Enqueue('maybe')
+        $script:SyncAnswers.Enqueue('')
+        Mock Read-Host { $script:SyncAnswers.Dequeue() }
+
+        $output = aip sync 2>&1 | Out-String
+        $global:LASTEXITCODE | Should -Be 0
+        Assert-MockCalled Read-Host -Times 2 -Exactly
+        $script:AipLastWarning | Should -Match 'remote integration skipped'
+        Assert-MockCalled Read-Host -Times 2 -Exactly
+        [IO.File]::ReadAllText($settings) | Should -Be "local bytes`n"
+        (& git -C $root ls-files -- work/pi/settings.json) | Should -BeNullOrEmpty
+        @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
+    }
+
+    It 'withholds the local version for an ignored path and never prompts without a terminal' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $native = Join-Path $root 'work/claude/native-state.json'
+        Add-Content -LiteralPath (Join-Path $root '.git/info/exclude') -Value 'work/claude/native-state.json'
+        [IO.File]::WriteAllText($native, "local ignored bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/claude/native-state.json'), "remote tracked bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/claude/native-state.json
+        & git -C $other commit -q -m 'track colliding native state'
+        & git -C $other push -q
+        $script:AipSyncForceInteractive = $true
+        $script:SyncAnswers = [System.Collections.Queue]::new()
+        $script:SyncAnswers.Enqueue('l')
+        $script:SyncAnswers.Enqueue('r')
+        Mock Read-Host { $script:SyncAnswers.Dequeue() }
+
+        & git -C $root fetch -q origin
+        $records = @((Get-AipRebaseUntrackedConflicts -ProfilePath $root -UpstreamCommit origin/main).Records)
+        Test-AipCollisionKeepsLocal -ProfilePath $root -UpstreamCommit origin/main -Records $records | Should -BeFalse
+
+        $output = aip sync 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        # 'l' is refused, so the prompt asks again and 'r' is taken.
+        Assert-MockCalled Read-Host -Times 2 -Exactly
+        [IO.File]::ReadAllText($native) | Should -Be "remote tracked bytes`n"
     }
 
     It 'blocks local Git metadata failures instead of reporting remote offline' {

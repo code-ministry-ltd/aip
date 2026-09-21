@@ -44,7 +44,7 @@ re-deriving them.
 
 - **D3 — adoption parks state Git does not track and names the directory.**
   The conflicting untracked and ignored paths are moved, relative path
-  preserved, into one `.aip-adopt-<timestamp>/` directory under the profiles
+  preserved, into one `.aip-parked-<timestamp>/` directory under the profiles
   root, which the root `.gitignore`'s existing `.aip-*/` rule already
   excludes. Nothing is deleted, so a user who edited an untracked
   `pi/settings.json` before connecting can still diff it afterwards.
@@ -102,7 +102,7 @@ disposability test answers correctly for every fixture above.*
 ### Phase 2 — adoption on `aip remote add` (POSIX)
 
 1. **A fresh install adopts the remote instead of rebasing it**
-   - Add the adopt mode, park collisions into `.aip-adopt-<timestamp>/`,
+   - Add the adopt mode, park collisions into `.aip-parked-<timestamp>/`,
      validate the incoming tree, move the branch, reconcile layouts, and print
      how many profiles were adopted and where the parked state went.
    - Cover: adoption end to end from an installer skeleton with an untracked
@@ -140,7 +140,7 @@ implemented flow agree; a version bump requires separate explicit approval.*
   `pi/settings.json` and a user-authored skill, both of which must refuse.
 - **A background sync replaces a branch.** Adoption is reachable only through
   the mode `aip remote add` passes; launch-time and explicit sync tests assert
-  the refusal path, including that no `.aip-adopt-*` directory is created.
+  the refusal path, including that no `.aip-parked-*` directory is created.
 - **Parking loses a path to a name collision or a fragment.** Parked paths come
   from the same NUL-safe Git listings as the collision records; a path that
   cannot be moved aborts adoption before the branch moves, with the local
