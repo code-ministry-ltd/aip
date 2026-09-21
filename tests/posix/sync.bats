@@ -779,7 +779,7 @@ make_upstream() {
   git -C "$other" commit -q -m 'track colliding native state'
   git -C "$other" push -q
 
-  run aip sync
+  run aip sync </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'remote integration skipped'* ]]
@@ -799,7 +799,7 @@ make_upstream() {
   git -C "$other" commit -q -m 'track shared settings'
   git -C "$other" push -q
 
-  run aip sync
+  run aip sync </dev/null
 
   [ "$status" -eq 0 ]
   [[ "$output" == *'remote integration skipped'* ]]
@@ -808,13 +808,121 @@ make_upstream() {
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/pi/settings.json)" ]
   [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
 
-  run claude prompt
+  run claude prompt </dev/null
 
   [ "$status" -eq 0 ]
   [ -e "$FAKE_CAPTURE" ]
   # The launch's before-run sync reports the collision once; the after-run sync
   # repeats the same detection for an unchanged state and stays quiet.
   [ "$(printf '%s\n' "$output" | grep -c 'remote integration skipped')" -eq 1 ]
+}
+
+@test "an explicit sync offers the version choice and can take the remote" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json" parked
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  run bash -c 'source "$1"; printf "r\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip sync' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Take which version?'* ]]
+  [[ "$output" == *'[r] remote (overwrite local)'* ]]
+  [[ "$output" == *'[l] local'* ]]
+  [[ "$output" == *'Parked the replaced local paths in '* ]]
+  [ "$(cat "$settings")" = 'remote bytes' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/pi/settings.json)" = 'remote bytes' ]
+  [ "$(git -C "$TEST_REMOTE" show main:work/pi/settings.json)" = 'remote bytes' ]
+  # the local version is parked, not deleted
+  parked=$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*/work/pi/settings.json' -print -quit)
+  [ -n "$parked" ]
+  [ "$(cat "$parked")" = 'local bytes' ]
+}
+
+@test "an explicit sync can keep the local version and update the remote" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  run bash -c 'source "$1"; printf "l\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip sync' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Kept the local version of work/pi/settings.json.'* ]]
+  [[ "$output" == *'Profiles synced with origin/main.'* ]]
+  [ "$(cat "$settings")" = 'local bytes' ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" show HEAD:work/pi/settings.json)" = 'local bytes' ]
+  [ "$(git -C "$TEST_REMOTE" show main:work/pi/settings.json)" = 'local bytes' ]
+  # keeping the local version leaves nothing parked
+  [ -z "$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*' -print -quit)" ]
+}
+
+@test "an explicit sync can skip the version choice and keep the local profiles" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  # Enter is the documented default and must change nothing.
+  run bash -c 'source "$1"; printf "\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip sync' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'remote integration skipped'* ]]
+  [ "$(cat "$settings")" = 'local bytes' ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/pi/settings.json)" ]
+  [ -z "$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*' -print -quit)" ]
+}
+
+@test "the version prompt reprompts and withholds local for an ignored path" {
+  local other="$BATS_TEST_TMPDIR/other" native_path="$_AIP_PROFILE_ROOT/work/claude/native-state.json"
+  make_upstream
+  printf '%s\n' 'work/claude/native-state.json' >>"$_AIP_PROFILE_ROOT/.git/info/exclude"
+  printf 'local ignored bytes\n' >"$native_path"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote tracked bytes\n' >"$other/work/claude/native-state.json"
+  git -C "$other" add work/claude/native-state.json
+  git -C "$other" commit -q -m 'track colliding native state'
+  git -C "$other" push -q
+
+  run bash -c 'source "$1"; printf "maybe\nl\nr\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip sync' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Please enter r or s.'* ]]
+  [[ "$output" == *'These paths cannot be kept locally; enter r or s.'* ]]
+  [[ "$output" != *'[l] local'* ]]
+  [ "$(cat "$native_path")" = 'remote tracked bytes' ]
+}
+
+@test "a harness launch never asks for a version, even with a terminal available" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  export _AIP_SYNC_FORCE_INTERACTIVE=1
+  run claude prompt </dev/null
+
+  [ "$status" -eq 0 ]
+  [ -e "$FAKE_CAPTURE" ]
+  [[ "$output" == *'remote integration skipped'* ]]
+  [[ "$output" != *'Take which version?'* ]]
+  [ "$(cat "$settings")" = 'local bytes' ]
 }
 
 @test "local Git metadata failures are not downgraded to remote-offline warnings" {

@@ -17,6 +17,9 @@ $script:AipCreateSkillsGlobalRoot = $null
 $script:AipCreateSkillsAgentsRoot = $null
 $script:AipCreateSkipSkillSelection = $false
 $script:AipDoctorForceInteractive = $false
+# $null decides from the terminal; $true and $false pin the answer so tests do
+# not depend on how the suite itself was launched.
+$script:AipSyncForceInteractive = $null
 $script:AipRuntimeRoot = $PSScriptRoot
 $script:AipStatusExtension = Join-Path $script:AipRuntimeRoot 'extensions/aip-status.ts'
 
@@ -1995,31 +1998,193 @@ function Format-AipConflictList {
     return ($display -join ', ')
 }
 
-function Test-AipRebasePreservesUntracked {
-    # Git refuses a checkout over an untracked file but replaces an ignored one
-    # silently, so both kinds stop the integration; a collision is not a fault in
-    # the local profiles, so it warns (leaving AipCommandStatus at 0) and the
-    # caller skips the remote instead of blocking the session. An inspection
-    # failure stays an error, which does block.
-    #
-    # -Quiet omits the warning for an after-run sync, which repeats the launch's
-    # before-run detection for an unchanged state. A collision that first appears
-    # because the run changed files is reported by the next launch; the state
-    # persists until it is resolved, so nothing is lost.
-    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit, [switch]$Quiet)
-    $result = Get-AipRebaseUntrackedConflicts -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit
-    if (-not $result.Inspected) { return $false }
-    $records = @($result.Records)
-    if ($records.Count -eq 0) { return $true }
-    if (-not $Quiet) {
-        Write-AipWarning "remote integration skipped: the incoming commit changes untracked or ignored local paths: $(Format-AipConflictList -Records $records); move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+function Test-AipCollisionKeepsLocal {
+    # Names the conflicting paths the incoming commit replaces at the same exact
+    # path with an ordinary untracked local file, inside a profile, and outside
+    # the credential and runtime denylist. An ignored path, a link or directory,
+    # a case-only or directory-level collision, and a forbidden path are all
+    # excluded, because keeping any of them would leave a tracked state the
+    # validators before a push reject.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit, [AllowEmptyCollection()][string[]]$Records = @())
+    foreach ($record in @($Records)) {
+        $tab = $record.IndexOf("`t")
+        if ($tab -lt 0) { return $false }
+        if ($record.Substring(0, $tab) -ne 'untracked') { return $false }
+        $path = $record.Substring($tab + 1)
+        $slash = $path.IndexOf('/')
+        if ($slash -lt 1) { return $false }
+        if (-not (Test-AipProfileName $path.Substring(0, $slash))) { return $false }
+        $item = Get-Item -LiteralPath (Join-Path $ProfilePath $path) -Force -ErrorAction SilentlyContinue
+        if ($null -eq $item -or $item.PSIsContainer -or $item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { return $false }
+        Invoke-AipGit -C $ProfilePath cat-file -e "$UpstreamCommit`:$path" *> $null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        if (Test-AipForbiddenPath $path.Substring($slash + 1)) { return $false }
     }
-    return $false
+    return $true
+}
+
+function Test-AipSyncInteractive {
+    # A sync asks for a version only when it can read one. $null decides from the
+    # terminal; $true and $false pin the answer for tests and for callers that
+    # cannot prompt.
+    if ($null -ne $script:AipSyncForceInteractive) { return [bool]$script:AipSyncForceInteractive }
+    return -not [Console]::IsInputRedirected
+}
+
+function Read-AipSyncCollisionDecision {
+    # $List is the display list, $KeepLocalAllowed says whether a local version
+    # can be kept. Returns 'remote', 'local', or 'skip'. Enter skips: of the
+    # three it is the only choice that changes nothing, so it is the safe
+    # default.
+    param([Parameter(Mandatory)][string]$List, [Parameter(Mandatory)][bool]$KeepLocalAllowed)
+    # The explanation goes to the console error handle like aip's other progress
+    # output, so it never joins this function's return value.
+    [Console]::Error.WriteLine('aip: the incoming commit changes paths Git does not track locally:')
+    [Console]::Error.WriteLine("      $List")
+    [Console]::Error.WriteLine('Take which version?')
+    [Console]::Error.WriteLine('  [r] remote (overwrite local)')
+    if ($KeepLocalAllowed) { [Console]::Error.WriteLine('  [l] local  (keep yours and update the remote)') }
+    [Console]::Error.WriteLine('  [s] skip for now (Enter also skips)')
+    while ($true) {
+        try { $answer = Read-Host '>' }
+        catch { return 'skip' }
+        switch -Regex ($answer) {
+            '^$' { return 'skip' }
+            '^(?i:r|remote)$' { return 'remote' }
+            '^(?i:l|local)$' {
+                if ($KeepLocalAllowed) { return 'local' }
+                [Console]::Error.WriteLine('These paths cannot be kept locally; enter r or s.')
+            }
+            '^(?i:s|skip)$' { return 'skip' }
+            default {
+                if ($KeepLocalAllowed) { [Console]::Error.WriteLine('Please enter r, l, or s.') }
+                else { [Console]::Error.WriteLine('Please enter r or s.') }
+            }
+        }
+    }
+}
+
+function Move-AipLocalPathsToPark {
+    # Moves every listed path into one ignored '.aip-parked-<timestamp>' directory
+    # under the profiles root, keeping its relative path, and returns that
+    # directory. The root .gitignore already excludes '.aip-*', so a park
+    # survives a sync untracked. Returns '' after naming the directory holding
+    # the paths already moved, so no local file is ever lost to a partial park.
+    param([Parameter(Mandatory)][string]$ProfilePath, [AllowEmptyCollection()][string[]]$Records = @())
+    $stamp = Get-Date -Format 'yyyyMMddTHHmmss'
+    $park = ''
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $candidate = Join-Path $ProfilePath ('.aip-parked-{0}-{1}' -f $stamp, [guid]::NewGuid().ToString('N').Substring(0, 6))
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            try { New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null; $park = $candidate; break }
+            catch { Write-AipError "could not create a park directory in $ProfilePath"; return '' }
+        }
+    }
+    if (-not $park) { Write-AipError "could not create a park directory in $ProfilePath"; return '' }
+    foreach ($record in @($Records)) {
+        $tab = $record.IndexOf("`t")
+        if ($tab -lt 0) {
+            Write-AipError "cannot park a local path whose name contains a newline; the paths already moved are in $park"
+            return ''
+        }
+        $path = $record.Substring($tab + 1)
+        $source = Join-Path $ProfilePath $path
+        $target = Join-Path $park $path
+        $targetParent = Split-Path -Parent $target
+        if (-not (Test-AipPathUnder $ProfilePath $source)) {
+            Write-AipError "could not park $path; the paths already moved are in $park"
+            return ''
+        }
+        try {
+            New-Item -ItemType Directory -Path $targetParent -Force -ErrorAction Stop | Out-Null
+            Move-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop
+        }
+        catch {
+            Write-AipError "could not park $path; the paths already moved are in $park"
+            return ''
+        }
+    }
+    return $park
+}
+
+function Restore-AipParkedLocalPaths {
+    # Moves every parked path back over the version the incoming commit checked
+    # out and stages it, so the caller's commit records the local version, then
+    # removes the emptied park directory. Returns the restored paths, or '' after
+    # naming the directory that still holds them.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$ParkDirectory, [AllowEmptyCollection()][string[]]$Records = @())
+    if (-not (Test-AipPathUnder $ProfilePath $ParkDirectory) -or -not (Split-Path -Leaf $ParkDirectory).StartsWith('.aip-parked-')) {
+        Write-AipError "refusing to restore local paths from $ParkDirectory"
+        return ''
+    }
+    $restored = [System.Collections.Generic.List[string]]::new()
+    foreach ($record in @($Records)) {
+        $tab = $record.IndexOf("`t")
+        if ($tab -lt 0) {
+            Write-AipError "cannot restore a local path whose name contains a newline; the paths still parked are in $ParkDirectory"
+            return ''
+        }
+        $path = $record.Substring($tab + 1)
+        $source = Join-Path $ParkDirectory $path
+        $target = Join-Path $ProfilePath $path
+        $moved = $false
+        try { Move-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop; $moved = $true } catch { $moved = $false }
+        if ($moved) {
+            Invoke-AipGit -C $ProfilePath add -- $path *> $null
+            if ($LASTEXITCODE -ne 0) { $moved = $false }
+        }
+        if (-not $moved) {
+            Write-AipError "could not restore $path; the paths still parked are in $ParkDirectory"
+            return ''
+        }
+        $restored.Add($path)
+    }
+    try { Remove-Item -LiteralPath $ParkDirectory -Recurse -Force -ErrorAction Stop }
+    catch { Write-AipWarning "could not remove the emptied park directory $ParkDirectory" }
+    return ($restored -join ', ')
+}
+
+function Resolve-AipRebaseCollision {
+    # Returns $null when the local state could not be inspected or parked
+    # (reported here), or a result naming what the caller must do:
+    #   @{ Integrate = $true/false; Resolution = 'remote'/'local'/'skip'; Park = <dir> }
+    # A collision is recoverable and leaves no unfinished Git state, so skipping
+    # keeps the committed local profiles in use exactly as when the remote is
+    # unreachable, instead of leaving the user without a harness. Only an
+    # explicit command asks: a harness launch never blocks on input, and a
+    # non-interactive run keeps the warn-and-skip contract.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit, [string]$Mode = 'manual')
+    $conflicts = Get-AipRebaseUntrackedConflicts -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit
+    if (-not $conflicts.Inspected) { return $null }
+    $records = @($conflicts.Records)
+    if ($records.Count -eq 0) { return [pscustomobject]@{ Integrate = $true; Resolution = ''; Park = ''; Records = @() } }
+    $list = Format-AipConflictList -Records $records
+    $resolution = 'skip'
+    if ($Mode -eq 'manual' -and (Test-AipSyncInteractive)) {
+        $resolution = Read-AipSyncCollisionDecision -List $list -KeepLocalAllowed (Test-AipCollisionKeepsLocal -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit -Records $records)
+    }
+    if ($resolution -eq 'skip') {
+        # An after-run sync repeats the launch's before-run detection for an
+        # unchanged state, so only the before-run sync speaks; a collision that
+        # first appears because the run changed files is reported by the next
+        # launch. The state persists until it is resolved, so nothing is lost.
+        if ($Mode -ne 'after') {
+            Write-AipWarning "remote integration skipped: the incoming commit changes untracked or ignored local paths: $list; run 'aip sync' in a terminal to choose a version"
+        }
+        return [pscustomobject]@{ Integrate = $false; Resolution = 'skip'; Park = ''; Records = $records }
+    }
+    # Both resolutions move the local paths aside so the incoming commit applies
+    # cleanly. Keeping local moves them back on top afterwards. The caller reports
+    # the park directory, so this function returns only its decision.
+    $park = Move-AipLocalPathsToPark -ProfilePath $ProfilePath -Records $records
+    if (-not $park) { return $null }
+    return [pscustomobject]@{ Integrate = $true; Resolution = $resolution; Park = $park; Records = $records }
 }
 
 function Invoke-AipSyncCore {
     param([string]$Mode = 'manual')
     $script:AipCommandStatus = 0
+    $parkDir = ''
     if (-not (Test-AipRootRepo)) { return }
     if (-not (Test-AipGitContainment $script:AipProfileRoot -Report)) { return }
     if (-not (Enter-AipSyncLock $script:AipProfileRoot)) { return }
@@ -2090,7 +2255,13 @@ function Invoke-AipSyncCore {
             $upstreamCommit = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify "$upstream^{commit}"
             if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
             if (-not (Test-AipGitTree $script:AipProfileRoot $upstreamCommit)) { return }
-            if (-not (Test-AipRebasePreservesUntracked $script:AipProfileRoot $upstreamCommit -Quiet:($Mode -eq 'after'))) { return }
+            $collision = Resolve-AipRebaseCollision -ProfilePath $script:AipProfileRoot -UpstreamCommit $upstreamCommit -Mode $Mode
+            if ($null -eq $collision) { return }
+            if ($collision.Integrate) {
+                $parkDir = $collision.Park
+                if ($parkDir -and $collision.Resolution -eq 'remote') { Write-Output "Parked the replaced local paths in $parkDir." }
+            }
+            else { return }
             Invoke-AipGit -C $script:AipProfileRoot rebase $upstreamCommit *> $null
             if ($LASTEXITCODE -ne 0) {
                 $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
@@ -2098,7 +2269,16 @@ function Invoke-AipSyncCore {
                     Write-AipError "Git conflict in $script:AipProfileRoot; no side was chosen. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
                 }
                 else { Write-AipError "local Git integration failed in $script:AipProfileRoot; inspect it with 'git status'" }
+                if ($parkDir) { Write-AipError "the local paths moved aside before integrating are in $parkDir" }
                 return
+            }
+            if ($collision.Resolution -eq 'local' -and $parkDir) {
+                $kept = Restore-AipParkedLocalPaths -ProfilePath $script:AipProfileRoot -ParkDirectory $parkDir -Records @($collision.Records)
+                if (-not $kept) { return }
+                $parkDir = ''
+                Invoke-AipGit -C $script:AipProfileRoot commit -q -m 'aip: keep the local version of colliding paths' *> $null
+                if ($LASTEXITCODE -ne 0) { Write-AipError 'could not commit the local version of the colliding paths'; return }
+                Write-Output "Kept the local version of $kept."
             }
             foreach ($name in (Get-AipProfileNames)) {
                 $layoutResult = @(Test-AipLayout (Get-AipProfilePath $name))
@@ -2118,6 +2298,7 @@ function Invoke-AipSyncCore {
             if ($LASTEXITCODE -ne 0) {
                 if (-not (Test-AipGitMutationState $script:AipProfileRoot -Report)) { return }
                 Write-AipWarning 'remote sync unavailable during push; the local checkpoint is safe and will retry next time'
+                if ($parkDir) { Write-AipError "the local paths moved aside before integrating are in $parkDir" }
                 return
             }
             Write-Output "Profiles synced with $upstream."

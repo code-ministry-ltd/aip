@@ -123,8 +123,12 @@ sides untouched.
 2. Adoption is a branch replacement, not a merge: the local branch ends at the
    fetched commit, and the previous tip stays reachable through the reflog for
    the normal Git recovery window.
-3. Parked state lives in one timestamped directory under the profiles root; the
-   root `.gitignore`'s existing `.aip-*/` rule already excludes it from sync.
+3. Parked state lives in one `.aip-parked-<timestamp>-XXXXXX` directory under
+   the profiles root, named whenever it holds anything; the root `.gitignore`'s
+   existing `.aip-*/` rule already excludes it from sync. The version choice
+   for a remote collision on an explicit sync already uses this convention and
+   its move/restore helpers, so adoption reuses them instead of adding a second
+   parking mechanism.
 4. A refusal is not an error in the remote: it exits non-zero, changes nothing,
    and names both ways forward.
 

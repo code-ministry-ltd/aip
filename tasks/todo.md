@@ -38,15 +38,17 @@ incoming tree (D2, SC5).
 ## T28 — A fresh install adopts the remote instead of rebasing it
 
 Add the adopt mode that only `aip remote add` passes, park every conflicting
-untracked or ignored path into `.aip-adopt-<timestamp>/`, validate the incoming
+untracked or ignored path into `.aip-parked-<timestamp>/`, validate the incoming
 tree, move the branch, reconcile layouts and pass-through links, and report the
-profile count and the parked directory (D3, D4, D5, SC2–SC4, SC6).
+profile count and the parked directory (D3, D4, D5, SC2–SC4, SC6). The parking
+move/restore helpers and the `.aip-parked-<timestamp>-XXXXXX` convention already
+ship with the remote-collision version choice, so adoption reuses them (D3).
 
 - [ ] From an installer skeleton whose untracked `pi/settings.json` the remote
   tracks, `aip remote add` adopts: `aip list` shows the remote's profiles and
   the parked copy is on disk and named in the output.
 - [ ] A harness launch after adoption reaches the fake harness, and no
-  `.aip-adopt-*` directory remains for a clean adoption.
+  `.aip-parked-*` directory remains for a clean adoption.
 - [ ] A launch-time sync, an explicit `aip sync`, and `aip clone` refuse the
   same state and create no parked directory.
 - [ ] Every non-disposable fixture refuses with nothing changed on disk or in
