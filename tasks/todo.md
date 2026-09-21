@@ -1,3 +1,99 @@
+# Todo: adopt an existing profiles repository on a fresh install (vNext)
+
+Spec: `tasks/spec.md` (adoption addendum) · Plan: `tasks/plan.md` (same
+addendum). Every task leaves its affected suite green; run the full affected
+suite before committing. Commit one completed task at a time.
+Verify commands run from the repository root.
+
+## T26 — POSIX users get a named unrelated-history state instead of a doomed rebase
+
+Detect a missing merge base between `HEAD` and the fetched upstream commit in
+`_aip_sync`, report the state with both recoveries, and return before
+`git rebase` (SC1). Staging, pushing, and the untracked-collision path stay as
+they are.
+
+- [ ] `aip sync` against an upstream with no common ancestor exits non-zero,
+  names the state and both recoveries, and leaves `.git/rebase-merge` absent.
+- [ ] A launch-time sync and `aip remote add` report the same state, and the
+  branch, index, and working tree are unchanged afterwards.
+- [ ] A run with a common ancestor still rebases and integrates exactly as
+  before.
+- Verify: `npx bats tests/posix/sync.bats && npm run test:posix`
+- Deps: — · Files: `aip.sh`, `tests/posix/sync.bats` · Size: M
+
+## T27 — The managed scaffold is described once and its disposability is tested
+
+Extract the checkpoint's explicit managed-path list into one helper, and add
+the disposability test that reads `git ls-files` against it and against the
+incoming tree (D2, SC5).
+
+- [ ] The checkpoint stages exactly the paths the helper reports, and a test
+  fails if the two lists diverge.
+- [ ] An untouched installer skeleton is disposable; a tracked
+  `pi/settings.json`, a user-authored skill under `aip/skills/`, and a
+  locally created profile absent from the incoming tree are not.
+- Verify: `npx bats tests/posix/sync.bats && npm run test:posix`
+- Deps: T26 · Files: `aip.sh`, `tests/posix/sync.bats` · Size: S
+
+## T28 — A fresh install adopts the remote instead of rebasing it
+
+Add the adopt mode that only `aip remote add` passes, park every conflicting
+untracked or ignored path into `.aip-adopt-<timestamp>/`, validate the incoming
+tree, move the branch, reconcile layouts and pass-through links, and report the
+profile count and the parked directory (D3, D4, D5, SC2–SC4, SC6).
+
+- [ ] From an installer skeleton whose untracked `pi/settings.json` the remote
+  tracks, `aip remote add` adopts: `aip list` shows the remote's profiles and
+  the parked copy is on disk and named in the output.
+- [ ] A harness launch after adoption reaches the fake harness, and no
+  `.aip-adopt-*` directory remains for a clean adoption.
+- [ ] A launch-time sync, an explicit `aip sync`, and `aip clone` refuse the
+  same state and create no parked directory.
+- [ ] Every non-disposable fixture refuses with nothing changed on disk or in
+  Git, and a default marker naming a profile the adopted tree lacks is cleared
+  with a line saying so.
+- Verify: `npx bats tests/posix/sync.bats tests/posix/remote.bats && npm run test:posix`
+- Deps: T26, T27 · Files: `aip.sh`, `tests/posix/sync.bats`,
+  `tests/posix/remote.bats` · Size: L
+
+## T29 — PowerShell users get the same unrelated-history state
+
+Mirror T26 in `aip.ps1` and assert the same outcomes in Pester (SC7).
+
+- [ ] `aip sync` and `aip remote add` against an unrelated upstream exit
+  non-zero with the same wording as POSIX and change nothing.
+- Verify: `AIP_PESTER_FILTER='*unrelated*' pwsh -NoProfile -File tests/run-powershell.ps1`
+- Deps: T26 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: M
+
+## T30 — PowerShell users adopt from `aip remote add` with the same outcomes
+
+Mirror T27 and T28 in `aip.ps1`, reusing the record-producing conflict getter,
+and assert the same decisions and the same printed outcomes (SC2–SC7).
+
+- [ ] The adoption fixture, the parked-copy assertion, the launch after
+  adoption, and every refusal fixture produce the same results as bats.
+- Verify: `pwsh -NoProfile -File tests/run-powershell.ps1`
+- Deps: T27, T28, T29 · Files: `aip.ps1`, `tests/powershell/Aip.Tests.ps1` · Size: L
+
+## T31 — Users can follow the documented second-machine path
+
+Update the README's "On a second machine" section and the changelog with what
+is adopted, what is refused, and where parked state goes; check `aip help` and
+`skills/aip` for contradictions (SC8).
+
+- [ ] The README states that `aip remote add` adopts on a fresh install, that a
+  refusal names both recoveries, and where parked state is left.
+- [ ] The changelog describes the user-visible change without promising a
+  release version.
+- Verify: `git diff --check && rg -n 'second machine|remote add|parked' README.md CHANGELOG.md skills/aip`
+- Deps: T28, T30 · Files: `README.md`, `CHANGELOG.md`, `skills/aip` · Size: M
+
+*Checkpoint 3 (final): both suites pass; the documented second-machine flow,
+the shipped behavior, and the changelog agree; a version bump requires separate
+explicit approval.*
+
+---
+
 # Todo: doctor detects and repairs profile link defects (vNext)
 
 Spec: `tasks/spec.md` (doctor link-repair addendum) · Plan:
