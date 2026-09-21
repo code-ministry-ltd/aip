@@ -1,3 +1,170 @@
+# Plan: adopt an existing profiles repository on a fresh install (vNext)
+
+Reads: `tasks/spec.md` (adoption addendum). **Planning only: no
+production-code changes in this phase.**
+
+## Overview
+
+`aip remote add` currently tests only whether `$root/.git` exists, and the
+profiles repository always exists because `install.sh` created it. The
+documented second-machine path therefore never clones; it attaches the branch
+and hands the incoming commit to `git rebase`, whose base is the installer's
+own unrelated history. That cannot converge, so the reported flow ends with a
+connected remote whose content never lands.
+
+The fix has two independent halves, shipped in that order. First, unrelated
+histories become a named state that never reaches `git rebase`: both commands
+report it, change nothing, and exit non-zero. Second, `aip remote add` gains
+adoption for the one repository state where nothing can be lost — an
+untouched installer skeleton — replacing the local branch with the fetched
+commit after parking every untracked or ignored path the incoming tree would
+overwrite.
+
+The collision reporting this builds on already exists: `aip sync` names
+conflicting untracked and ignored paths as `kind<TAB>path` records and keeps
+the local profiles in use. Adoption consumes the same records instead of
+re-deriving them.
+
+## Architecture decisions
+
+- **D1 — unrelated histories are detected, not attempted.** After the fetch,
+  `git merge-base HEAD <upstream>` failing is treated as its own state. No
+  code path reaches `git rebase` with no common ancestor, in either command.
+  The message names both recoveries and the command exits non-zero, so a
+  blocked user is never left with a half-integrated repository.
+
+- **D2 — disposability is read from the tracked tree.** The local repository
+  is disposable when every tracked path belongs to the managed scaffold and
+  every profile directory present locally is also present in the incoming
+  tree. Both conditions are computed from one list of managed paths shared
+  with the checkpoint's explicit staging, so the two cannot drift. Commit
+  count, commit messages, and file contents are deliberately not used: an
+  installer that gains commits, or a `.gitignore` reconciled on a machine
+  with different default roots, must not change the answer.
+
+- **D3 — adoption parks state Git does not track and names the directory.**
+  The conflicting untracked and ignored paths are moved, relative path
+  preserved, into one `.aip-adopt-<timestamp>/` directory under the profiles
+  root, which the root `.gitignore`'s existing `.aip-*/` rule already
+  excludes. Nothing is deleted, so a user who edited an untracked
+  `pi/settings.json` before connecting can still diff it afterwards.
+
+- **D4 — adoption is a branch replacement, not a merge.** The working tree is
+  validated against the incoming commit with the existing tree and launch
+  validators before any mutation; then the branch is moved to the fetched
+  commit and the layouts, pass-through links, and skills placeholders are
+  reconciled exactly as after a normal integration. The previous tip remains
+  reachable through the reflog. No push follows: the branch already equals the
+  remote.
+
+- **D5 — only `aip remote add` may adopt.** `_aip_sync` keeps its mode
+  argument and adoption is gated on a mode that only `_aip_remote_add` passes.
+  A launch-time sync, an explicit `aip sync`, and `aip clone` report the state
+  and refuse, so no background action can replace a branch.
+
+- **D6 — a refusal is a first-class outcome.** Refusals leave the working
+  tree, the index, and the branch untouched, exit non-zero, and print the two
+  recoveries: move the local directory aside and re-run, or publish the local
+  profiles to an empty remote.
+
+- **D7 — parity is designed in, not folded in.** The decision, the parked
+  directory name, and the printed sentences are specified once and implemented
+  in both files; Pester asserts the same outcomes as bats for the same
+  repository states.
+
+## Phased task list
+
+### Phase 1 — unrelated histories stop before rebase (POSIX)
+
+1. **POSIX users get a named unrelated-history state instead of a doomed
+   rebase**
+   - Detect the missing merge base after the fetch in `_aip_sync`, report the
+     state with both recoveries, and return before `git rebase`; leave staging,
+     pushing, and the collision path untouched.
+   - Cover `aip sync`, a launch-time sync, and `aip remote add` against an
+     unrelated upstream; assert the branch, index, and working tree are
+     unchanged and the exit status is non-zero.
+
+*Checkpoint 1: `npm run test:posix` passes; a repository whose upstream has no
+common ancestor stops with the named state and no rebase-merge directory.*
+
+2. **The managed scaffold is described once and shared**
+   - Extract the checkpoint's explicit managed-path list into one helper and
+     add the disposability test that reads `git ls-files` against it plus the
+     incoming tree.
+   - Cover an untouched skeleton, a tracked path outside the scaffold (a
+     shared `pi/settings.json`, a user skill under `aip/skills/`), and a local
+     profile the incoming tree does not contain.
+
+*Checkpoint 2: the checkpoint stages the same paths as before, and the
+disposability test answers correctly for every fixture above.*
+
+### Phase 2 — adoption on `aip remote add` (POSIX)
+
+1. **A fresh install adopts the remote instead of rebasing it**
+   - Add the adopt mode, park collisions into `.aip-adopt-<timestamp>/`,
+     validate the incoming tree, move the branch, reconcile layouts, and print
+     how many profiles were adopted and where the parked state went.
+   - Cover: adoption end to end from an installer skeleton with an untracked
+     `pi/settings.json` that the remote tracks; parked file still on disk and
+     named in the output; pass-through links recreated; a launch after
+     adoption reaching the harness; refusal for every non-disposable fixture
+     with nothing changed.
+
+*Checkpoint 3: the reported bug is fixed — install, `aip remote add`, and the
+remote's profiles are usable with no manual Git surgery.*
+
+### Phase 3 — PowerShell parity, then documentation
+
+1. **PowerShell users get the same decision and the same sentences**
+   - Mirror the detection, disposability test, adopt mode, parking, and
+     refusal; reuse the record-producing conflict getter already added.
+   - Cover the same fixtures as the bats suite and assert identical outcomes.
+
+2. **Users can follow the documented second-machine path**
+   - Update the README's "On a second machine" section and the changelog with
+     what is adopted, what is refused, and where parked state goes; note that
+     a refusal names both recoveries.
+   - Verify the help text and the skill documentation do not contradict the
+     shipped behavior.
+
+*Checkpoint 3 (final): `npm run test:posix` and
+`pwsh -NoProfile tests/run-powershell.ps1` pass; documentation, help, and the
+implemented flow agree; a version bump requires separate explicit approval.*
+
+## Risks and mitigations
+
+- **Adoption discards work the user authored.** Adoption is gated on a tracked
+  tree that contains only managed scaffold, and every untracked or ignored
+  path the incoming tree would touch is parked first. Tests include a tracked
+  `pi/settings.json` and a user-authored skill, both of which must refuse.
+- **A background sync replaces a branch.** Adoption is reachable only through
+  the mode `aip remote add` passes; launch-time and explicit sync tests assert
+  the refusal path, including that no `.aip-adopt-*` directory is created.
+- **Parking loses a path to a name collision or a fragment.** Parked paths come
+  from the same NUL-safe Git listings as the collision records; a path that
+  cannot be moved aborts adoption before the branch moves, with the local
+  repository untouched.
+- **The disposability test drifts from the checkpoint's staging.** One helper
+  supplies both, and a test asserts the checkpoint stages exactly the paths the
+  helper reports.
+- **Adopted content fails validation on the next launch.** The incoming tree is
+  validated with the existing tree and launch validators before the branch
+  moves, and the reconciled layouts are revalidated after, so a remote aip
+  cannot leave a repository that a subsequent launch rejects.
+- **Platform differences change the decision.** Tests assert the decision and
+  the resulting Git state independently in bats and Pester rather than sharing
+  helpers, and both suites run before each commit.
+
+## Open questions
+
+None blocking. The three spec open questions — locally created profiles,
+parked-state lifecycle, and installer ordering — are resolved conservatively
+for this plan (refuse, leave parked state to the user, keep the installer
+non-interactive) and can be revisited without changing the decisions above.
+
+---
+
 # Plan: doctor detects and repairs profile link defects (vNext)
 
 Reads: `tasks/spec.md` (doctor link-repair addendum). **Planning only: no

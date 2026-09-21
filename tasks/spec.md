@@ -1,3 +1,148 @@
+# Spec: adopt an existing profiles repository on a fresh install (vNext)
+
+Living document — update before implementing a changed decision.
+
+## Project facts
+
+- `install.sh` runs `aip create aip`, so `~/agent-profiles` exists as a Git
+  repository with a commit before the user can run anything.
+- `aip remote add` selects between "publish this repository to an empty
+  remote" and "attach to a published remote and sync" only by testing whether
+  `$root/.git` exists (`aip.sh`, `_aip_remote_add`). On a fresh install the
+  repository always exists, so the documented fresh-machine path — "clones
+  every profile you already have" — is unreachable.
+- `aip sync` integrates the fetched commit with `git rebase`, and the local
+  `HEAD` is the installer's own history, which shares no ancestor with the
+  remote's. A rebase of unrelated histories cannot converge: the paths collide
+  across the whole `aip` profile.
+
+## Assumptions requiring approval
+
+1. **Unrelated histories are a distinct state, not a rebase to retry.** When
+   `git merge-base HEAD <upstream>` finds no common ancestor, `aip sync` stops
+   before `git rebase` and reports the state. Retrying, resolving, and
+   `git rebase --continue` cannot apply here; the only two recoveries are
+   adopting the remote or publishing the local repository elsewhere.
+2. **Adoption is allowed only from `aip remote add`, and only when the local
+   repository holds nothing the user authored.** Adopting replaces the branch,
+   so it may run only when every tracked path is part of the managed scaffold
+   and every locally present profile also exists in the incoming tree. A
+   launch-time or explicit `aip sync` never adopts; it reports the state and
+   the recovery command.
+3. **Local state Git does not track is parked, never deleted.** Adoption moves
+   every untracked or ignored path the incoming tree would overwrite or replace
+   into one ignored directory under the profiles root and names it in the
+   output. Untracked configuration the user may have edited is therefore still
+   recoverable after adoption.
+4. **A refusal is a valid outcome.** When the local repository is not
+   disposable, `aip remote add` reports that the two histories are unrelated
+   and names both recoveries — move the local directory aside and re-run, or
+   publish the local profiles to an empty remote — without changing anything.
+
+→ Correct me now or I'll proceed with these.
+
+## Objective
+
+Make the documented second-machine setup work. `aip remote add URL` on a
+freshly installed machine must adopt the profiles in the remote instead of
+rebasing the installer's own history, and must never discard work the user
+did locally: either it adopts with the local untracked and ignored state
+parked and named, or it refuses with the exact recoveries and leaves both
+sides untouched.
+
+## Success criteria
+
+- **SC1 — Unrelated histories never rebase.** Both implementations detect that
+  `HEAD` and the fetched upstream commit share no merge base and stop before
+  `git rebase`, in `aip sync` and `aip remote add` alike.
+- **SC2 — A fresh install adopts the remote.** On a machine where the only
+  profile is the installer's `aip` profile and no tracked path falls outside
+  the managed scaffold, `aip remote add URL` replaces the local branch with the
+  fetched upstream commit, checks out every profile the remote contains, and
+  reports how many profiles were adopted and where the parked state was left.
+- **SC3 — Adopted state is immediately usable.** After adoption `aip list`
+  shows the remote's profiles, the launch-time validators accept every adopted
+  profile, pass-through and primary-config materialisation run exactly as on a
+  normal checkout, and the next harness launch performs no remote round trip
+  beyond a normal up-to-date check.
+- **SC4 — Nothing Git does not track is lost.** Every untracked or ignored
+  path the incoming tree would overwrite or replace is moved, with its relative
+  path preserved, into one ignored directory under the profiles root whose name
+  is printed. Ignored paths that a normal checkout recreates (pass-through
+  links) are recreated as usual; parked copies remain on disk for the user to
+  diff and delete.
+- **SC5 — Anything authored blocks adoption.** When the local repository tracks
+  a path outside the managed scaffold, or contains a profile absent from the
+  incoming tree, `aip remote add` and `aip sync` report the unrelated histories
+  and both recoveries, change no working-tree or Git state, and exit non-zero.
+- **SC6 — The machine-local default survives where it can.** A default-profile
+  marker naming a profile present in the adopted tree is preserved; one naming
+  a profile the adopted tree does not contain is cleared with a line saying so.
+- **SC7 — Parity.** Bash/Zsh and PowerShell make the same decision for the same
+  repository state and print the same outcomes. Tests cover adoption, refusal,
+  parked-state preservation, and a launch after adoption in both suites.
+- **SC8 — Documentation.** The README's "On a second machine" section describes
+  what `aip remote add` adopts, what it refuses, and where parked state goes.
+
+## Boundaries
+
+**Always**
+
+- Decide from the repository state, never from a flag the user could set by
+  accident; `aip remote add` is the only command that may adopt.
+- Check the incoming tree with `_aip_validate_git_tree` and the existing
+  launch validators before and after adoption, exactly as a normal integration.
+- Park into a directory the root `.gitignore` already excludes, and print its
+  path whenever it is not empty.
+- Leave the local repository, index, and working tree untouched on every
+  refusal.
+- Keep `aip.sh` and `aip.ps1` behaviorally equivalent; run both suites before
+  each implementation commit.
+
+**Ask first**
+
+- Adopting when a locally created profile is absent from the incoming tree.
+- Relaxing the disposability test to tolerate tracked scaffold changes such as
+  a reconciled pass-through ignore block.
+- Deleting parked state automatically, or on any timer.
+- Making `aip sync`, a launch-time sync, or `aip clone` able to adopt.
+
+**Never**
+
+- Rebase or merge unrelated histories.
+- Discard a tracked local difference, or delete an untracked local file, as
+  part of adopting.
+- Adopt from a launch-time or background sync.
+- Report success while the working tree fails the launch validators.
+
+## Resolved decisions
+
+1. Disposability is decided from the tracked tree, not from commit count or
+   commit messages, so an installer that later adds commits does not change the
+   answer.
+2. Adoption is a branch replacement, not a merge: the local branch ends at the
+   fetched commit, and the previous tip stays reachable through the reflog for
+   the normal Git recovery window.
+3. Parked state lives in one timestamped directory under the profiles root; the
+   root `.gitignore`'s existing `.aip-*/` rule already excludes it from sync.
+4. A refusal is not an error in the remote: it exits non-zero, changes nothing,
+   and names both ways forward.
+
+## Open questions
+
+1. **Locally created profiles.** This spec refuses adoption when a local
+   profile is missing from the incoming tree, so `aip create work` followed by
+   `aip remote add` reports the refusal instead of adopting. Relaxing that to
+   "the profile exists in the incoming tree, or its tracked content is only
+   managed scaffold" trades predictability for a shorter path. Confirm which.
+2. **Parked-state lifecycle.** Should `aip doctor` eventually report leftover
+   parked directories, and is a prune command in scope?
+3. **Installer ordering.** The installer could offer to adopt a remote before
+   creating the `aip` profile, which would avoid the state entirely. That adds
+   a prompt to a currently non-interactive install; confirm it is out of scope.
+
+---
+
 # Spec: doctor detects and repairs profile link defects (vNext)
 
 Living document — update before implementing a changed decision.
