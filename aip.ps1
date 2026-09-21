@@ -2001,12 +2001,19 @@ function Test-AipRebasePreservesUntracked {
     # the local profiles, so it warns (leaving AipCommandStatus at 0) and the
     # caller skips the remote instead of blocking the session. An inspection
     # failure stays an error, which does block.
-    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
+    #
+    # -Quiet omits the warning for an after-run sync, which repeats the launch's
+    # before-run detection for an unchanged state. A collision that first appears
+    # because the run changed files is reported by the next launch; the state
+    # persists until it is resolved, so nothing is lost.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit, [switch]$Quiet)
     $result = Get-AipRebaseUntrackedConflicts -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit
     if (-not $result.Inspected) { return $false }
     $records = @($result.Records)
     if ($records.Count -eq 0) { return $true }
-    Write-AipWarning "remote integration skipped: the incoming commit changes untracked or ignored local paths: $(Format-AipConflictList -Records $records); move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+    if (-not $Quiet) {
+        Write-AipWarning "remote integration skipped: the incoming commit changes untracked or ignored local paths: $(Format-AipConflictList -Records $records); move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+    }
     return $false
 }
 
@@ -2083,7 +2090,7 @@ function Invoke-AipSyncCore {
             $upstreamCommit = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify "$upstream^{commit}"
             if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
             if (-not (Test-AipGitTree $script:AipProfileRoot $upstreamCommit)) { return }
-            if (-not (Test-AipRebasePreservesUntracked $script:AipProfileRoot $upstreamCommit)) { return }
+            if (-not (Test-AipRebasePreservesUntracked $script:AipProfileRoot $upstreamCommit -Quiet:($Mode -eq 'after'))) { return }
             Invoke-AipGit -C $script:AipProfileRoot rebase $upstreamCommit *> $null
             if ($LASTEXITCODE -ne 0) {
                 $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null

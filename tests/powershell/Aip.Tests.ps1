@@ -1857,7 +1857,7 @@ exit 1
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
     }
 
-    It 'warns, names the path, and still launches a wrapper when the remote tracks an untracked local file' {
+    It 'warns, names the path, still launches a wrapper, and keeps the after-run pass quiet' {
         Initialize-TestUpstream
         $root = $script:AipProfileRoot
         $settings = Join-Path $root 'work/pi/settings.json'
@@ -1883,6 +1883,14 @@ exit 1
         $global:LASTEXITCODE | Should -Be 0
         $script:AipLastWarning | Should -Match 'remote integration skipped'
         Test-Path -LiteralPath $script:FakeCapture | Should -BeTrue
+
+        # The after-run sync repeats the same detection for an unchanged state
+        # and stays quiet, so a launch reports the collision once. Write-AipWarning
+        # writes to Console.Error, which *> $null and 2>&1 do not capture here, so
+        # assert the switch the after-run pass relies on.
+        $script:AipLastWarning = $null
+        Test-AipRebasePreservesUntracked -ProfilePath $root -UpstreamCommit origin/main -Quiet | Should -BeFalse
+        $script:AipLastWarning | Should -BeNullOrEmpty
     }
 
     It 'blocks local Git metadata failures instead of reporting remote offline' {

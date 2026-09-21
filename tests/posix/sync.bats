@@ -811,8 +811,10 @@ make_upstream() {
   run claude prompt
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *'remote integration skipped'* ]]
   [ -e "$FAKE_CAPTURE" ]
+  # The launch's before-run sync reports the collision once; the after-run sync
+  # repeats the same detection for an unchanged state and stays quiet.
+  [ "$(printf '%s\n' "$output" | grep -c 'remote integration skipped')" -eq 1 ]
 }
 
 @test "local Git metadata failures are not downgraded to remote-offline warnings" {
