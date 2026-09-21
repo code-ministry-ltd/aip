@@ -3129,8 +3129,14 @@ _aip_sync() (
     # A collision is recoverable and leaves no unfinished Git state, so the
     # committed local profiles stay in use exactly as when the remote is
     # unreachable, instead of leaving the user without a harness.
-    2) conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
-       _aip_warn "remote integration skipped: the incoming commit changes untracked or ignored local paths: $conflict_list; move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+    # An after-run sync repeats the launch's before-run detection for an
+    # unchanged state, so only the before-run sync speaks; a collision that
+    # first appears because the run changed files is reported by the next
+    # launch. The state persists until it is resolved, so nothing is lost.
+    2) if [ "$mode" != after ]; then
+         conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
+         _aip_warn "remote integration skipped: the incoming commit changes untracked or ignored local paths: $conflict_list; move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+       fi
        return 0 ;;
     *) return 1 ;;
   esac

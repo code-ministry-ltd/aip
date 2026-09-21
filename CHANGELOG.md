@@ -11,7 +11,10 @@
   failed `aip remote add` and then every harness launch, with a message that
   named no path and pointed at the whole `git status --ignored` listing.
   `git rebase` still runs whenever no such collision exists, and a genuine
-  rebase conflict still stops the next launch.
+  rebase conflict still stops the next launch. A harness launch reports the
+  collision once: the after-run sync repeats the before-run detection for an
+  unchanged state and stays quiet, and a collision that first appears because
+  the run changed files is reported by the next launch.
 
 ## 0.8.3 — 2026-09-11
 
