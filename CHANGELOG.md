@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-09-21
+
 - **Choose which version wins when a remote collides with local state.** An
   explicit `aip sync` or `aip remote add` run from a terminal now asks how to
   resolve a fetched commit that changes untracked or ignored local paths:
