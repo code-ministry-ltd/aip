@@ -781,10 +781,38 @@ make_upstream() {
 
   run aip sync
 
-  [ "$status" -ne 0 ]
-  [[ "$output" == *'would overwrite or replace untracked or ignored local profile state'* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'remote integration skipped'* ]]
+  [[ "$output" == *'work/claude/native-state.json (ignored)'* ]]
   [ "$(cat "$native_path")" = 'local ignored bytes' ]
   [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/claude/native-state.json)" ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+}
+
+@test "a remote path colliding with an untracked local file warns, names it, and still launches a wrapper" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  run aip sync
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'remote integration skipped'* ]]
+  [[ "$output" == *'work/pi/settings.json (untracked)'* ]]
+  [ "$(cat "$settings")" = 'local bytes' ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" ls-files -- work/pi/settings.json)" ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+
+  run claude prompt
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'remote integration skipped'* ]]
+  [ -e "$FAKE_CAPTURE" ]
 }
 
 @test "local Git metadata failures are not downgraded to remote-offline warnings" {
@@ -1089,7 +1117,7 @@ make_upstream() {
   for i in $(seq 1 300); do printf 'local %s\n' "$i" >"$_AIP_PROFILE_ROOT/work/scratch/local-$i.txt"; done
   git -C "$_AIP_PROFILE_ROOT" fetch -q origin
   local start=$SECONDS
-  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+  run _aip_rebase_untracked_conflicts "$_AIP_PROFILE_ROOT" origin/main
   [ "$status" -eq 0 ]
   [ $((SECONDS - start)) -lt 5 ]
 }
@@ -1105,9 +1133,21 @@ make_upstream() {
   git -C "$other" push -q
   git -C "$_AIP_PROFILE_ROOT" fetch -q origin
 
-  run _aip_require_rebase_preserves_untracked "$_AIP_PROFILE_ROOT" origin/main
+  run _aip_rebase_untracked_conflicts "$_AIP_PROFILE_ROOT" origin/main
 
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
+  [[ "$output" == *$'untracked\twork/scratch-case.txt'* ]]
+}
+
+@test "the conflict list keeps path names containing tabs and newlines intact" {
+  run _aip_format_conflict_list <<'EOF'
+untracked	work/a	b.json
+ignored	work/c.json
+plain fragment
+EOF
+
+  [ "$status" -eq 0 ]
+  [ "$output" = 'work/a	b.json (untracked), work/c.json (ignored), plain fragment' ]
 }
 
 @test "before sync skips the remote round trip when the profile is already up to date" {

@@ -1809,6 +1809,30 @@ exit 1
         }
     }
 
+    It 'formats conflict records with their kind and keeps tab-bearing paths intact' {
+        $result = Format-AipConflictList -Records @("untracked`twork/a`tb.json", "ignored`twork/c.json")
+        $result | Should -Be "work/a`tb.json (untracked), work/c.json (ignored)"
+    }
+
+    It 'reports an incoming path that collides with untracked local state as a kind-tagged record' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'work/pi/settings.json'
+        [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/pi/settings.json'), "remote bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/pi/settings.json
+        & git -C $other commit -q -m 'track shared settings'
+        & git -C $other push -q
+        & git -C $root fetch -q origin
+
+        $result = Get-AipRebaseUntrackedConflicts -ProfilePath $root -UpstreamCommit origin/main
+
+        $result.Inspected | Should -BeTrue
+        $result.Records | Should -Contain "untracked`twork/pi/settings.json"
+    }
+
     It 'never overwrites ignored local profile state during remote integration' {
         Initialize-TestUpstream
         $root = $script:AipProfileRoot
@@ -1825,10 +1849,40 @@ exit 1
 
         aip sync *> $null
 
-        $global:LASTEXITCODE | Should -Not -Be 0
-        $script:AipLastError | Should -Match 'would overwrite or replace untracked or ignored local profile state'
+        $global:LASTEXITCODE | Should -Be 0
+        $script:AipLastWarning | Should -Match 'remote integration skipped'
+        $script:AipLastWarning | Should -Match 'work/claude/native-state.json \(ignored\)'
         [IO.File]::ReadAllText($nativePath) | Should -Be "local ignored bytes`n"
         (& git -C $root ls-files -- work/claude/native-state.json) | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+    }
+
+    It 'warns, names the path, and still launches a wrapper when the remote tracks an untracked local file' {
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'work/pi/settings.json'
+        [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        [IO.File]::WriteAllText((Join-Path $other 'work/pi/settings.json'), "remote bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add work/pi/settings.json
+        & git -C $other commit -q -m 'track shared settings'
+        & git -C $other push -q
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        $script:AipLastWarning | Should -Match 'remote integration skipped'
+        $script:AipLastWarning | Should -Match 'work/pi/settings.json \(untracked\)'
+        [IO.File]::ReadAllText($settings) | Should -Be "local bytes`n"
+        (& git -C $root ls-files -- work/pi/settings.json) | Should -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+
+        claude prompt *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        $script:AipLastWarning | Should -Match 'remote integration skipped'
+        Test-Path -LiteralPath $script:FakeCapture | Should -BeTrue
     }
 
     It 'blocks local Git metadata failures instead of reporting remote offline' {

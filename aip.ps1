@@ -1920,36 +1920,94 @@ function Add-AipCheckpoint {
     return $true
 }
 
-function Test-AipRebasePreservesUntracked {
+function Get-AipRebaseUntrackedConflicts {
+    # Names the local paths the incoming commit would overwrite or replace as
+    # '<kind>`t<path>' records, where kind is 'untracked' (Git refuses the
+    # checkout) or 'ignored' (Git replaces it silently). Returns
+    # @{ Inspected = $false } when that local state cannot be inspected (reported
+    # here), or @{ Inspected = $true; Records = ... } with the records in Git's
+    # order, memory-first. Naming the paths here and leaving the wording to the
+    # caller lets one caller warn and keep the local profiles while another parks
+    # them.
     param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
     $remoteRaw = (Invoke-AipGit -C $ProfilePath diff --name-only --diff-filter=ACMRT -z HEAD $UpstreamCommit) -join "`n"
     if ($LASTEXITCODE -ne 0) {
         Write-AipError 'could not inspect remote paths before integrating the remote profile'
-        return $false
+        return [pscustomobject]@{ Inspected = $false; Records = @() }
     }
     $untrackedRaw = (Invoke-AipGit -C $ProfilePath ls-files --others --exclude-standard -z) -join "`n"
     if ($LASTEXITCODE -ne 0) {
         Write-AipError 'could not inspect local untracked paths before integrating the remote profile'
-        return $false
+        return [pscustomobject]@{ Inspected = $false; Records = @() }
     }
     $ignoredRaw = (Invoke-AipGit -C $ProfilePath ls-files --others --ignored --exclude-standard -z) -join "`n"
     if ($LASTEXITCODE -ne 0) {
         Write-AipError 'could not inspect local ignored paths before integrating the remote profile'
-        return $false
+        return [pscustomobject]@{ Inspected = $false; Records = @() }
     }
     $remotePaths = @($remoteRaw -split "`0" | Where-Object { $_ } | ForEach-Object { ([string]$_).TrimEnd('/') })
-    $localPaths = @(($untrackedRaw + "`0" + $ignoredRaw) -split "`0" | Where-Object { $_ } | ForEach-Object { ([string]$_).TrimEnd('/') })
+    $localPaths = [System.Collections.Generic.List[object]]::new()
+    foreach ($entry in @($untrackedRaw -split "`0" | Where-Object { $_ })) {
+        $localPaths.Add([pscustomobject]@{ Path = ([string]$entry).TrimEnd('/'); Kind = 'untracked' })
+    }
+    foreach ($entry in @($ignoredRaw -split "`0" | Where-Object { $_ })) {
+        $localPaths.Add([pscustomobject]@{ Path = ([string]$entry).TrimEnd('/'); Kind = 'ignored' })
+    }
+    # Index the incoming tree once, then test every local path for folded
+    # equality, for containing an incoming path, and for sitting inside one.
+    $incoming = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $incomingDir = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($remotePath in $remotePaths) {
-        foreach ($localPath in $localPaths) {
-            if ($remotePath.Equals($localPath, [StringComparison]::OrdinalIgnoreCase) -or
-                $remotePath.StartsWith("$localPath/", [StringComparison]::OrdinalIgnoreCase) -or
-                $localPath.StartsWith("$remotePath/", [StringComparison]::OrdinalIgnoreCase)) {
-                Write-AipError "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C `"$ProfilePath`" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
-                return $false
+        if (-not $remotePath) { continue }
+        [void]$incoming.Add($remotePath)
+        $parts = $remotePath.Split('/')
+        for ($i = 1; $i -lt $parts.Count; $i++) { [void]$incomingDir.Add(($parts[0..($i - 1)] -join '/')) }
+    }
+    $reported = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $conflicts = [System.Collections.Generic.List[string]]::new()
+    foreach ($localPath in $localPaths) {
+        $path = $localPath.Path
+        if (-not $path -or -not $reported.Add($path)) { continue }
+        $hit = $incoming.Contains($path) -or $incomingDir.Contains($path)
+        if (-not $hit) {
+            $segments = $path.Split('/')
+            $prefix = ''
+            for ($i = 0; $i -lt ($segments.Count - 1); $i++) {
+                $prefix = if ($prefix) { "$prefix/$($segments[$i])" } else { $segments[$i] }
+                if ($incoming.Contains($prefix)) { $hit = $true; break }
             }
         }
+        if ($hit) { $conflicts.Add("$($localPath.Kind)`t$path") }
     }
-    return $true
+    return [pscustomobject]@{ Inspected = $true; Records = @($conflicts) }
+}
+
+function Format-AipConflictList {
+    # Turns '<kind>`t<path>' records into one display list. The path follows the
+    # first tab so a path containing a tab keeps its name.
+    param([AllowEmptyCollection()][string[]]$Records = @())
+    $display = [System.Collections.Generic.List[string]]::new()
+    foreach ($record in @($Records)) {
+        $tab = $record.IndexOf("`t")
+        if ($tab -ge 0) { $display.Add("$($record.Substring($tab + 1)) ($($record.Substring(0, $tab)))") }
+        else { $display.Add($record) }
+    }
+    return ($display -join ', ')
+}
+
+function Test-AipRebasePreservesUntracked {
+    # Git refuses a checkout over an untracked file but replaces an ignored one
+    # silently, so both kinds stop the integration; a collision is not a fault in
+    # the local profiles, so it warns (leaving AipCommandStatus at 0) and the
+    # caller skips the remote instead of blocking the session. An inspection
+    # failure stays an error, which does block.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
+    $result = Get-AipRebaseUntrackedConflicts -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit
+    if (-not $result.Inspected) { return $false }
+    $records = @($result.Records)
+    if ($records.Count -eq 0) { return $true }
+    Write-AipWarning "remote integration skipped: the incoming commit changes untracked or ignored local paths: $(Format-AipConflictList -Records $records); move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+    return $false
 }
 
 function Invoke-AipSyncCore {
