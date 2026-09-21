@@ -2970,51 +2970,92 @@ _aip_stage_checkpoint() {
   fi
 }
 
-_aip_require_rebase_preserves_untracked() {
-  local profile=$1 upstream_commit=$2 remote_paths local_paths remote_lines local_lines
+_aip_rebase_untracked_conflicts() {
+  # $1 profiles root, $2 fetched upstream commit. Prints one '<kind><TAB><path>'
+  # record per local path the incoming commit would overwrite or replace, where
+  # kind is 'untracked' (Git refuses the checkout) or 'ignored' (Git replaces it
+  # silently). Prints nothing and returns 0 when there are none, 1 when that
+  # local state cannot be inspected (reported here), and 2 after printing
+  # records. Naming the paths here and leaving the wording to the caller lets
+  # one caller warn and keep the local profiles while another parks them.
+  local root=$1 upstream_commit=$2 remote_paths untracked_paths ignored_paths remote_lines untracked_lines ignored_lines conflicts
   remote_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-paths.XXXXXX") || return
-  local_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-local-paths.XXXXXX") || { command rm -f "$remote_paths"; return 1; }
-  remote_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths"; return 1; }
-  local_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-local-lines.XXXXXX") || { command rm -f "$remote_paths" "$local_paths" "$remote_lines"; return 1; }
-  if ! _aip_git -C "$profile" diff --name-only --diff-filter=ACMRT -z HEAD "$upstream_commit" >|"$remote_paths" ||
-     ! _aip_git -C "$profile" ls-files --others --exclude-standard -z >|"$local_paths" ||
-     ! _aip_git -C "$profile" ls-files --others --ignored --exclude-standard -z >>"$local_paths" ||
+  untracked_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-untracked-paths.XXXXXX") || { command rm -f "$remote_paths"; return 1; }
+  ignored_paths=$(command mktemp "${TMPDIR:-/tmp}/aip-ignored-paths.XXXXXX") || { command rm -f "$remote_paths" "$untracked_paths"; return 1; }
+  remote_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-remote-lines.XXXXXX") || { command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths"; return 1; }
+  untracked_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-untracked-lines.XXXXXX") || { command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths" "$remote_lines"; return 1; }
+  ignored_lines=$(command mktemp "${TMPDIR:-/tmp}/aip-ignored-lines.XXXXXX") || { command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths" "$remote_lines" "$untracked_lines"; return 1; }
+  if ! _aip_git -C "$root" diff --name-only --diff-filter=ACMRT -z HEAD "$upstream_commit" >|"$remote_paths" ||
+     ! _aip_git -C "$root" ls-files --others --exclude-standard -z >|"$untracked_paths" ||
+     ! _aip_git -C "$root" ls-files --others --ignored --exclude-standard -z >|"$ignored_paths" ||
      ! command tr '\0' '\n' <"$remote_paths" >"$remote_lines" ||
-     ! command tr '\0' '\n' <"$local_paths" >"$local_lines"; then
-    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
+     ! command tr '\0' '\n' <"$untracked_paths" >"$untracked_lines" ||
+     ! command tr '\0' '\n' <"$ignored_paths" >"$ignored_lines"; then
+    command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths" "$remote_lines" "$untracked_lines" "$ignored_lines"
     _aip_error 'could not inspect local untracked and ignored paths before integrating the remote profile'
     return 1
   fi
-  # One C-locale pass replaces the old per-pair loop: a collision is folded
-  # equality or containment in either directory direction. A path containing a
-  # literal newline is split into fragments, which can only add collisions.
-  if ! LC_ALL=C command awk '
+  # One C-locale pass indexes the incoming tree, then tests every local path for
+  # folded equality, for containing an incoming path, and for sitting inside
+  # one. Paths are reported in the order Git lists them, memory-first.
+  conflicts=$(LC_ALL=C command awk '
     FILENAME == ARGV[1] {
-      p = tolower($0)
-      sub(/\/+$/, "", p)
-      if (p != "") { locals[++n] = p; seen[p] = 1 }
-      next
-    }
-    {
       r = tolower($0)
       sub(/\/+$/, "", r)
       if (r == "") next
-      if (seen[r]) exit 1
+      incoming[r] = 1
       m = split(r, parts, "/")
       prefix = parts[1]
-      for (k = 2; k <= m; k++) {
-        if (seen[prefix]) exit 1
-        prefix = prefix "/" parts[k]
-      }
-      for (i = 1; i <= n; i++)
-        if (index(locals[i], r "/") == 1) exit 1
+      for (k = 2; k <= m; k++) { incoming_dir[prefix] = 1; prefix = prefix "/" parts[k] }
+      next
     }
-'  "$local_lines" "$remote_lines"; then
-    command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
-    _aip_error "remote integration would overwrite or replace untracked or ignored local profile state; inspect with 'git -C \"$profile\" status --ignored --untracked-files=all' and move or deliberately track the conflicting path"
+    {
+      kind = (FILENAME == ARGV[2]) ? "untracked" : "ignored"
+      raw = $0
+      p = tolower(raw)
+      sub(/\/+$/, "", p)
+      if (p == "" || reported[p]) next
+      hit = incoming[p] || incoming_dir[p]
+      if (!hit) {
+        prefix = ""
+        rest = p
+        while ((sep = index(rest, "/")) > 0) {
+          segment = substr(rest, 1, sep - 1)
+          rest = substr(rest, sep + 1)
+          prefix = (prefix == "") ? segment : prefix "/" segment
+          if (incoming[prefix]) { hit = 1; break }
+        }
+      }
+      if (!hit) next
+      reported[p] = 1
+      paths[++count] = raw
+      kinds[count] = kind
+    }
+    END { for (i = 1; i <= count; i++) print kinds[i] "\t" paths[i] }
+  ' "$remote_lines" "$untracked_lines" "$ignored_lines") || {
+    command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths" "$remote_lines" "$untracked_lines" "$ignored_lines"
+    _aip_error 'could not compare local untracked and ignored paths with the incoming profile'
     return 1
-  fi
-  command rm -f "$remote_paths" "$local_paths" "$remote_lines" "$local_lines"
+  }
+  command rm -f "$remote_paths" "$untracked_paths" "$ignored_paths" "$remote_lines" "$untracked_lines" "$ignored_lines"
+  [ -n "$conflicts" ] || return 0
+  printf '%s\n' "$conflicts"
+  return 2
+}
+
+_aip_format_conflict_list() {
+  # Reads '<kind><TAB><path>' records from stdin and prints one display list.
+  # The path follows the first tab, so a path containing a tab keeps its name;
+  # a line without a tab is a fragment of a path containing a newline and is
+  # shown unchanged.
+  LC_ALL=C command awk '
+    {
+      tab = index($0, "\t")
+      display = (tab > 0) ? substr($0, tab + 1) " (" substr($0, 1, tab - 1) ")" : $0
+      list = (list == "") ? display : list ", " display
+    }
+    END { if (list != "") print list }
+  '
 }
 
 _aip_sync() (
@@ -3081,7 +3122,18 @@ _aip_sync() (
   fi
   upstream_commit=$(_aip_git -C "$root" rev-parse --verify "$upstream^{commit}") || return
   _aip_validate_git_tree "$root" "$upstream_commit" || return
-  _aip_require_rebase_preserves_untracked "$root" "$upstream_commit" || return
+  local conflicts='' conflict_list='' preserve_status=0
+  conflicts=$(_aip_rebase_untracked_conflicts "$root" "$upstream_commit") || preserve_status=$?
+  case $preserve_status in
+    0) ;;
+    # A collision is recoverable and leaves no unfinished Git state, so the
+    # committed local profiles stay in use exactly as when the remote is
+    # unreachable, instead of leaving the user without a harness.
+    2) conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
+       _aip_warn "remote integration skipped: the incoming commit changes untracked or ignored local paths: $conflict_list; move each one aside to take the remote version, or deliberately track it to keep the local one, then run 'aip sync'"
+       return 0 ;;
+    *) return 1 ;;
+  esac
   if ! LC_ALL=C _aip_git -C "$root" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
     if _aip_has_unfinished_git_operation "$root" || [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
       _aip_error "Git conflict in $root; no side was chosen. Run 'git -C \"$root\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"

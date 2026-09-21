@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Recoverable remote collisions.** An incoming commit that would overwrite or
+  replace untracked or ignored local paths no longer blocks the session. The
+  sync names each conflicting path with its kind (`untracked` or `ignored`),
+  skips the incoming commit, and keeps using the committed local profiles,
+  exactly as it already did when the remote is unreachable. Previously a fresh
+  install that connected to a repository tracking a profile's `pi/settings.json`
+  failed `aip remote add` and then every harness launch, with a message that
+  named no path and pointed at the whole `git status --ignored` listing.
+  `git rebase` still runs whenever no such collision exists, and a genuine
+  rebase conflict still stops the next launch.
+
 ## 0.8.3 — 2026-09-11
 
 - **Actionable link errors.** The link failures that block a sync or a harness
