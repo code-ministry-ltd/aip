@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.9.1 — 2026-09-22
+
+- **Zsh: the version choice and doctor repair work again.** In Zsh, `path` is
+  the array tied to `PATH` and `prompt` is tied to `PS1`, so a function that
+  declares `local path` runs with an empty command search path, and
+  `local prompt` replaces the prompt while the function runs. The collision
+  resolution added in 0.9.0 declared `local path` in all three of its
+  functions, so on Zsh — the default shell on macOS — the version menu silently
+  stopped offering `local`, because `grep` could not run, and choosing `remote`
+  or `local` failed the sync outright, because `mktemp` and `date` could not
+  run. That failed sync then blocked the next harness launch, which is the
+  failure 0.9.0 set out to remove. Three older functions had the same bug:
+  `aip doctor`'s repair step could not fork `git` in Zsh, and `aip uninstall`
+  replaced the user's prompt while it asked. All six are renamed, both
+  resolutions are covered by tests that run under `zsh -f`, and a new guard
+  fails if any `local` shadows a parameter Zsh itself reports as special.
+
 ## 0.9.0 — 2026-09-21
 
 - **Choose which version wins when a remote collides with local state.** An
