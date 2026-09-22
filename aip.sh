@@ -401,13 +401,13 @@ _aip_is_required_profile_link() {
 }
 
 _aip_required_link_target() {
-  # $1 = a full tracked/remote relative path (e.g. work/claude/skills). Prints the
+  # $1 = a full tracked/remote relative link_path (e.g. work/claude/skills). Prints the
   # exact target aip creates for its fixed required profile links, requiring a
-  # profile prefix, so root-level lookalikes are rejected. Returns 1 for any path
+  # profile prefix, so root-level lookalikes are rejected. Returns 1 for any link_path
   # aip does not link.
-  local path=${1-} rel
-  [ "$path" = "${path%%/*}" ] && return 1
-  rel=${path#*/}
+  local link_path=${1-} rel
+  [ "$link_path" = "${link_path%%/*}" ] && return 1
+  rel=${link_path#*/}
   case $rel in
     claude/skills|codex/skills|pi/skills|opencode/skills) printf '%s\n' '../skills' ;;
     codex/AGENTS.md|pi/AGENTS.md|opencode/AGENTS.md) printf '%s\n' '../AGENTS.md' ;;
@@ -2833,7 +2833,7 @@ _aip_doctor_has_action() {
 }
 
 _aip_doctor_apply_actions() {
-  local root=$1 actions=$2 kind name rel target profile path errors=0 canonical parent parent_rel desired
+  local root=$1 actions=$2 kind name rel target profile link_path errors=0 canonical parent parent_rel desired
   _aip_git -C "$root" status --porcelain >/dev/null 2>&1 || {
     printf 'ERROR: refusing doctor repair because the profiles repository is unreadable: %s\n' "$root"
     _aip_git_status_failure_detail "$root"
@@ -2844,19 +2844,19 @@ _aip_doctor_apply_actions() {
   while IFS="$(printf '\t')" read -r kind name rel target; do
     [ -n "$kind" ] || continue
     profile=$root/$name
-    path=$profile/$rel
+    link_path=$profile/$rel
     case $kind in required|untrack|remove) ;; *) printf 'ERROR: refusing invalid doctor repair action\n'; errors=1; continue ;; esac
     if ! _aip_validate_name "$name" >/dev/null 2>&1 || [ -z "$rel" ] ||
        [ ! -d "$profile" ] || [ -L "$profile" ] ||
-       ! _aip_path_is_under "$root" "$profile" || ! _aip_path_is_under "$profile" "$path"; then
+       ! _aip_path_is_under "$root" "$profile" || ! _aip_path_is_under "$profile" "$link_path"; then
       printf 'ERROR: refusing doctor repair outside a profile: %s/%s\n' "$name" "$rel"
       errors=1
       continue
     fi
     case $kind in
       required)
-        if [ -e "$path" ] && [ ! -L "$path" ]; then
-          printf 'ERROR: doctor will not replace ordinary path: %s/%s\n' "$name" "$rel"
+        if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+          printf 'ERROR: doctor will not replace ordinary link_path: %s/%s\n' "$name" "$rel"
           errors=1
         fi
         canonical=$(_aip_required_link_target "$name/$rel" 2>/dev/null) || canonical=
@@ -2864,7 +2864,7 @@ _aip_doctor_apply_actions() {
           printf 'ERROR: refusing non-canonical required link repair: %s/%s\n' "$name" "$rel"
           errors=1
         fi
-        parent=${path%/*}
+        parent=${link_path%/*}
         while [ "$parent" != "$profile" ] && _aip_path_is_under "$profile" "$parent"; do
           if [ -L "$parent" ]; then
             parent_rel=${parent#"$profile"/}
@@ -2883,7 +2883,7 @@ _aip_doctor_apply_actions() {
         done
         ;;
       untrack)
-        if [ ! -L "$path" ] || ! _aip_is_passthrough_link "$rel" "$profile"; then
+        if [ ! -L "$link_path" ] || ! _aip_is_passthrough_link "$rel" "$profile"; then
           printf 'ERROR: refusing to untrack an invalid pass-through link: %s/%s\n' "$name" "$rel"
           errors=1
         fi
@@ -2899,10 +2899,10 @@ _aip_doctor_apply_actions() {
     while IFS="$(printf '\t')" read -r kind name rel target; do
       [ "$kind" = "$desired" ] || continue
       profile=$root/$name
-      path=$profile/$rel
+      link_path=$profile/$rel
       case $kind in
         remove)
-          if [ -L "$path" ]; then command rm -f "$path" || { printf 'ERROR: could not remove unsupported link: %s/%s\n' "$name" "$rel"; errors=1; continue; }; fi
+          if [ -L "$link_path" ]; then command rm -f "$link_path" || { printf 'ERROR: could not remove unsupported link: %s/%s\n' "$name" "$rel"; errors=1; continue; }; fi
           _aip_git -C "$root" update-index --force-remove -- "$name/$rel" || { printf 'ERROR: could not stage removed link: %s/%s\n' "$name" "$rel"; errors=1; }
           ;;
         untrack)
@@ -2911,7 +2911,7 @@ _aip_doctor_apply_actions() {
             _aip_git -C "$root" add -- "$name/.gitignore" || { printf 'ERROR: could not untrack pass-through link: %s/%s\n' "$name" "$rel"; errors=1; }
           ;;
         required)
-          command mkdir -p "${path%/*}" && command rm -f "$path" && command ln -s "$target" "$path" &&
+          command mkdir -p "${link_path%/*}" && command rm -f "$link_path" && command ln -s "$target" "$link_path" &&
             _aip_git -C "$root" add -- "$name/$rel" || { printf 'ERROR: could not restore required link: %s/%s\n' "$name" "$rel"; errors=1; }
           ;;
       esac
@@ -4658,20 +4658,20 @@ _aip_uninstall() {
     printf 'Nothing to uninstall (no aip install at %s and no aip block in %s).\n' "$install_root" "$shell_profile"
     return 0
   fi
-  local prompt
+  local prompt_text
   if [ "$has_root" -eq 1 ] && [ "$has_block" -eq 1 ]; then
-    prompt='Remove the aip installation root and the shell profile block? [y/N] '
+    prompt_text='Remove the aip installation root and the shell profile block? [y/N] '
   elif [ "$has_root" -eq 1 ]; then
-    prompt='Remove the aip installation root? [y/N] '
+    prompt_text='Remove the aip installation root? [y/N] '
   else
-    prompt='Remove the aip block from your shell profile? [y/N] '
+    prompt_text='Remove the aip block from your shell profile? [y/N] '
   fi
   if [ "$force" -ne 1 ]; then
     if [ ! -t 0 ]; then
       _aip_error 'uninstall requires confirmation; rerun with --force'
       return 1
     fi
-    printf '%s' "$prompt"
+    printf '%s' "$prompt_text"
     IFS= read -r answer || return 1
     _aip_delete_confirm_accepts "$answer" || { _aip_error 'uninstall cancelled'; return 1; }
   fi
