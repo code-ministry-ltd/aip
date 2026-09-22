@@ -3262,6 +3262,24 @@ _aip_adopt_upstream() {
   done
 }
 
+_aip_rebase_is_doomed() {
+  # $1 profiles root. True when a rebase is in progress whose original head
+  # shares no ancestor with the commit it is being replayed onto, so no amount
+  # of conflict resolution can finish it. Git records both under
+  # .git/rebase-merge (merge backend) or .git/rebase-apply (apply backend); a
+  # missing record means "not known to be doomed", so the safe wording wins.
+  local root=$1 dir orig onto
+  for dir in "$root/.git/rebase-merge" "$root/.git/rebase-apply"; do
+    [ -d "$dir" ] || continue
+    orig=$(command cat "$dir/orig-head" 2>/dev/null) || orig=
+    onto=$(command cat "$dir/onto" 2>/dev/null) || onto=
+    [ -n "$orig" ] && [ -n "$onto" ] || continue
+    _aip_git -C "$root" merge-base "$orig" "$onto" >/dev/null 2>&1 && return 1
+    return 0
+  done
+  return 1
+}
+
 _aip_sync() (
   local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
@@ -3278,7 +3296,14 @@ _aip_sync() (
   trap 'exit 129' HUP
 
   if _aip_has_unfinished_git_operation "$root" || [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-    _aip_error "Git conflict or unfinished operation in $root; run 'git -C \"$root\" status', then resolve and continue or abort it"
+    if _aip_rebase_is_doomed "$root"; then
+      # A rebase over an unrelated history cannot be resolved, so telling the
+      # user to resolve it would send them in circles.
+      unmerged=$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null | command awk 'NR == 1 { print; exit }') || unmerged=
+      _aip_error "the unfinished rebase in $root cannot succeed: it replays commits onto an unrelated history${unmerged:+, and $unmerged is unmerged}. Run 'git -C \"$root\" rebase --abort' to undo it, then 'aip remote add URL' again to adopt the remote"
+    else
+      _aip_error "Git conflict or unfinished operation in $root; run 'git -C \"$root\" status', then resolve and continue or abort it"
+    fi
     return 1
   fi
   pre_sha=$(_aip_git -C "$root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || pre_sha=
@@ -3362,7 +3387,9 @@ _aip_sync() (
       conflict_list=$(_aip_format_conflict_list <<<"$conflicts")
       # Only an explicit command asks: a harness launch never blocks on input,
       # and a non-interactive run keeps the warn-and-skip contract.
-      if [ "$mode" = manual ] && { [ -t 0 ] || [ "${_AIP_SYNC_FORCE_INTERACTIVE-}" = 1 ]; }; then
+      # An explicit command asks, and adopt is explicit too — it only reaches
+      # here on a related history, since an unrelated one adopts above.
+      if { [ "$mode" = manual ] || [ "$mode" = adopt ]; } && { [ -t 0 ] || [ "${_AIP_SYNC_FORCE_INTERACTIVE-}" = 1 ]; }; then
         _aip_collision_keeps_local "$root" "$upstream_commit" "$conflicts" && keep_local=1
         resolution=$(_aip_prompt_collision_resolution "$conflict_list" "$keep_local") || resolution=skip
       fi
@@ -4576,14 +4603,19 @@ _aip_remote_add() {
   esac
   if [ -d "$root/.git" ] && [ ! -L "$root/.git" ]; then
     existing_origin=$(_aip_git -C "$root" remote get-url origin 2>/dev/null) || existing_origin=
-    if [ -n "$existing_origin" ]; then
+    if [ -n "$existing_origin" ] && [ "$existing_origin" != "$url" ]; then
       _aip_error "origin is already configured ($(_aip_redact_url "$existing_origin")); run 'aip remote remove' first"
       return 1
     fi
-    _aip_git -C "$root" remote add origin "$url" 2>/dev/null || {
-      _aip_error "could not configure origin: $(_aip_redact_url "$url")"
-      return 1
-    }
+    if [ -z "$existing_origin" ]; then
+      # Re-running remote add with the URL origin already has is the recovery
+      # after aborting a rebase that could not succeed, so it proceeds to the
+      # adoption below instead of refusing.
+      _aip_git -C "$root" remote add origin "$url" 2>/dev/null || {
+        _aip_error "could not configure origin: $(_aip_redact_url "$url")"
+        return 1
+      }
+    fi
   else
     if [ -e "$root" ] && [ ! -d "$root" ]; then
       _aip_error "profiles path exists and is not a directory: $root"

@@ -993,6 +993,54 @@ make_unrelated_local_upstream() {
   [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
 }
 
+@test "an unfinished rebase over an unrelated history explains itself" {
+  make_unrelated_upstream
+  make_unrelated_local_upstream
+  # Track the same path the remote carries with different content, so replaying
+  # the local commit onto the unrelated remote stops on an add/add conflict.
+  printf 'local settings\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  git -C "$_AIP_PROFILE_ROOT" add work/pi/settings.json
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'local settings'
+  git -C "$_AIP_PROFILE_ROOT" rebase origin/main >/dev/null 2>&1 || true
+  [ -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ] || [ -d "$_AIP_PROFILE_ROOT/.git/rebase-apply" ]
+
+  run aip sync </dev/null
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'cannot succeed'* ]]
+  [[ "$output" == *'rebase --abort'* ]]
+  [[ "$output" != *'then resolve and continue or abort it'* ]]
+}
+
+@test "an unfinished rebase over a related history keeps the resolve-or-abort wording" {
+  make_upstream
+  local other="$BATS_TEST_TMPDIR/other"
+  printf 'local version\n' >"$_AIP_PROFILE_ROOT/work/AGENTS.md"
+  git -C "$_AIP_PROFILE_ROOT" commit -q -am 'local version'
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote version\n' >"$other/work/AGENTS.md"
+  git -C "$other" commit -q -am 'remote version'
+  git -C "$other" push -q
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  git -C "$_AIP_PROFILE_ROOT" rebase origin/main >/dev/null 2>&1 || true
+  [ -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ] || [ -d "$_AIP_PROFILE_ROOT/.git/rebase-apply" ]
+
+  run aip sync </dev/null
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'resolve and continue or abort it'* ]]
+  [[ "$output" != *'cannot succeed'* ]]
+}
+
+@test "remote add with the same origin proceeds instead of refusing" {
+  make_upstream
+
+  run aip remote add "$TEST_REMOTE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'already configured'* ]]
+}
+
 @test "no aip function shadows a Zsh special parameter with a local" {
   command -v zsh >/dev/null || skip 'Zsh is not installed'
   # In Zsh, 'local path' declares the tied PATH array and 'local prompt' replaces

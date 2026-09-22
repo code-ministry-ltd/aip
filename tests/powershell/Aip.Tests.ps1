@@ -1898,6 +1898,36 @@ exit 1
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
     }
 
+    It 'explains a rebase that cannot succeed instead of asking the user to resolve it' {
+        Initialize-TestUnrelatedUpstream
+        Connect-TestUnrelatedUpstream
+        $root = $script:AipProfileRoot
+        # Track the same path the remote carries with different content, so
+        # replaying the local commit onto the unrelated remote stops on an
+        # add/add conflict.
+        [IO.File]::WriteAllText((Join-Path $root 'work/pi/settings.json'), "local settings`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add work/pi/settings.json
+        & git -C $root commit -q -m 'local settings'
+        & git -C $root rebase origin/main *> $null
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeTrue
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Not -Be 0
+        $script:AipLastError | Should -Match 'cannot succeed'
+        $script:AipLastError | Should -Match 'rebase --abort'
+        $script:AipLastError | Should -Not -Match 'then resolve and continue or abort it'
+    }
+
+    It 'remote add with the same origin proceeds instead of refusing' {
+        Initialize-TestUpstream
+
+        $output = aip remote add $script:TestRemote 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Not -Match 'already configured'
+    }
+
     It 'refuses an unrelated remote history on an explicit sync without changing anything' {
         Initialize-TestUnrelatedUpstream
         Connect-TestUnrelatedUpstream
