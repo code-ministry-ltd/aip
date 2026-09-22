@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.9.3 — 2026-09-22
+
+- **A rebase that cannot succeed says so, and names the recovery.** If a
+  previous sync left a rebase stopped over an unrelated history, `aip sync`
+  reported "Git conflict or unfinished operation … then resolve and continue or
+  abort it" — advice that cannot be followed, because replaying commits onto an
+  unrelated history never converges. It now identifies that case, names the
+  first unmerged path, and gives the two commands that fix it. A genuine
+  conflict over a related history keeps the existing resolve-or-abort wording.
+- **`aip remote add` accepts the URL origin already has.** Re-running it with
+  the same URL is the recovery after aborting such a rebase, so it now proceeds
+  instead of refusing with "origin is already configured". A different URL still
+  refuses and points at `aip remote remove`. Together this makes the whole
+  recovery two commands that aip itself names: `git rebase --abort`, then
+  `aip remote add URL`.
+
 ## 0.9.2 — 2026-09-22
 
 - **`aip remote add` on a fresh machine adopts the remote instead of failing.**
