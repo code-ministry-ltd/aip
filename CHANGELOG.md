@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.9.2 — 2026-09-22
+
+- **`aip remote add` on a fresh machine adopts the remote instead of failing.**
+  `install.sh` creates the profiles repository, so on a machine connecting to a
+  profiles repository that already exists the two histories share no ancestor.
+  `aip sync` would rebase one unrelated tree onto the other, which cannot
+  converge: the collision guard reported the first wall, and the rebase conflicted
+  behind it. `aip sync` now stops before the rebase when the fetched commit has no
+  common ancestor with `HEAD` and reports both recoveries, and `aip remote add`
+  adopts the remote in that case — parking every untracked or ignored path the
+  incoming tree would overwrite, replacing the branch with the fetched commit,
+  and reporting the profile count and the parked directory. Adoption is refused
+  unless the local repository holds nothing but aip's own scaffold and every
+  profile it has also exists in the incoming tree, so replacing the branch cannot
+  discard authored work or make a profile disappear. A harness launch and
+  `aip clone` keep working from the committed local profiles and say that the
+  remote is not integrated, instead of blocking.
+
 ## 0.9.1 — 2026-09-22
 
 - **Zsh: the version choice and doctor repair work again.** In Zsh, `path` is
