@@ -905,6 +905,22 @@ make_upstream() {
   [ "$(cat "$native_path")" = 'remote tracked bytes' ]
 }
 
+@test "no aip function shadows a Zsh special parameter with a local" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+  # In Zsh, 'local path' declares the tied PATH array and 'local prompt' replaces
+  # PS1, so the shell loses the command search path or the prompt for the whole
+  # function. Bash has no such tie, so only Zsh can see it; compare the names Zsh
+  # itself calls special against every name aip declares with 'local'.
+  local specials locals shadowed
+  specials=$(zsh -f -c 'for k in ${(k)parameters}; do [[ ${parameters[$k]} == *special* ]] && print -r -- $k; done' | sort -u)
+  locals=$(grep -hoE '^[[:space:]]+local [^#]*' "$AIP_SOURCE" | tr ' ' '\n' | sed 's/=.*//' | grep -vE '^$|^local$' | sort -u)
+  shadowed=$(comm -12 <(printf '%s\n' "$specials") <(printf '%s\n' "$locals"))
+  if [ -n "$shadowed" ]; then
+    printf 'local declarations shadow Zsh special parameters: %s\n' "$shadowed" >&2
+    false
+  fi
+}
+
 @test "the collision version choice parks and takes the remote when sourced by Zsh" {
   command -v zsh >/dev/null || skip 'Zsh is not installed'
   local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json" parked
