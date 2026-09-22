@@ -905,6 +905,48 @@ make_upstream() {
   [ "$(cat "$native_path")" = 'remote tracked bytes' ]
 }
 
+@test "the collision version choice parks and takes the remote when sourced by Zsh" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json" parked
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  run zsh -f -c 'source "$AIP_SOURCE"; export _AIP_SYNC_FORCE_INTERACTIVE=1; printf "r\n" | aip sync'
+
+  [ "$status" -eq 0 ]
+  # The menu offers local only when the eligibility check could run grep.
+  [[ "$output" == *'[l] local'* ]]
+  [[ "$output" == *'Parked the replaced local paths in '* ]]
+  [ "$(cat "$settings")" = 'remote bytes' ]
+  parked=$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*/work/pi/settings.json' -print -quit)
+  [ -n "$parked" ]
+  [ "$(cat "$parked")" = 'local bytes' ]
+}
+
+@test "keeping the local version works when sourced by Zsh" {
+  command -v zsh >/dev/null || skip 'Zsh is not installed'
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
+  make_upstream
+  printf 'local bytes\n' >"$settings"
+  git clone -q "$TEST_REMOTE" "$other"
+  printf 'remote bytes\n' >"$other/work/pi/settings.json"
+  git -C "$other" add work/pi/settings.json
+  git -C "$other" commit -q -m 'track shared settings'
+  git -C "$other" push -q
+
+  run zsh -f -c 'source "$AIP_SOURCE"; export _AIP_SYNC_FORCE_INTERACTIVE=1; printf "l\n" | aip sync'
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Kept the local version of work/pi/settings.json.'* ]]
+  [ "$(cat "$settings")" = 'local bytes' ]
+  [ "$(git -C "$TEST_REMOTE" show main:work/pi/settings.json)" = 'local bytes' ]
+}
+
 @test "a harness launch never asks for a version, even with a terminal available" {
   local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/work/pi/settings.json"
   make_upstream

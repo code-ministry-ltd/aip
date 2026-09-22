@@ -3066,18 +3066,18 @@ _aip_collision_keeps_local() {
   # ignored path, a link or directory, a case-only or directory-level
   # collision, and a forbidden path are all excluded, because keeping any of
   # them would leave a tracked state the validators before a push reject.
-  local root=$1 upstream_commit=$2 records=$3 record kind path rel name
+  local root=$1 upstream_commit=$2 records=$3 record kind conflict_path rel name
   while IFS= read -r record; do
     [ -n "$record" ] || continue
     kind=${record%%$'\t'*}
-    path=${record#*$'\t'}
+    conflict_path=${record#*$'\t'}
     [ "$kind" = untracked ] || return 1
-    case $path in */*) ;; *) return 1 ;; esac
-    name=${path%%/*}
-    rel=${path#*/}
+    case $conflict_path in */*) ;; *) return 1 ;; esac
+    name=${conflict_path%%/*}
+    rel=${conflict_path#*/}
     _aip_validate_name "$name" || return 1
-    [ -f "$root/$path" ] && [ ! -L "$root/$path" ] || return 1
-    _aip_git -C "$root" cat-file -e "$upstream_commit:$path" 2>/dev/null || return 1
+    [ -f "$root/$conflict_path" ] && [ ! -L "$root/$conflict_path" ] || return 1
+    _aip_git -C "$root" cat-file -e "$upstream_commit:$conflict_path" 2>/dev/null || return 1
     _aip_is_forbidden_path "$rel" && return 1
   done <<EOF
 $records
@@ -3092,22 +3092,24 @@ _aip_park_local_paths() {
   # excludes '.aip-*/', so a park survives a sync untracked. On failure the
   # directory holding the paths already moved is named, so no local file is
   # ever lost to a partial park.
-  local root=$1 records=$2 dir path target record
+  # A local named 'path' would be the tied PATH array in Zsh, which empties the
+  # command search path for the whole function. Keep these names non-special.
+  local root=$1 records=$2 dir park_rel target record
   dir=$(command mktemp -d "$root/.aip-parked-$(command date +%Y%m%dT%H%M%S)-XXXXXX") || return 1
   while IFS= read -r record; do
     [ -n "$record" ] || continue
     case $record in
-      *$'\t'*) path=${record#*$'\t'} ;;
+      *$'\t'*) park_rel=${record#*$'\t'} ;;
       *)
         _aip_error "cannot park a local path whose name contains a newline; the paths already moved are in $dir"
         return 1
         ;;
     esac
-    target=$dir/$path
-    if ! _aip_path_is_under "$root" "$root/$path" ||
+    target=$dir/$park_rel
+    if ! _aip_path_is_under "$root" "$root/$park_rel" ||
        ! command mkdir -p "${target%/*}" ||
-       ! command mv -- "$root/$path" "$target"; then
-      _aip_error "could not park $path; the paths already moved are in $dir"
+       ! command mv -- "$root/$park_rel" "$target"; then
+      _aip_error "could not park $park_rel; the paths already moved are in $dir"
       return 1
     fi
   done <<EOF
@@ -3122,7 +3124,7 @@ _aip_restore_parked_local() {
   # the caller's commit records the local version, then removes the emptied park
   # directory. Prints the restored paths. On failure the paths still parked are
   # named and left for the user.
-  local root=$1 dir=$2 records=$3 record path target restored=''
+  local root=$1 dir=$2 records=$3 record park_rel target restored=''
   case ${dir##*/} in
     .aip-parked-*) ;;
     *) _aip_error "refusing to restore local paths from $dir"; return 1 ;;
@@ -3131,18 +3133,18 @@ _aip_restore_parked_local() {
   while IFS= read -r record; do
     [ -n "$record" ] || continue
     case $record in
-      *$'\t'*) path=${record#*$'\t'} ;;
+      *$'\t'*) park_rel=${record#*$'\t'} ;;
       *)
         _aip_error "cannot restore a local path whose name contains a newline; the paths still parked are in $dir"
         return 1
         ;;
     esac
-    target=$dir/$path
-    if ! command mv -- "$target" "$root/$path" || ! _aip_git -C "$root" add -- "$path"; then
-      _aip_error "could not restore $path; the paths still parked are in $dir"
+    target=$dir/$park_rel
+    if ! command mv -- "$target" "$root/$park_rel" || ! _aip_git -C "$root" add -- "$park_rel"; then
+      _aip_error "could not restore $park_rel; the paths still parked are in $dir"
       return 1
     fi
-    restored=${restored:+$restored, }$path
+    restored=${restored:+$restored, }$park_rel
   done <<EOF
 $records
 EOF
