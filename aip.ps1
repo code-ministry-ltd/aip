@@ -2253,6 +2253,29 @@ function Invoke-AipAdoptUpstream {
     return [pscustomobject]@{ Adopted = $true; Park = $park }
 }
 
+function Test-AipRebaseDoomed {
+    # True when a rebase is in progress whose original head shares no ancestor
+    # with the commit it is being replayed onto, so no amount of conflict
+    # resolution can finish it. Git records both under .git/rebase-merge (merge
+    # backend) or .git/rebase-apply (apply backend); a missing record means "not
+    # known to be doomed", so the safe wording wins.
+    param([Parameter(Mandatory)][string]$ProfilePath)
+    foreach ($name in 'rebase-merge', 'rebase-apply') {
+        $dir = Join-Path $ProfilePath ".git/$name"
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        $origPath = Join-Path $dir 'orig-head'
+        $ontoPath = Join-Path $dir 'onto'
+        if (-not (Test-Path -LiteralPath $origPath -PathType Leaf) -or -not (Test-Path -LiteralPath $ontoPath -PathType Leaf)) { continue }
+        $orig = ((Get-Content -LiteralPath $origPath -Raw) -replace '\s', '')
+        $onto = ((Get-Content -LiteralPath $ontoPath -Raw) -replace '\s', '')
+        if (-not $orig -or -not $onto) { continue }
+        Invoke-AipGit -C $ProfilePath merge-base $orig $onto *> $null
+        if ($LASTEXITCODE -eq 0) { return $false }
+        return $true
+    }
+    return $false
+}
+
 function Invoke-AipSyncCore {
     param([string]$Mode = 'manual')
     $script:AipCommandStatus = 0
@@ -2263,7 +2286,16 @@ function Invoke-AipSyncCore {
     try {
         $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
         if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) {
-            Write-AipError "Git conflict or unfinished operation in $script:AipProfileRoot; run 'git -C `"$script:AipProfileRoot`" status', then resolve and continue or abort it"
+            if (Test-AipRebaseDoomed $script:AipProfileRoot) {
+                # A rebase over an unrelated history cannot be resolved, so
+                # telling the user to resolve it would send them in circles.
+                $firstUnmerged = @(Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null)[0]
+                $extra = if ($firstUnmerged) { ", and $firstUnmerged is unmerged" } else { '' }
+                Write-AipError "the unfinished rebase in $script:AipProfileRoot cannot succeed: it replays commits onto an unrelated history$extra. Run 'git -C `"$script:AipProfileRoot`" rebase --abort' to undo it, then 'aip remote add URL' again to adopt the remote"
+            }
+            else {
+                Write-AipError "Git conflict or unfinished operation in $script:AipProfileRoot; run 'git -C `"$script:AipProfileRoot`" status', then resolve and continue or abort it"
+            }
             return
         }
         foreach ($name in (Get-AipProfileNames)) {
@@ -2346,7 +2378,7 @@ function Invoke-AipSyncCore {
                     Write-AipError "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $script:AipProfileRoot aside and run 'aip remote add' again to adopt the remote, or publish the local profiles to an empty remote"
                     return
                 }
-                if ($Mode -eq 'manual') {
+                if ($Mode -eq 'manual' -or $Mode -eq 'adopt') {
                     Write-AipError "the local profiles repository and $upstream share no common history; no side was chosen. Adopt the remote with 'git -C `"$script:AipProfileRoot`" fetch origin; git -C `"$script:AipProfileRoot`" reset --hard $upstream', or publish the local profiles to an empty remote"
                     return
                 }
@@ -3162,16 +3194,22 @@ function Invoke-AipRemoteAdd {
         -not ((Get-Item -LiteralPath $rootGit -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint))
     if ($repoExists) {
         $existing = @(Invoke-AipGit -C $root remote get-url origin 2>$null)
-        if ($LASTEXITCODE -eq 0 -and $existing.Count -eq 1 -and "$existing[0]".Trim().Length -gt 0) {
-            Write-AipError "origin is already configured ($(Get-AipRedactedUrl $existing[0])); run 'aip remote remove' first"
+        $existingOrigin = if ($LASTEXITCODE -eq 0 -and $existing.Count -eq 1) { "$($existing[0])".Trim() } else { '' }
+        if ($existingOrigin -and $existingOrigin -ne $Url) {
+            Write-AipError "origin is already configured ($(Get-AipRedactedUrl $existingOrigin)); run 'aip remote remove' first"
             $script:AipCommandStatus = 1
             return
         }
-        $null = Invoke-AipGit -C $root remote add origin $Url
-        if ($LASTEXITCODE -ne 0) {
-            Write-AipError "could not configure origin: $(Get-AipRedactedUrl $Url)"
-            $script:AipCommandStatus = 1
-            return
+        if (-not $existingOrigin) {
+            # Re-running remote add with the URL origin already has is the
+            # recovery after aborting a rebase that could not succeed, so it
+            # proceeds to the adoption below instead of refusing.
+            $null = Invoke-AipGit -C $root remote add origin $Url
+            if ($LASTEXITCODE -ne 0) {
+                Write-AipError "could not configure origin: $(Get-AipRedactedUrl $Url)"
+                $script:AipCommandStatus = 1
+                return
+            }
         }
     }
     else {
