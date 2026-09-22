@@ -62,6 +62,46 @@ exit "${FAKE_EXIT_STATUS:-0}"
         & git -C $script:TestRemote symbolic-ref HEAD refs/heads/main
     }
 
+    function Initialize-TestUnrelatedUpstream {
+        # A valid aip repository with its own root commit, so it shares no
+        # ancestor with the local one - the state a fresh install is in when it
+        # first connects to a profiles repository that already exists. The
+        # distinct commit date is what makes it unrelated: two aip-created
+        # profiles built in the same second with the same identity hash to the
+        # same root commit, which would leave the histories related.
+        $script:TestRemote = Join-Path $TestDrive ('unrelated-' + [guid]::NewGuid().ToString('N') + '.git')
+        $otherRoot = Join-Path $TestDrive ('unrelated-profiles-' + [guid]::NewGuid().ToString('N'))
+        & git init -q --bare $script:TestRemote
+        $savedRoot = $script:AipProfileRoot
+        $savedAuthor = $env:GIT_AUTHOR_DATE
+        $savedCommitter = $env:GIT_COMMITTER_DATE
+        try {
+            $script:AipProfileRoot = $otherRoot
+            $env:GIT_AUTHOR_DATE = '2001-01-01T00:00:00 +0000'
+            $env:GIT_COMMITTER_DATE = '2001-01-01T00:00:00 +0000'
+            aip create work *> $null
+        }
+        finally {
+            $script:AipProfileRoot = $savedRoot
+            $env:GIT_AUTHOR_DATE = $savedAuthor
+            $env:GIT_COMMITTER_DATE = $savedCommitter
+        }
+        [IO.File]::WriteAllText((Join-Path $otherRoot 'work/pi/settings.json'), "remote settings`n", [Text.UTF8Encoding]::new($false))
+        & git -C $otherRoot add work/pi/settings.json
+        & git -C $otherRoot commit -q -m 'share settings'
+        & git -C $otherRoot remote add origin $script:TestRemote
+        & git -C $otherRoot push -q -u origin main
+        & git -C $script:TestRemote symbolic-ref HEAD refs/heads/main
+    }
+
+    function Connect-TestUnrelatedUpstream {
+        # Points the local repository at an unrelated remote without going through
+        # `aip remote add`, so the state can be reached by other commands.
+        & git -C $script:AipProfileRoot remote add origin $script:TestRemote
+        & git -C $script:AipProfileRoot fetch -q origin
+        & git -C $script:AipProfileRoot branch --set-upstream-to=origin/main main *> $null
+    }
+
     function Get-RootRepo { $script:AipProfileRoot }
 }
 
@@ -1858,8 +1898,68 @@ exit 1
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
     }
 
-    It 'warns, names the path, and still launches a wrapper without asking for a version' {
-        Initialize-TestUpstream
+    It 'refuses an unrelated remote history on an explicit sync without changing anything' {
+        Initialize-TestUnrelatedUpstream
+        Connect-TestUnrelatedUpstream
+        $root = $script:AipProfileRoot
+        $before = (& git -C $root rev-parse HEAD)
+
+        aip sync *> $null
+
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'share no common history'
+        $script:AipLastError | Should -Match 'reset --hard origin/main'
+        (& git -C $root rev-parse HEAD) | Should -Be $before
+        @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+    }
+
+    It 'adopts an unrelated remote on remote add instead of rebasing it' {
+        Initialize-TestUnrelatedUpstream
+        $root = $script:AipProfileRoot
+        [IO.File]::WriteAllText((Join-Path $root 'work/pi/settings.json'), "local settings`n", [Text.UTF8Encoding]::new($false))
+
+        $output = aip remote add $script:TestRemote 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'Adopted'
+        $output | Should -Match 'Parked the local paths the incoming tree replaces in '
+        [IO.File]::ReadAllText((Join-Path $root 'work/pi/settings.json')) | Should -Be "remote settings`n"
+        # the local copy is parked, not deleted
+        $parked = @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*' | Select-Object -First 1)[0]
+        $null -eq $parked | Should -BeFalse
+        [IO.File]::ReadAllText((Join-Path $parked.FullName 'work/pi/settings.json')) | Should -Be "local settings`n"
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+    }
+
+    It 'refuses adoption when the local repository holds authored content' {
+        Initialize-TestUnrelatedUpstream
+        $root = $script:AipProfileRoot
+        [IO.File]::WriteAllText((Join-Path $root 'work/notes.md'), "my own notes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add work/notes.md
+        & git -C $root commit -q -m 'my work'
+
+        aip remote add $script:TestRemote *> $null
+
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'content aip did not create'
+        [IO.File]::ReadAllText((Join-Path $root 'work/notes.md')) | Should -Be "my own notes`n"
+        @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
+    }
+
+    It 'keeps a harness launch working with an unrelated remote history' {
+        Initialize-TestUnrelatedUpstream
+        Connect-TestUnrelatedUpstream
+
+        claude prompt *> $null
+
+        $global:LASTEXITCODE | Should -Be 0
+        $script:AipLastWarning | Should -Match 'share no common history'
+        Test-Path -LiteralPath $script:FakeCapture | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:AipProfileRoot '.git/rebase-merge') | Should -BeFalse
+    }
+
+    It 'warns, names the path, and still launches a wrapper without asking for a version' {        Initialize-TestUpstream
         $root = $script:AipProfileRoot
         $settings = Join-Path $root 'work/pi/settings.json'
         [IO.File]::WriteAllText($settings, "local bytes`n", [Text.UTF8Encoding]::new($false))

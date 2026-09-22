@@ -3185,6 +3185,83 @@ _aip_prompt_collision_resolution() {
   done
 }
 
+_aip_histories_are_related() {
+  # $1 profiles root, $2 fetched upstream commit. A rebase can only integrate a
+  # commit that shares an ancestor with HEAD; without one, no version choice and
+  # no conflict resolution can apply the incoming tree.
+  _aip_git -C "$1" merge-base HEAD "$2" >/dev/null 2>&1
+}
+
+_aip_repository_is_disposable() {
+  # $1 profiles root, $2 fetched upstream commit. True when the local repository
+  # tracks nothing but the scaffold aip itself created, and every profile it has
+  # also exists in the incoming tree, so replacing the branch cannot lose work
+  # the user authored or make a profile disappear. Read from the tracked tree
+  # rather than from commit count or messages, so an installer that gains
+  # commits, or a reconciled .gitignore, cannot change the answer.
+  local root=$1 upstream_commit=$2 entry rel name profiles incoming
+  entry=$(command mktemp "${TMPDIR:-/tmp}/aip-tracked.XXXXXX") || return 1
+  profiles=$(command mktemp "${TMPDIR:-/tmp}/aip-profiles.XXXXXX") || { command rm -f "$entry"; return 1; }
+  incoming=$(command mktemp "${TMPDIR:-/tmp}/aip-incoming.XXXXXX") || { command rm -f "$entry" "$profiles"; return 1; }
+  if ! _aip_git -C "$root" ls-files -z >|"$entry" ||
+     ! _aip_git -C "$root" ls-tree --name-only "$upstream_commit" >|"$incoming"; then
+    command rm -f "$entry" "$profiles" "$incoming"
+    return 1
+  fi
+  _aip_profile_prefixes_from_names "$entry" >|"$profiles" || {
+    command rm -f "$entry" "$profiles" "$incoming"
+    return 1
+  }
+  while IFS= read -r -d '' rel; do
+    [ -n "$rel" ] || continue
+    case $rel in
+      .gitignore) continue ;;
+      */\.gitignore|*/AGENTS.md|*/skills/.gitkeep|*/claude/CLAUDE.md|*/claude/skills|*/codex/AGENTS.md|*/codex/instructions.md|*/codex/skills|*/pi/AGENTS.md|*/pi/APPEND_SYSTEM.md|*/pi/skills|*/opencode/AGENTS.md|*/opencode/skills) continue ;;
+      *)
+        command rm -f "$entry" "$profiles" "$incoming"
+        return 1
+        ;;
+    esac
+  done <"$entry"
+  name=
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    name=${entry%%/*}
+    command grep -Fxq "$name" "$incoming" || {
+      command rm -f "$entry" "$profiles" "$incoming"
+      return 1
+    }
+  done <"$profiles"
+  command rm -f "$entry" "$profiles" "$incoming"
+  return 0
+}
+
+_aip_adopt_upstream() {
+  # $1 profiles root, $2 fetched upstream commit. Replaces the local branch with
+  # the incoming tree after moving every untracked or ignored path it would
+  # overwrite into a park directory, so adopting never deletes local state. Only
+  # reachable from `aip remote add` once the local repository is disposable.
+  local root=$1 upstream_commit=$2 records='' conflict_status=0 park_dir='' name profile_path
+  records=$(_aip_rebase_untracked_conflicts "$root" "$upstream_commit") || conflict_status=$?
+  case $conflict_status in
+    0) records='' ;;
+    2) park_dir=$(_aip_park_local_paths "$root" "$records") || return 1
+       printf 'Parked the local paths the incoming tree replaces in %s.\n' "$park_dir" ;;
+    *) return 1 ;;
+  esac
+  if ! _aip_git -C "$root" reset --hard "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
+    _aip_error "could not replace the local profiles with the incoming tree; inspect it with 'git -C \"$root\" status'"
+    [ -z "$park_dir" ] || _aip_error "the local paths moved aside are in $park_dir"
+    return 1
+  fi
+  for name in $(_aip_list_profile_names); do
+    profile_path=$(_aip_profile_path "$name")
+    _aip_ensure_skills_placeholder "$profile_path" || return
+    _aip_validate_sync_layout "$profile_path" || return
+    _aip_passthrough_profile "$name"
+  done
+}
+
 _aip_sync() (
   local mode=${1-manual} root=$_AIP_PROFILE_ROOT upstream upstream_commit branch remote merge_ref name profile_path pre_sha cur_sha stored_sha remote_sha
   _aip_clear_git_routing
@@ -3249,6 +3326,31 @@ _aip_sync() (
   fi
   upstream_commit=$(_aip_git -C "$root" rev-parse --verify "$upstream^{commit}") || return
   _aip_validate_git_tree "$root" "$upstream_commit" || return
+  # A rebase can only integrate a commit that shares an ancestor with HEAD, and
+  # on a fresh machine the installer has already created this repository, so the
+  # incoming tree is unrelated and no version choice can apply it. Adopting the
+  # remote is the only way forward, and only `aip remote add` may do it; every
+  # other mode keeps the working local profiles and says so rather than parking
+  # paths and then failing inside a rebase.
+  if ! _aip_histories_are_related "$root" "$upstream_commit"; then
+    if [ "$mode" = adopt ] && _aip_repository_is_disposable "$root" "$upstream_commit"; then
+      _aip_adopt_upstream "$root" "$upstream_commit" || return 1
+      printf 'Adopted %s profile(s) from %s.\n' "$(printf '%s\n' "$(_aip_list_profile_names)" | command grep -c .)" "$upstream"
+      return 0
+    fi
+    if [ "$mode" = adopt ]; then
+      _aip_error "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $root aside and run 'aip remote add' again to adopt the remote, or publish the local profiles to an empty remote"
+      return 1
+    fi
+    if [ "$mode" = manual ]; then
+      _aip_error "the local profiles repository and $upstream share no common history; no side was chosen. Adopt the remote with 'git -C \"$root\" fetch origin && git -C \"$root\" reset --hard $upstream', or publish the local profiles to an empty remote"
+      return 1
+    fi
+    # A launch and a clone keep working from the committed local profiles; the
+    # state persists until it is resolved, so the next launch reports it again.
+    [ "$mode" = after ] || _aip_warn "remote integration skipped: the local profiles repository and $upstream share no common history; run 'aip sync' for the recoveries"
+    return 0
+  fi
   local conflicts='' conflict_list='' preserve_status=0 resolution=skip park_dir='' keep_local=0 kept=''
   conflicts=$(_aip_rebase_untracked_conflicts "$root" "$upstream_commit") || preserve_status=$?
   case $preserve_status in
@@ -4534,7 +4636,10 @@ _aip_remote_add() {
       _aip_error "could not attach branch $branch to origin"
       return 1
     }
-    _aip_sync manual
+    # Adoption is what makes the documented second-machine flow work: the
+    # installer has already created this repository, so its history is unrelated
+    # to the remote's and a plain sync would rebase two unrelated trees.
+    _aip_sync adopt
     return
   fi
   _aip_check_tracked_forbidden "$root" || return

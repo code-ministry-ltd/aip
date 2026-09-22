@@ -18,6 +18,34 @@ make_upstream() {
   git -C "$TEST_REMOTE" symbolic-ref HEAD refs/heads/main
 }
 
+make_unrelated_upstream() {
+  # A valid aip repository with its own root commit, so it shares no ancestor
+  # with the local one — the state a fresh install is in when it first connects
+  # to a profiles repository that already exists. The distinct commit date is
+  # what makes it unrelated: two aip-created profiles built in the same second
+  # with the same identity hash to the same root commit, which would leave the
+  # histories related and the fixture proving nothing.
+  export TEST_REMOTE="$BATS_TEST_TMPDIR/unrelated.git"
+  local other_root="$BATS_TEST_TMPDIR/unrelated-profiles" saved_root=$_AIP_PROFILE_ROOT
+  git init -q --bare "$TEST_REMOTE"
+  GIT_AUTHOR_DATE='2001-01-01T00:00:00 +0000' GIT_COMMITTER_DATE='2001-01-01T00:00:00 +0000' _AIP_PROFILE_ROOT=$other_root aip create work >/dev/null
+  _AIP_PROFILE_ROOT=$saved_root
+  printf 'remote settings\n' >"$other_root/work/pi/settings.json"
+  git -C "$other_root" add work/pi/settings.json
+  git -C "$other_root" commit -q -m 'share settings'
+  git -C "$other_root" remote add origin "$TEST_REMOTE"
+  git -C "$other_root" push -q -u origin main
+  git -C "$TEST_REMOTE" symbolic-ref HEAD refs/heads/main
+}
+
+make_unrelated_local_upstream() {
+  # Points the local repository at an unrelated remote without going through
+  # `aip remote add`, so the state can be reached by other commands.
+  git -C "$_AIP_PROFILE_ROOT" remote add origin "$TEST_REMOTE"
+  git -C "$_AIP_PROFILE_ROOT" fetch -q origin
+  git -C "$_AIP_PROFILE_ROOT" branch --set-upstream-to=origin/main main >/dev/null 2>&1
+}
+
 @test "sync rejects unexpected arguments" {
   run aip sync work
   [ "$status" -eq 2 ]
@@ -903,6 +931,66 @@ make_upstream() {
   [[ "$output" == *'These paths cannot be kept locally; enter r or s.'* ]]
   [[ "$output" != *'[l] local'* ]]
   [ "$(cat "$native_path")" = 'remote tracked bytes' ]
+}
+
+@test "an unrelated remote history is refused by an explicit sync without changing anything" {
+  make_unrelated_upstream
+  make_unrelated_local_upstream
+  local before
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  run aip sync </dev/null
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'share no common history'* ]]
+  [[ "$output" == *'reset --hard origin/main'* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
+  [ -z "$(find "$_AIP_PROFILE_ROOT" -maxdepth 1 -name '.aip-parked-*')" ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+}
+
+@test "a fresh install adopts an unrelated remote instead of rebasing it" {
+  make_unrelated_upstream
+  printf 'local settings\n' >"$_AIP_PROFILE_ROOT/work/pi/settings.json"
+
+  run aip remote add "$TEST_REMOTE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Adopted'* ]]
+  [[ "$output" == *'Parked the local paths the incoming tree replaces in '* ]]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/pi/settings.json")" = 'remote settings' ]
+  # the local copy is parked, not deleted
+  local parked
+  parked=$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*/work/pi/settings.json' -print -quit)
+  [ -n "$parked" ]
+  [ "$(cat "$parked")" = 'local settings' ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+}
+
+@test "adoption is refused when the local repository holds authored content" {
+  make_unrelated_upstream
+  printf 'my own notes\n' >"$_AIP_PROFILE_ROOT/work/notes.md"
+  git -C "$_AIP_PROFILE_ROOT" add work/notes.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'my work'
+
+  run aip remote add "$TEST_REMOTE"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'content aip did not create'* ]]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/notes.md")" = 'my own notes' ]
+  [ -z "$(find "$_AIP_PROFILE_ROOT" -maxdepth 1 -name '.aip-parked-*')" ]
+}
+
+@test "a harness launch keeps working with an unrelated remote history" {
+  make_unrelated_upstream
+  make_unrelated_local_upstream
+
+  run claude prompt </dev/null
+
+  [ "$status" -eq 0 ]
+  [ -e "$FAKE_CAPTURE" ]
+  [[ "$output" == *'share no common history'* ]]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
 }
 
 @test "no aip function shadows a Zsh special parameter with a local" {

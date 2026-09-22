@@ -2181,6 +2181,78 @@ function Resolve-AipRebaseCollision {
     return [pscustomobject]@{ Integrate = $true; Resolution = $resolution; Park = $park; Records = $records }
 }
 
+function Test-AipHistoriesRelated {
+    # A rebase can only integrate a commit that shares an ancestor with HEAD;
+    # without one, no version choice and no conflict resolution can apply the
+    # incoming tree.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
+    Invoke-AipGit -C $ProfilePath merge-base HEAD $UpstreamCommit *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Test-AipRepositoryDisposable {
+    # True when the local repository tracks nothing but the scaffold aip itself
+    # created, and every profile it has also exists in the incoming tree, so
+    # replacing the branch cannot lose work the user authored or make a profile
+    # disappear. Read from the tracked tree rather than from commit count or
+    # messages, so an installer that gains commits, or a reconciled .gitignore,
+    # cannot change the answer.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
+    $raw = (Invoke-AipGit -C $ProfilePath ls-files -z) -join "`n"
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $paths = @($raw -split "`0" | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    $incoming = @(Invoke-AipGit -C $ProfilePath ls-tree --name-only $UpstreamCommit)
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $scaffold = '^(?:\.gitignore|[^/]+/(?:\.gitignore|AGENTS\.md|skills/\.gitkeep|claude/CLAUDE\.md|claude/skills|codex/AGENTS\.md|codex/instructions\.md|codex/skills|pi/AGENTS\.md|pi/APPEND_SYSTEM\.md|pi/skills|opencode/AGENTS\.md|opencode/skills))$'
+    foreach ($path in $paths) {
+        $normalized = ([string]$path).Replace('\', '/')
+        if (-not [regex]::IsMatch($normalized, $scaffold)) { return $false }
+    }
+    foreach ($prefix in @(Get-AipTrackedProfilePrefixes $paths)) {
+        if ($incoming -notcontains $prefix) { return $false }
+    }
+    return $true
+}
+
+function Invoke-AipAdoptUpstream {
+    # Replaces the local branch with the incoming tree after moving every
+    # untracked or ignored path it would overwrite into a park directory, so
+    # adopting never deletes local state. Only reachable from `aip remote add`
+    # once the local repository is disposable. Returns
+    # @{ Adopted = $true/$false; Park = <dir> }; the CALLER reports the park
+    # directory, because output returned from a call used as a condition is
+    # consumed by that condition and never reaches the user.
+    param([Parameter(Mandatory)][string]$ProfilePath, [Parameter(Mandatory)][string]$UpstreamCommit)
+    $conflicts = Get-AipRebaseUntrackedConflicts -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit
+    if (-not $conflicts.Inspected) { return [pscustomobject]@{ Adopted = $false; Park = '' } }
+    $park = ''
+    $records = @($conflicts.Records)
+    if ($records.Count -gt 0) {
+        $park = Move-AipLocalPathsToPark -ProfilePath $ProfilePath -Records $records
+        if (-not $park) { return [pscustomobject]@{ Adopted = $false; Park = '' } }
+    }
+    Invoke-AipGit -C $ProfilePath reset --hard $UpstreamCommit *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-AipError "could not replace the local profiles with the incoming tree; inspect it with 'git -C `"$ProfilePath`" status'"
+        if ($park) { Write-AipError "the local paths moved aside are in $park" }
+        return [pscustomobject]@{ Adopted = $false; Park = '' }
+    }
+    foreach ($name in (Get-AipProfileNames)) {
+        $profileDir = Get-AipProfilePath $name
+        if (-not (Add-AipSkillsPlaceholder $profileDir)) { return [pscustomobject]@{ Adopted = $false; Park = $park } }
+        $layoutResult = @(Test-AipLayout $profileDir)
+        if (-not [bool]$layoutResult[-1]) {
+            if (-not $script:AipLastError) {
+                if ($script:AipProfileBoundaryError) { Write-AipError $script:AipProfileBoundaryError }
+                else { Write-AipError 'adopted profile layout is invalid' }
+            }
+            return [pscustomobject]@{ Adopted = $false; Park = $park }
+        }
+        Invoke-AipPassthroughProfile -Name $name
+    }
+    return [pscustomobject]@{ Adopted = $true; Park = $park }
+}
+
 function Invoke-AipSyncCore {
     param([string]$Mode = 'manual')
     $script:AipCommandStatus = 0
@@ -2255,6 +2327,32 @@ function Invoke-AipSyncCore {
             $upstreamCommit = Invoke-AipGit -C $script:AipProfileRoot rev-parse --verify "$upstream^{commit}"
             if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
             if (-not (Test-AipGitTree $script:AipProfileRoot $upstreamCommit)) { return }
+            # A rebase can only integrate a commit that shares an ancestor with
+            # HEAD, and on a fresh machine the installer has already created this
+            # repository, so the incoming tree is unrelated and no version choice
+            # can apply it. Adopting the remote is the only way forward, and only
+            # `aip remote add` may do it; every other mode keeps the working local
+            # profiles and says so rather than parking paths and then failing
+            # inside a rebase.
+            if (-not (Test-AipHistoriesRelated $script:AipProfileRoot $upstreamCommit)) {
+                if ($Mode -eq 'adopt' -and (Test-AipRepositoryDisposable $script:AipProfileRoot $upstreamCommit)) {
+                    $adoption = Invoke-AipAdoptUpstream -ProfilePath $script:AipProfileRoot -UpstreamCommit $upstreamCommit
+                    if (-not $adoption.Adopted) { return }
+                    if ($adoption.Park) { Write-Output "Parked the local paths the incoming tree replaces in $($adoption.Park)." }
+                    Write-Output "Adopted $(@(Get-AipProfileNames).Count) profile(s) from $upstream."
+                    return
+                }
+                if ($Mode -eq 'adopt') {
+                    Write-AipError "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $script:AipProfileRoot aside and run 'aip remote add' again to adopt the remote, or publish the local profiles to an empty remote"
+                    return
+                }
+                if ($Mode -eq 'manual') {
+                    Write-AipError "the local profiles repository and $upstream share no common history; no side was chosen. Adopt the remote with 'git -C `"$script:AipProfileRoot`" fetch origin; git -C `"$script:AipProfileRoot`" reset --hard $upstream', or publish the local profiles to an empty remote"
+                    return
+                }
+                if ($Mode -ne 'after') { Write-AipWarning "remote integration skipped: the local profiles repository and $upstream share no common history; run 'aip sync' for the recoveries" }
+                return
+            }
             $collision = Resolve-AipRebaseCollision -ProfilePath $script:AipProfileRoot -UpstreamCommit $upstreamCommit -Mode $Mode
             if ($null -eq $collision) { return }
             if ($collision.Integrate) {
@@ -3182,7 +3280,11 @@ function Invoke-AipRemoteAdd {
                 $script:AipCommandStatus = 1
                 return
             }
-            Invoke-AipSync 'manual'
+            # Adoption is what makes the documented second-machine flow work: the
+            # installer has already created this repository, so its history is
+            # unrelated to the remote's and a plain sync would rebase two
+            # unrelated trees.
+            Invoke-AipSync 'adopt'
             return
         }
         if (-not (Test-AipTrackedPathsSafe $root)) { return }
