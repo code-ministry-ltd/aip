@@ -3358,17 +3358,17 @@ _aip_sync() (
   # other mode keeps the working local profiles and says so rather than parking
   # paths and then failing inside a rebase.
   if ! _aip_histories_are_related "$root" "$upstream_commit"; then
-    if [ "$mode" = adopt ] && _aip_repository_is_disposable "$root" "$upstream_commit"; then
+    # An explicit command adopts when there is nothing to lose; a launch or a
+    # clone never replaces the branch, and keeps the working local profiles.
+    if { [ "$mode" = adopt ] || [ "$mode" = manual ]; } && _aip_repository_is_disposable "$root" "$upstream_commit"; then
       _aip_adopt_upstream "$root" "$upstream_commit" || return 1
       printf 'Adopted %s profile(s) from %s.\n' "$(printf '%s\n' "$(_aip_list_profile_names)" | command grep -c .)" "$upstream"
       return 0
     fi
-    if [ "$mode" = adopt ]; then
-      _aip_error "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $root aside and run 'aip remote add' again to adopt the remote, or publish the local profiles to an empty remote"
-      return 1
-    fi
-    if [ "$mode" = manual ]; then
-      _aip_error "the local profiles repository and $upstream share no common history; no side was chosen. Adopt the remote with 'git -C \"$root\" fetch origin && git -C \"$root\" reset --hard $upstream', or publish the local profiles to an empty remote"
+    if [ "$mode" = adopt ] || [ "$mode" = manual ]; then
+      # Naming `reset --hard` here would invite discarding authored work, so the
+      # recommended recovery moves the repository aside instead.
+      _aip_error "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $root aside and run 'aip remote add URL' to adopt the remote, or publish the local profiles to an empty remote"
       return 1
     fi
     # A launch and a clone keep working from the committed local profiles; the

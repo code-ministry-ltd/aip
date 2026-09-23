@@ -1928,7 +1928,7 @@ exit 1
         $output | Should -Not -Match 'already configured'
     }
 
-    It 'refuses an unrelated remote history on an explicit sync without changing anything' {
+    It 'adopts an unrelated remote on an explicit sync when there is nothing to lose' {
         Initialize-TestUnrelatedUpstream
         Connect-TestUnrelatedUpstream
         $root = $script:AipProfileRoot
@@ -1936,10 +1936,27 @@ exit 1
 
         aip sync *> $null
 
+        $global:LASTEXITCODE | Should -Be 0
+        (& git -C $root rev-parse HEAD) | Should -Not -Be $before
+        ((& git -C $root log --oneline -1) -join '') | Should -Match 'share settings'
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+    }
+
+    It 'refuses an unrelated remote on an explicit sync when the repository holds authored content' {
+        Initialize-TestUnrelatedUpstream
+        Connect-TestUnrelatedUpstream
+        $root = $script:AipProfileRoot
+        [IO.File]::WriteAllText((Join-Path $root 'work/notes.md'), "my own notes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add work/notes.md
+        & git -C $root commit -q -m 'my work'
+        $before = (& git -C $root rev-parse HEAD)
+
+        aip sync *> $null
+
         $global:LASTEXITCODE | Should -Be 1
-        $script:AipLastError | Should -Match 'share no common history'
-        $script:AipLastError | Should -Match 'reset --hard origin/main'
+        $script:AipLastError | Should -Match 'content aip did not create'
         (& git -C $root rev-parse HEAD) | Should -Be $before
+        [IO.File]::ReadAllText((Join-Path $root 'work/notes.md')) | Should -Be "my own notes`n"
         @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
         Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
     }

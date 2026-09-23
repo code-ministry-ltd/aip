@@ -2160,7 +2160,7 @@ function Resolve-AipRebaseCollision {
     if ($records.Count -eq 0) { return [pscustomobject]@{ Integrate = $true; Resolution = ''; Park = ''; Records = @() } }
     $list = Format-AipConflictList -Records $records
     $resolution = 'skip'
-    if ($Mode -eq 'manual' -and (Test-AipSyncInteractive)) {
+    if (($Mode -eq 'manual' -or $Mode -eq 'adopt') -and (Test-AipSyncInteractive)) {
         $resolution = Read-AipSyncCollisionDecision -List $list -KeepLocalAllowed (Test-AipCollisionKeepsLocal -ProfilePath $ProfilePath -UpstreamCommit $UpstreamCommit -Records $records)
     }
     if ($resolution -eq 'skip') {
@@ -2367,19 +2367,21 @@ function Invoke-AipSyncCore {
             # profiles and says so rather than parking paths and then failing
             # inside a rebase.
             if (-not (Test-AipHistoriesRelated $script:AipProfileRoot $upstreamCommit)) {
-                if ($Mode -eq 'adopt' -and (Test-AipRepositoryDisposable $script:AipProfileRoot $upstreamCommit)) {
+                # An explicit command adopts when there is nothing to lose; a launch
+                # or a clone never replaces the branch, and keeps the working local
+                # profiles.
+                $explicit = $Mode -eq 'adopt' -or $Mode -eq 'manual'
+                if ($explicit -and (Test-AipRepositoryDisposable $script:AipProfileRoot $upstreamCommit)) {
                     $adoption = Invoke-AipAdoptUpstream -ProfilePath $script:AipProfileRoot -UpstreamCommit $upstreamCommit
                     if (-not $adoption.Adopted) { return }
                     if ($adoption.Park) { Write-Output "Parked the local paths the incoming tree replaces in $($adoption.Park)." }
                     Write-Output "Adopted $(@(Get-AipProfileNames).Count) profile(s) from $upstream."
                     return
                 }
-                if ($Mode -eq 'adopt') {
-                    Write-AipError "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $script:AipProfileRoot aside and run 'aip remote add' again to adopt the remote, or publish the local profiles to an empty remote"
-                    return
-                }
-                if ($Mode -eq 'manual' -or $Mode -eq 'adopt') {
-                    Write-AipError "the local profiles repository and $upstream share no common history; no side was chosen. Adopt the remote with 'git -C `"$script:AipProfileRoot`" fetch origin; git -C `"$script:AipProfileRoot`" reset --hard $upstream', or publish the local profiles to an empty remote"
+                if ($explicit) {
+                    # Naming `reset --hard` here would invite discarding authored
+                    # work, so the recommended recovery moves the repository aside.
+                    Write-AipError "the local profiles repository and $upstream share no common history, and this repository holds content aip did not create; move $script:AipProfileRoot aside and run 'aip remote add URL' to adopt the remote, or publish the local profiles to an empty remote"
                     return
                 }
                 if ($Mode -ne 'after') { Write-AipWarning "remote integration skipped: the local profiles repository and $upstream share no common history; run 'aip sync' for the recoveries" }

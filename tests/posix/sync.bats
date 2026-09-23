@@ -933,7 +933,7 @@ make_unrelated_local_upstream() {
   [ "$(cat "$native_path")" = 'remote tracked bytes' ]
 }
 
-@test "an unrelated remote history is refused by an explicit sync without changing anything" {
+@test "an explicit sync adopts an unrelated remote when there is nothing to lose" {
   make_unrelated_upstream
   make_unrelated_local_upstream
   local before
@@ -941,10 +941,28 @@ make_unrelated_local_upstream() {
 
   run aip sync </dev/null
 
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Adopted'* ]]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" != "$before" ]
+  [[ "$(git -C "$_AIP_PROFILE_ROOT" log --oneline -1)" == *'share settings'* ]]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+}
+
+@test "an explicit sync refuses an unrelated remote when the repository holds authored content" {
+  make_unrelated_upstream
+  make_unrelated_local_upstream
+  printf 'my own notes\n' >"$_AIP_PROFILE_ROOT/work/notes.md"
+  git -C "$_AIP_PROFILE_ROOT" add work/notes.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'my work'
+  local before
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  run aip sync </dev/null
+
   [ "$status" -ne 0 ]
-  [[ "$output" == *'share no common history'* ]]
-  [[ "$output" == *'reset --hard origin/main'* ]]
+  [[ "$output" == *'content aip did not create'* ]]
   [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/work/notes.md")" = 'my own notes' ]
   [ -z "$(find "$_AIP_PROFILE_ROOT" -maxdepth 1 -name '.aip-parked-*')" ]
   [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
 }
