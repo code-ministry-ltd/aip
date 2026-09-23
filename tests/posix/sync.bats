@@ -1059,6 +1059,111 @@ make_unrelated_local_upstream() {
   [[ "$output" != *'already configured'* ]]
 }
 
+@test "remote selection prefers the remote when a separate tracked rebase conflict occurs" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/aip/pi/settings.json" parked
+  create_profile aip
+  make_upstream
+  sed 's/^# aip-managed credential and runtime exclusions$/# aip-managed credential and runtime exclusions LOCAL/' "$_AIP_PROFILE_ROOT/aip/.gitignore" >"$BATS_TEST_TMPDIR/local-ignore"
+  mv "$BATS_TEST_TMPDIR/local-ignore" "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  printf 'local-only instruction\n' >>"$_AIP_PROFILE_ROOT/aip/codex/instructions.md"
+  git -C "$_AIP_PROFILE_ROOT" add aip/.gitignore aip/codex/instructions.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'local profile edits'
+
+  git clone -q "$TEST_REMOTE" "$other"
+  sed 's/^# aip-managed credential and runtime exclusions$/# aip-managed credential and runtime exclusions REMOTE/' "$other/aip/.gitignore" >"$BATS_TEST_TMPDIR/remote-ignore"
+  mv "$BATS_TEST_TMPDIR/remote-ignore" "$other/aip/.gitignore"
+  printf 'remote settings\n' >"$other/aip/pi/settings.json"
+  git -C "$other" add aip/.gitignore aip/pi/settings.json
+  git -C "$other" commit -q -m 'remote profile edits'
+  git -C "$other" push -q
+  printf 'local settings\n' >"$settings"
+
+  run bash -c 'source "$1"; printf "r\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip remote add "$2"' _ "$AIP_SOURCE" "$TEST_REMOTE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'aip/pi/settings.json (untracked)'* ]]
+  [[ "$output" == *'Parked the replaced local paths in '* ]]
+  grep -Fqx '# aip-managed credential and runtime exclusions REMOTE' "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  grep -Fqx 'pi/auth.json' "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  ! grep -Fq 'exclusions LOCAL' "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  [[ "$(cat "$_AIP_PROFILE_ROOT/aip/codex/instructions.md")" == *'local-only instruction'* ]]
+  [ "$(cat "$settings")" = 'remote settings' ]
+  parked=$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*/aip/pi/settings.json' -print -quit)
+  [ -n "$parked" ]
+  [ "$(cat "$parked")" = 'local settings' ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --name-only --diff-filter=U)" ]
+}
+
+@test "local selection prefers local tracked changes and updates the remote" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/aip/pi/settings.json"
+  create_profile aip
+  make_upstream
+  sed 's/^# aip-managed credential and runtime exclusions$/# aip-managed credential and runtime exclusions LOCAL/' "$_AIP_PROFILE_ROOT/aip/.gitignore" >"$BATS_TEST_TMPDIR/local-ignore"
+  mv "$BATS_TEST_TMPDIR/local-ignore" "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  printf 'local-only instruction\n' >>"$_AIP_PROFILE_ROOT/aip/codex/instructions.md"
+  git -C "$_AIP_PROFILE_ROOT" add aip/.gitignore aip/codex/instructions.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'local profile edits'
+
+  git clone -q "$TEST_REMOTE" "$other"
+  sed 's/^# aip-managed credential and runtime exclusions$/# aip-managed credential and runtime exclusions REMOTE/' "$other/aip/.gitignore" >"$BATS_TEST_TMPDIR/remote-ignore"
+  mv "$BATS_TEST_TMPDIR/remote-ignore" "$other/aip/.gitignore"
+  printf 'remote settings\n' >"$other/aip/pi/settings.json"
+  git -C "$other" add aip/.gitignore aip/pi/settings.json
+  git -C "$other" commit -q -m 'remote profile edits'
+  git -C "$other" push -q
+  printf 'local settings\n' >"$settings"
+
+  run bash -c 'source "$1"; printf "l\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip sync' _ "$AIP_SOURCE"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'Kept the local version of aip/pi/settings.json.'* ]]
+  grep -Fqx '# aip-managed credential and runtime exclusions LOCAL' "$_AIP_PROFILE_ROOT/aip/.gitignore"
+  [[ "$(cat "$_AIP_PROFILE_ROOT/aip/codex/instructions.md")" == *'local-only instruction'* ]]
+  [ "$(cat "$settings")" = 'local settings' ]
+  grep -Fqx '# aip-managed credential and runtime exclusions LOCAL' <(git -C "$TEST_REMOTE" show main:aip/.gitignore)
+  [ "$(git -C "$TEST_REMOTE" show main:aip/pi/settings.json)" = 'local settings' ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" diff --name-only --diff-filter=U)" ]
+}
+
+@test "a selected version aborts an unresolved rebase and keeps parked data recoverable" {
+  local other="$BATS_TEST_TMPDIR/other" settings="$_AIP_PROFILE_ROOT/aip/pi/settings.json" parked before
+  create_profile aip
+  printf 'base notes\n' >"$_AIP_PROFILE_ROOT/aip/local-notes.md"
+  git -C "$_AIP_PROFILE_ROOT" add aip/local-notes.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'add optional notes'
+  make_upstream
+  printf 'local edit\n' >"$_AIP_PROFILE_ROOT/aip/local-notes.md"
+  git -C "$_AIP_PROFILE_ROOT" add aip/local-notes.md
+  git -C "$_AIP_PROFILE_ROOT" commit -q -m 'edit optional notes'
+  before=$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)
+
+  git clone -q "$TEST_REMOTE" "$other"
+  git -C "$other" rm -q aip/local-notes.md
+  printf 'remote settings\n' >"$other/aip/pi/settings.json"
+  git -C "$other" add aip/pi/settings.json
+  git -C "$other" commit -q -m 'delete notes and track settings'
+  git -C "$other" push -q
+  printf 'local settings\n' >"$settings"
+
+  run bash -c 'source "$1"; printf "r\n" | _AIP_SYNC_FORCE_INTERACTIVE=1 aip remote add "$2"' _ "$AIP_SOURCE" "$TEST_REMOTE"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'Git conflict in aip/local-notes.md remained after applying the remote choice'* ]]
+  [[ "$output" == *'the rebase was aborted'* ]]
+  [[ "$output" == *'the local paths moved aside before integrating are in '* ]]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-merge" ]
+  [ ! -d "$_AIP_PROFILE_ROOT/.git/rebase-apply" ]
+  [ -z "$(git -C "$_AIP_PROFILE_ROOT" status --porcelain)" ]
+  [ "$(git -C "$_AIP_PROFILE_ROOT" rev-parse HEAD)" = "$before" ]
+  [ "$(cat "$_AIP_PROFILE_ROOT/aip/local-notes.md")" = 'local edit' ]
+  parked=$(find "$_AIP_PROFILE_ROOT" -path '*/.aip-parked-*/aip/pi/settings.json' -print -quit)
+  [ -n "$parked" ]
+  [[ "$output" == *"${parked%/aip/pi/settings.json}"* ]]
+  [ "$(cat "$parked")" = 'local settings' ]
+}
+
 @test "no aip function shadows a Zsh special parameter with a local" {
   command -v zsh >/dev/null || skip 'Zsh is not installed'
   # In Zsh, 'local path' declares the tied PATH array and 'local prompt' replaces
