@@ -144,7 +144,10 @@ Install aip, then:
 aip remote add git@github.com:you/aip-profiles.git
 ```
 
-Every profile you own appears in `aip list`, with symlinks and permissions intact. Your default-profile choice is per-machine, so finish with:
+Every profile you own appears in `aip list`, with symlinks and permissions intact.
+`aip sync` also adopts the remote on such a machine, when the local profiles
+repository holds nothing but aip's own scaffold, so `aip remote add URL` once or
+`aip sync` afterwards both end with the remote's profiles checked out. Your default-profile choice is per-machine, so finish with:
 
 ```sh
 aip default work

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.4 — 2026-09-22
+
+- **An explicit `aip sync` adopts an unrelated remote.** Only `aip remote add`
+  could adopt before, so a machine whose profiles repository shares no history
+  with its remote got a `git reset --hard` command to run by hand instead of a
+  sync that works. An explicit `aip sync` now adopts when the local repository
+  holds nothing but aip's own scaffold, which makes recovering such a machine
+  `git rebase --abort` followed by `aip sync`. A repository holding content aip
+  did not create still refuses, and its message now names the non-destructive
+  recovery — move the repository aside — rather than recommending `reset --hard`,
+  which would discard that content. A harness launch and `aip clone` never
+  replace the branch.
+
 ## 0.9.3 — 2026-09-22
 
 - **A rebase that cannot succeed says so, and names the recovery.** If a
