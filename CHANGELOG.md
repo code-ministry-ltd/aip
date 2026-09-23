@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.9.5 — 2026-09-23
+
+- **Choosing remote now resolves the rest of the rebase too.** Previously,
+  choosing `[r] remote` parked an untracked local settings file, but aip then
+  ran a plain rebase; a separate tracked conflict (such as `aip/.gitignore`)
+  could still stop it and leave Git mid-rebase. The selected side now also
+  resolves tracked conflict hunks: remote prefers upstream, local prefers the
+  changes being replayed, while non-conflicting local edits are preserved. If
+  Git still cannot complete the selected integration, aip aborts the rebase
+  instead of leaving an unfinished operation. Parked local files remain at the
+  named `.aip-parked-*` path.
+
 ## 0.9.4 — 2026-09-22
 
 - **An explicit `aip sync` adopts an unrelated remote.** Only `aip remote add`

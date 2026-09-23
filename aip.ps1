@@ -9,7 +9,7 @@ if (-not (Get-Variable -Name AipImportHome -Scope Script -ErrorAction SilentlyCo
     $script:AipImportHome = if ($env:_AIP_IMPORT_HOME) { $env:_AIP_IMPORT_HOME } else { $HOME }
 }
 $script:AipCommandStatus = 0
-$script:AipVersion = '0.9.4'
+$script:AipVersion = '0.9.5'
 $script:AipResolveReason = ''
 $script:AipResolveQuiet = $false
 $script:AipCreateSkillsTreeRoot = $null
@@ -2042,6 +2042,7 @@ function Read-AipSyncCollisionDecision {
     [Console]::Error.WriteLine('aip: the incoming commit changes paths Git does not track locally:')
     [Console]::Error.WriteLine("      $List")
     [Console]::Error.WriteLine('Take which version?')
+    [Console]::Error.WriteLine('  The choice also resolves tracked rebase conflicts; non-conflicting local edits are kept.')
     [Console]::Error.WriteLine('  [r] remote (overwrite local)')
     if ($KeepLocalAllowed) { [Console]::Error.WriteLine('  [l] local  (keep yours and update the remote)') }
     [Console]::Error.WriteLine('  [s] skip for now (Enter also skips)')
@@ -2360,12 +2361,9 @@ function Invoke-AipSyncCore {
             if ($LASTEXITCODE -ne 0) { Write-AipError 'could not resolve the fetched upstream commit'; return }
             if (-not (Test-AipGitTree $script:AipProfileRoot $upstreamCommit)) { return }
             # A rebase can only integrate a commit that shares an ancestor with
-            # HEAD, and on a fresh machine the installer has already created this
-            # repository, so the incoming tree is unrelated and no version choice
-            # can apply it. Adopting the remote is the only way forward, and only
-            # `aip remote add` may do it; every other mode keeps the working local
-            # profiles and says so rather than parking paths and then failing
-            # inside a rebase.
+            # HEAD. If there is no common history, explicit commands may adopt
+            # only when the local repository is disposable; a launch keeps the
+            # local profiles and warns rather than attempting a doomed rebase.
             if (-not (Test-AipHistoriesRelated $script:AipProfileRoot $upstreamCommit)) {
                 # An explicit command adopts when there is nothing to lose; a launch
                 # or a clone never replaces the branch, and keeps the working local
@@ -2394,11 +2392,35 @@ function Invoke-AipSyncCore {
                 if ($parkDir -and $collision.Resolution -eq 'remote') { Write-Output "Parked the replaced local paths in $parkDir." }
             }
             else { return }
-            Invoke-AipGit -C $script:AipProfileRoot rebase $upstreamCommit *> $null
-            if ($LASTEXITCODE -ne 0) {
+            if ($collision.Resolution -eq 'remote') {
+                Invoke-AipGit -C $script:AipProfileRoot rebase --strategy-option=ours $upstreamCommit *> $null
+            }
+            elseif ($collision.Resolution -eq 'local') {
+                Invoke-AipGit -C $script:AipProfileRoot rebase --strategy-option=theirs $upstreamCommit *> $null
+            }
+            else {
+                Invoke-AipGit -C $script:AipProfileRoot rebase $upstreamCommit *> $null
+            }
+            $rebaseStatus = $LASTEXITCODE
+            if ($rebaseStatus -ne 0) {
                 $unmerged = Invoke-AipGit -C $script:AipProfileRoot diff --name-only --diff-filter=U 2>$null
                 if ((Test-AipUnfinishedGitOperation $script:AipProfileRoot) -or $unmerged) {
-                    Write-AipError "Git conflict in $script:AipProfileRoot; no side was chosen. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+                    $aborted = $false
+                    if ($collision.Resolution -eq 'remote' -or $collision.Resolution -eq 'local') {
+                        $firstUnmerged = @($unmerged | Select-Object -First 1)[0]
+                        $null = Invoke-AipGit -C $script:AipProfileRoot rebase --abort *> $null
+                        $aborted = ($LASTEXITCODE -eq 0) -and -not (Test-AipUnfinishedGitOperation $script:AipProfileRoot)
+                    }
+                    if ($aborted) {
+                        $extra = if ($firstUnmerged) { " in $firstUnmerged" } else { '' }
+                        Write-AipError "Git conflict$extra remained after applying the $($collision.Resolution) choice; the rebase was aborted, so no conflict is left in progress"
+                    }
+                    else {
+                        if ($collision.Resolution -eq 'remote' -or $collision.Resolution -eq 'local') {
+                            Write-AipError "Git conflict in $script:AipProfileRoot could not be resolved with the selected $($collision.Resolution) preference. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+                        }
+                        else { Write-AipError "Git conflict in $script:AipProfileRoot; no side was chosen. Resolve files, then use 'git rebase --continue' or 'git rebase --abort'" }
+                    }
                 }
                 else { Write-AipError "local Git integration failed in $script:AipProfileRoot; inspect it with 'git status'" }
                 if ($parkDir) { Write-AipError "the local paths moved aside before integrating are in $parkDir" }

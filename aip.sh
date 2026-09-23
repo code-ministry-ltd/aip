@@ -1,7 +1,7 @@
 # aip — AI Profile for Bash and Zsh. Source this file from your shell profile.
 
 : "${_AIP_PROFILE_ROOT:=${HOME}/agent-profiles}"
-_AIP_VERSION='0.9.4'
+_AIP_VERSION='0.9.5'
 if [ -z "${_AIP_RUNTIME_ROOT-}" ]; then
   if [ -n "${BASH_VERSION-}" ]; then
     _AIP_RUNTIME_SOURCE=${BASH_SOURCE[0]}
@@ -3162,6 +3162,7 @@ _aip_prompt_collision_resolution() {
     printf 'aip: the incoming commit changes paths Git does not track locally:\n'
     printf '      %s\n' "$list"
     printf 'Take which version?\n'
+    printf '  The choice also resolves tracked rebase conflicts; non-conflicting local edits are kept.\n'
     printf '  [r] remote (overwrite local)\n'
     [ "$keep_local" -eq 1 ] && printf '  [l] local  (keep yours and update the remote)\n'
     printf '  [s] skip for now (Enter also skips)\n'
@@ -3351,12 +3352,10 @@ _aip_sync() (
   fi
   upstream_commit=$(_aip_git -C "$root" rev-parse --verify "$upstream^{commit}") || return
   _aip_validate_git_tree "$root" "$upstream_commit" || return
-  # A rebase can only integrate a commit that shares an ancestor with HEAD, and
-  # on a fresh machine the installer has already created this repository, so the
-  # incoming tree is unrelated and no version choice can apply it. Adopting the
-  # remote is the only way forward, and only `aip remote add` may do it; every
-  # other mode keeps the working local profiles and says so rather than parking
-  # paths and then failing inside a rebase.
+  # A rebase can only integrate a commit that shares an ancestor with HEAD. If
+  # there is no common history, explicit commands may adopt only when the local
+  # repository is disposable; a launch keeps the local profiles and warns rather
+  # than attempting a doomed rebase.
   if ! _aip_histories_are_related "$root" "$upstream_commit"; then
     # An explicit command adopts when there is nothing to lose; a launch or a
     # clone never replaces the branch, and keeps the working local profiles.
@@ -3376,7 +3375,7 @@ _aip_sync() (
     [ "$mode" = after ] || _aip_warn "remote integration skipped: the local profiles repository and $upstream share no common history; run 'aip sync' for the recoveries"
     return 0
   fi
-  local conflicts='' conflict_list='' preserve_status=0 resolution=skip park_dir='' keep_local=0 kept=''
+  local conflicts='' conflict_list='' preserve_status=0 resolution=skip park_dir='' keep_local=0 kept='' rebase_status=0 unmerged=''
   conflicts=$(_aip_rebase_untracked_conflicts "$root" "$upstream_commit") || preserve_status=$?
   case $preserve_status in
     0) ;;
@@ -3410,9 +3409,23 @@ _aip_sync() (
       ;;
     *) return 1 ;;
   esac
-  if ! LC_ALL=C _aip_git -C "$root" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1; then
+  case $resolution in
+    remote) LC_ALL=C _aip_git -C "$root" rebase --strategy-option=ours "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1 || rebase_status=$? ;;
+    local) LC_ALL=C _aip_git -C "$root" rebase --strategy-option=theirs "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1 || rebase_status=$? ;;
+    *) LC_ALL=C _aip_git -C "$root" rebase "$upstream_commit" >|"$_AIP_GIT_OUTPUT" 2>&1 || rebase_status=$? ;;
+  esac
+  if [ "$rebase_status" -ne 0 ]; then
     if _aip_has_unfinished_git_operation "$root" || [ -n "$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null)" ]; then
-      _aip_error "Git conflict in $root; no side was chosen. Run 'git -C \"$root\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+      unmerged=$(_aip_git -C "$root" diff --name-only --diff-filter=U 2>/dev/null | command awk 'NR == 1 { print; exit }') || unmerged=
+      if { [ "$resolution" = remote ] || [ "$resolution" = local ]; } && _aip_git -C "$root" rebase --abort >/dev/null 2>&1 && ! _aip_has_unfinished_git_operation "$root"; then
+        _aip_error "Git conflict${unmerged:+ in $unmerged} remained after applying the $resolution choice; the rebase was aborted, so no conflict is left in progress"
+      else
+        if [ "$resolution" = remote ] || [ "$resolution" = local ]; then
+          _aip_error "Git conflict in $root could not be resolved with the selected $resolution preference. Run 'git -C \"$root\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+        else
+          _aip_error "Git conflict in $root; no side was chosen. Run 'git -C \"$root\" status', resolve files, then use 'git rebase --continue' or 'git rebase --abort'"
+        fi
+      fi
     else
       _aip_error "local Git integration failed in $root; inspect it with 'git -C \"$root\" status'"
     fi

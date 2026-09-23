@@ -2096,6 +2096,125 @@ exit 1
         @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*').Count | Should -Be 0
     }
 
+    It 'aborts an unresolved selected rebase and preserves the parked files' {
+        aip create aip *> $null
+        $root = $script:AipProfileRoot
+        $notes = Join-Path $root 'aip/local-notes.md'
+        $settings = Join-Path $root 'aip/pi/settings.json'
+        [IO.File]::WriteAllText($notes, "base notes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add aip/local-notes.md
+        & git -C $root commit -q -m 'add optional notes'
+        Initialize-TestUpstream
+        [IO.File]::WriteAllText($notes, "local edit`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add aip/local-notes.md
+        & git -C $root commit -q -m 'edit optional notes'
+        $before = (& git -C $root rev-parse HEAD)
+
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        & git -C $other rm -q aip/local-notes.md
+        [IO.File]::WriteAllText((Join-Path $other 'aip/pi/settings.json'), "remote settings`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add aip/pi/settings.json
+        & git -C $other commit -q -m 'delete notes and track settings'
+        & git -C $other push -q
+        [IO.File]::WriteAllText($settings, "local settings`n", [Text.UTF8Encoding]::new($false))
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'r' }
+
+        aip remote add $script:TestRemote *> $null
+
+        $global:LASTEXITCODE | Should -Be 1
+        $script:AipLastError | Should -Match 'local paths moved aside before integrating are in '
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-apply') | Should -BeFalse
+        (& git -C $root status --porcelain) | Should -BeNullOrEmpty
+        (& git -C $root rev-parse HEAD) | Should -Be $before
+        [IO.File]::ReadAllText($notes) | Should -Be "local edit`n"
+        $parked = @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*' | Select-Object -First 1)[0]
+        $null -eq $parked | Should -BeFalse
+        $script:AipLastError | Should -Be "the local paths moved aside before integrating are in $($parked.FullName)"
+        [IO.File]::ReadAllText((Join-Path $parked.FullName 'aip/pi/settings.json')) | Should -Be "local settings`n"
+    }
+
+    It 'prefers the remote when a separate tracked rebase conflict occurs' {
+        aip create aip *> $null
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'aip/pi/settings.json'
+        $ignorePath = Join-Path $root 'aip/.gitignore'
+        $ignore = [IO.File]::ReadAllText($ignorePath).Replace('# aip-managed credential and runtime exclusions', '# aip-managed credential and runtime exclusions LOCAL')
+        [IO.File]::WriteAllText($ignorePath, $ignore, [Text.UTF8Encoding]::new($false))
+        [IO.File]::AppendAllText((Join-Path $root 'aip/codex/instructions.md'), "local-only instruction`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add aip/.gitignore aip/codex/instructions.md
+        & git -C $root commit -q -m 'local profile edits'
+
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        $remoteIgnorePath = Join-Path $other 'aip/.gitignore'
+        $remoteIgnore = [IO.File]::ReadAllText($remoteIgnorePath).Replace('# aip-managed credential and runtime exclusions', '# aip-managed credential and runtime exclusions REMOTE')
+        [IO.File]::WriteAllText($remoteIgnorePath, $remoteIgnore, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $other 'aip/pi/settings.json'), "remote settings`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add aip/.gitignore aip/pi/settings.json
+        & git -C $other commit -q -m 'remote profile edits'
+        & git -C $other push -q
+        [IO.File]::WriteAllText($settings, "local settings`n", [Text.UTF8Encoding]::new($false))
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'r' }
+
+        $output = aip remote add $script:TestRemote 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'Parked the replaced local paths in '
+        [IO.File]::ReadAllText($ignorePath) | Should -Match 'exclusions REMOTE'
+        [IO.File]::ReadAllText($ignorePath) | Should -Match 'pi/auth.json'
+        [IO.File]::ReadAllText($ignorePath) | Should -Not -Match 'exclusions LOCAL'
+        [IO.File]::ReadAllText((Join-Path $root 'aip/codex/instructions.md')) | Should -Match 'local-only instruction'
+        [IO.File]::ReadAllText($settings) | Should -Be "remote settings`n"
+        $parked = @(Get-ChildItem -LiteralPath $root -Directory -Force -Filter '.aip-parked-*' | Select-Object -First 1)[0]
+        $null -eq $parked | Should -BeFalse
+        [IO.File]::ReadAllText((Join-Path $parked.FullName 'aip/pi/settings.json')) | Should -Be "local settings`n"
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+        (& git -C $root diff --name-only --diff-filter=U) | Should -BeNullOrEmpty
+    }
+
+    It 'prefers local tracked changes and updates the remote when selected' {
+        aip create aip *> $null
+        Initialize-TestUpstream
+        $root = $script:AipProfileRoot
+        $settings = Join-Path $root 'aip/pi/settings.json'
+        $ignorePath = Join-Path $root 'aip/.gitignore'
+        $ignore = [IO.File]::ReadAllText($ignorePath).Replace('# aip-managed credential and runtime exclusions', '# aip-managed credential and runtime exclusions LOCAL')
+        [IO.File]::WriteAllText($ignorePath, $ignore, [Text.UTF8Encoding]::new($false))
+        [IO.File]::AppendAllText((Join-Path $root 'aip/codex/instructions.md'), "local-only instruction`n", [Text.UTF8Encoding]::new($false))
+        & git -C $root add aip/.gitignore aip/codex/instructions.md
+        & git -C $root commit -q -m 'local profile edits'
+
+        $other = Join-Path $TestDrive 'other'
+        & git clone -q $script:TestRemote $other
+        $remoteIgnorePath = Join-Path $other 'aip/.gitignore'
+        $remoteIgnore = [IO.File]::ReadAllText($remoteIgnorePath).Replace('# aip-managed credential and runtime exclusions', '# aip-managed credential and runtime exclusions REMOTE')
+        [IO.File]::WriteAllText($remoteIgnorePath, $remoteIgnore, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $other 'aip/pi/settings.json'), "remote settings`n", [Text.UTF8Encoding]::new($false))
+        & git -C $other add aip/.gitignore aip/pi/settings.json
+        & git -C $other commit -q -m 'remote profile edits'
+        & git -C $other push -q
+        [IO.File]::WriteAllText($settings, "local settings`n", [Text.UTF8Encoding]::new($false))
+        $script:AipSyncForceInteractive = $true
+        Mock Read-Host { 'l' }
+
+        $output = aip sync 2>&1 | Out-String
+
+        $global:LASTEXITCODE | Should -Be 0
+        $output | Should -Match 'Kept the local version of aip/pi/settings.json\.'
+        [IO.File]::ReadAllText($ignorePath) | Should -Match 'exclusions LOCAL'
+        [IO.File]::ReadAllText((Join-Path $root 'aip/codex/instructions.md')) | Should -Match 'local-only instruction'
+        [IO.File]::ReadAllText($settings) | Should -Be "local settings`n"
+        (& git -C $script:TestRemote show main:aip/.gitignore) -join "`n" | Should -Match 'exclusions LOCAL'
+        (& git -C $script:TestRemote show main:aip/pi/settings.json) -join "`n" | Should -Match 'local settings'
+        Test-Path -LiteralPath (Join-Path $root '.git/rebase-merge') | Should -BeFalse
+        (& git -C $root diff --name-only --diff-filter=U) | Should -BeNullOrEmpty
+    }
+
     It 'skips the version choice on Enter and reprompts invalid answers' {
         Initialize-TestUpstream
         $root = $script:AipProfileRoot

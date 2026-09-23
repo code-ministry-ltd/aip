@@ -203,7 +203,17 @@ aip checkpoints before every harness launch and after every harness exit, and al
 - it records your new/changed `AGENTS.md`, `skills/` files, per-harness instruction files, and anything you deliberately tracked with Git;
 - if a remote is connected, it fetches, rebases, and pushes the profiles repository;
 - if the remote is unreachable, it **warns and still launches** from your committed local profile — the next invocation retries;
-- if the remote contains a conflict, aip **blocks the launch** and tells you exactly which profile and paths conflict. It never auto-resolves.
+- a harness launch never prompts for conflict choices. If a remote update would
+  overwrite untracked or ignored local files, it warns and keeps the local
+  state; a tracked rebase conflict can still stop the launch with Git status
+  information;
+- during explicit `aip sync` or `aip remote add`, aip asks which version to
+  take when the incoming tree would overwrite untracked or ignored local files.
+  Those local paths are parked first. Your choice also selects the side for
+  tracked rebase conflicts (conflicting hunks); non-conflicting local changes
+  are kept. If Git still cannot complete the selected integration, aip aborts
+  the rebase rather than leaving one in progress, and reports where parked
+  files remain.
 
 Because all profiles share one repository, `aip sync` has no profile argument — it syncs everything. (Passing a profile name is a hard error with a hint, so a muscle-memory `aip sync work` fails loudly.)
 

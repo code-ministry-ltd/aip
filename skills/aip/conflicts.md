@@ -5,6 +5,21 @@ path. Its message names the repository — call that path `<root>` below. If
 there is no block message to read (for example you were told a rebase is in
 progress), `<root>` is the profiles root itself.
 
+## Explicit version choice
+
+When `aip sync` or `aip remote add` displays `Take which version?`, let the user
+choose. `remote` takes the incoming versions for the listed untracked/ignored
+paths and prefers the remote side for any tracked rebase conflicts discovered
+during that integration. `local` keeps the local side for those tracked
+conflicts and restores the listed local paths before syncing. Non-conflicting
+local edits remain. Before integrating, aip parks the untracked/ignored local
+copies under a printed `.aip-parked-*` directory. If Git still cannot complete
+the selected integration, aip aborts the rebase; the parked files remain
+recoverable at the printed path.
+
+Do not answer the prompt for the user. If they have not chosen, ask whether to
+take remote, keep local, or skip.
+
 ## Content conflicts
 
 1. Read the block message if there is one, then inspect read-only:
