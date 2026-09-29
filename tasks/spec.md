@@ -209,14 +209,16 @@ sync to, on Linux and macOS. Windows follows in a later 2.x release.
 ## Install
 
 One Rust binary is both the desktop app and the `aip` CLI, so they can never
-disagree about versions. CI builds every channel from a release tag and
-publishes checksums.
+disagree about versions. Headless machines get a CLI-only build of the same
+release, which does not need the webview libraries (WebKitGTK) that the app
+links on Linux. CI builds every channel from a release tag and publishes
+checksums.
 
 | Platform | Channels | CLI on PATH |
 |---|---|---|
 | macOS | Unsigned `.dmg` from GitHub Releases (Apple silicon and Intel) | The app offers "Install command-line tool", which links `aip` into `~/.local/bin` |
 | Linux | AppImage; `.deb`; `.rpm` (AUR later) | `.deb`/`.rpm` install it; AppImage offers "Install command-line tool", which links into `~/.local/bin` |
-| Headless / VMs (macOS, Linux) | `curl -fsSL …/install.sh \| sh` | The script puts the binary in `~/.local/bin` |
+| Headless / VMs (macOS, Linux) | `curl -fsSL …/install.sh \| sh` (CLI-only build) | The script puts the binary in `~/.local/bin` |
 
 Windows is not in 2.0 (decision 11). Windows users of 0.x stay on 0.x until
 it ships.
