@@ -1,0 +1,18 @@
+description = "Long-form writing"
+skills = ["prose", "citations"]
+
+# Hide skills installed globally (e.g. ~/.claude/skills/foo) for this persona.
+# Set inherit_global_skills = false to hide every global skill instead.
+exclude_skills = []
+inherit_global_skills = true
+
+# Appended to the system prompt (Claude, Pi) / developer instructions (Codex).
+instructions = "writer.md"
+
+# Harness-specific extras, applied only for this persona:
+# [claude.settings]            # merged into the generated --settings file
+# enabledPlugins = { "some-plugin@marketplace" = false }
+# [codex.config]               # passed as -c overrides
+# model_reasoning_effort = "low"
+# [pi]
+# args = ["-e", "npm:@someone/pi-extension"]
