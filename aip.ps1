@@ -36,6 +36,12 @@ function Write-AipWarning {
     $script:AipLastWarning = $Message
 }
 
+# One-line pointer to aip 2, on stderr so scripted output is unchanged.
+function Write-AipV2Notice {
+    if ($env:AIP_NO_V2_NOTICE) { return }
+    [Console]::Error.WriteLine("aip: note: aip 2 is coming, with personas and a desktop app; your profiles will move over with 'aip import-v0'. See https://github.com/code-ministry-ltd/aip#aip-2 (set AIP_NO_V2_NOTICE=1 to hide this)")
+}
+
 function Get-AipRedactedUrl {
     # Display-only: strip URL userinfo (user@ or user:pass@). scp-style git@host: is left alone.
     param([AllowEmptyString()][string]$Url)
@@ -2956,7 +2962,8 @@ function Invoke-AipUpdate {
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
     Invoke-AipMigrateLegacyPrimaryConfigLinks
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
-    & npx --yes '@code-ministry/aip@latest' update
+    # Pinned to 0.x: aip 2 is not distributed through npm.
+    & npx --yes '@code-ministry/aip@^0' update
     $script:AipCommandStatus = $LASTEXITCODE
 }
 
@@ -4866,7 +4873,7 @@ function aip {
     $script:AipLastError = $null
     $script:AipLastWarning = $null
     $arguments = @($args)
-    if ($arguments.Count -eq 0) { Invoke-AipWithoutGitRouting { Invoke-AipStatus } }
+    if ($arguments.Count -eq 0) { Invoke-AipWithoutGitRouting { Invoke-AipStatus }; Write-AipV2Notice }
     else {
         $command = [string]$arguments[0]
         $rest = @($arguments | Select-Object -Skip 1)
@@ -4877,7 +4884,7 @@ function aip {
             'clone' { Invoke-AipWithoutGitRouting { Invoke-AipClone $rest } }
             'default' { Invoke-AipDefault $rest }
             'delete' { Invoke-AipWithoutGitRouting { Invoke-AipDelete $rest } }
-            'doctor' { Invoke-AipWithoutGitRouting { Invoke-AipDoctor $rest } }
+            'doctor' { Invoke-AipWithoutGitRouting { Invoke-AipDoctor $rest }; Write-AipV2Notice }
             'list' { Invoke-AipWithoutGitRouting { Invoke-AipList $rest } }
             'local' { Invoke-AipLocal $rest }
             'help' { Invoke-AipHelp $rest }
@@ -4892,7 +4899,7 @@ function aip {
             'sync-packages' { Invoke-AipWithoutGitRouting { Invoke-AipSyncPackages $rest } }
             'use' { Invoke-AipUse $rest }
             'uninstall' { Invoke-AipUninstall $rest }
-            'update' { Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }
+            'update' { Write-AipV2Notice; Invoke-AipWithoutGitRouting { Invoke-AipUpdate $rest } }
             'version' { Invoke-AipVersion $rest }
             'which' { Invoke-AipWhich $rest }
             default { Write-AipError "unknown command '$command'"; $script:AipCommandStatus = 2 }
