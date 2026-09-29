@@ -2962,9 +2962,20 @@ function Invoke-AipUpdate {
     if ($Arguments.Count -gt 0) { Write-AipError 'usage: aip update'; $script:AipCommandStatus = 2; return }
     Invoke-AipMigrateLegacyPrimaryConfigLinks
     if (-not (Get-Command npx -ErrorAction SilentlyContinue)) { Write-AipError 'update requires Node.js (npx) on PATH'; $script:AipCommandStatus = 1; return }
-    # Pinned to 0.x: aip 2 is not distributed through npm.
-    & npx --yes '@code-ministry/aip@^0' update
-    $script:AipCommandStatus = $LASTEXITCODE
+    # Pinned to 0.x: aip 2 is not distributed through npm. A range spec lets
+    # npx use a matching local package (e.g. inside an aip checkout), so run it
+    # from an empty directory to always fetch from the registry.
+    $neutral = Join-Path ([IO.Path]::GetTempPath()) ('aip-update-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $neutral -Force | Out-Null
+    Push-Location -LiteralPath $neutral
+    try {
+        & npx --yes '@code-ministry/aip@^0' update
+        $script:AipCommandStatus = $LASTEXITCODE
+    }
+    finally {
+        Pop-Location
+        Remove-Item -LiteralPath $neutral -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-AipVersion {

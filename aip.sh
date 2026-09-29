@@ -37,8 +37,16 @@ _aip_update() {
       _aip_error 'update requires Node.js (npx) on PATH'
       return 1
     fi
-    # Pinned to 0.x: aip 2 is not distributed through npm.
+    # Pinned to 0.x: aip 2 is not distributed through npm. A range spec lets
+    # npx use a matching local package (e.g. inside an aip checkout), so run it
+    # from an empty directory to always fetch from the registry.
+    local neutral update_status
+    neutral=$(command mktemp -d "${TMPDIR:-/tmp}/aip-update.XXXXXX") || return 1
+    cd "$neutral" || { command rm -rf "$neutral"; return 1; }
     command npx --yes '@code-ministry/aip@^0' update
+    update_status=$?
+    cd / && command rm -rf "$neutral"
+    return "$update_status"
   )
 }
 

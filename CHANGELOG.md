@@ -4,7 +4,9 @@
 
 - **`aip update` stays on 0.x.** It now fetches `@code-ministry/aip@^0`
   instead of `@latest`, so no future npm publish can move a 0.x install onto
-  something else. aip 2 will not be distributed through npm.
+  something else. aip 2 will not be distributed through npm. npx runs from an
+  empty temporary directory, so a local package, such as an aip checkout, can
+  never satisfy the range in place of the registry.
 - **A pointer to aip 2.** `aip`, `aip update` and `aip doctor` print one line
   on stderr about aip 2 (personas and a desktop app) and `aip import-v0`. Set
   `AIP_NO_V2_NOTICE=1` to hide it. Other commands and the harness wrappers are

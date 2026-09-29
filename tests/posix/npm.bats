@@ -70,6 +70,37 @@ setup() {
   grep -qx 'arg=update' "$FAKE_CAPTURE"
 }
 
+@test "aip update runs npx outside any local package, so a checkout cannot satisfy @^0" {
+  # A local package named @code-ministry/aip would satisfy the range, and npx
+  # would then run it instead of fetching from the registry.
+  local project="$BATS_TEST_TMPDIR/aip checkout"
+  mkdir -p "$project"
+  printf '{"name":"@code-ministry/aip","version":"0.9.5"}\n' >"$project/package.json"
+  cat >"$FAKE_BIN/npx" <<'FAKE'
+#!/bin/sh
+printf 'cwd=%s\n' "$(pwd -P)" >"${FAKE_CAPTURE:?}"
+[ -e package.json ] && printf 'package.json=present\n' >>"$FAKE_CAPTURE"
+printf 'arg=%s\n' "$@" >>"$FAKE_CAPTURE"
+exit "${FAKE_EXIT_STATUS:-0}"
+FAKE
+  chmod +x "$FAKE_BIN/npx"
+
+  cd "$project"
+  run aip update
+  [ "$status" -eq 0 ]
+  ! grep -qx "cwd=$(cd "$project" && pwd -P)" "$FAKE_CAPTURE"
+  ! grep -q 'package.json=present' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip@^0' "$FAKE_CAPTURE"
+  # The temporary directory is removed and the caller's directory is kept.
+  local ran_in
+  ran_in=$(sed -n 's/^cwd=//p' "$FAKE_CAPTURE")
+  [ ! -e "$ran_in" ]
+  [ "$(pwd -P)" = "$(cd "$project" && pwd -P)" ]
+
+  FAKE_EXIT_STATUS=3 run aip update
+  [ "$status" -eq 3 ]
+}
+
 @test "aip 2 notice: aip, aip update and aip doctor print it once on stderr" {
   unset AIP_NO_V2_NOTICE
   local notice="aip: note: aip 2 is coming"
