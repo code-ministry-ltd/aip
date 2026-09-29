@@ -6,8 +6,8 @@ set of skills **on top of its normal config**, without `CLAUDE_CONFIG_DIR`,
 `CODEX_HOME` or `PI_CODING_AGENT_DIR`. The production engine will be rewritten;
 keep this for the findings and the `verify` command.
 
-v1 targets Claude Code and Pi only. The Codex code and findings (X1–X4) stay
-here as groundwork for v1.x; see "Later: Codex" in the spec.
+aip 2.0 targets Claude Code and Pi only. The Codex code and findings (X1–X4)
+stay here as groundwork for a later release; see "Later: Codex" in the spec.
 
 ```sh
 cd spike && npm install

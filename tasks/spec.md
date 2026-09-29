@@ -18,18 +18,18 @@ consequences follow, and they are the three complaints this spec answers:
 3. **Terminal only.** GUI apps (Claude desktop, Pi GUIs, Paseo) are not started
    from a shell that ran `aip use`, so they never see the selector variable.
 
-## Harnesses in v1: Claude Code and Pi
+## Harnesses in 2.0: Claude Code and Pi
 
-v1 supports exactly two harnesses:
+2.0 supports exactly two harnesses:
 
 - **Claude Code**, because Claude models on a Claude subscription require
   Anthropic's own harness.
 - **Pi**, the open harness for every other model.
 
-**OpenAI Codex is deferred to v1.x** (see "Later: Codex"). The Codex models
-stay available: Pi has a built-in ChatGPT Plus/Pro (Codex) login, which Pi's
-docs describe as officially endorsed by OpenAI (Codex for OSS). Reasons for
-deferring:
+**OpenAI Codex is deferred to a later 2.x release** (see "Later: Codex").
+The Codex models stay available: Pi has a built-in ChatGPT Plus/Pro (Codex)
+login, which Pi's docs describe as officially endorsed by OpenAI (Codex for
+OSS). Reasons for deferring:
 
 - Codex needs project writes even in launch mode.
 - The Codex app cannot hide global skills.
@@ -40,7 +40,7 @@ deferring:
 
 ## Project facts (verified; see `spike/README.md`)
 
-- **Both v1 harnesses can add or hide skills per session on top of their
+- **Both 2.0 harnesses can add or hide skills per session on top of their
   normal home:**
   - Claude Code: `--plugin-dir`, `--settings` (`skillOverrides`,
     `enabledPlugins`, `disableBundledSkills`), `--mcp-config`,
@@ -67,12 +67,27 @@ deferring:
   link, which carries no settings.
 - **claude.ai and Cowork skills are account settings with no API.** Anthropic's
   Skills API explicitly does not reach claude.ai.
+- **Claude Code syncs those account skills to disk.** They land in
+  `~/.claude/skills/synced/<id>/<skill>/` (unless `syncClaudeAiSkills` is
+  `false`) and load like any global skill, so `skillOverrides` can hide them
+  per persona. Only the claude.ai and desktop chat apps are out of reach.
+- **Unsigned macOS apps need a one-time manual override.**
+  - Since macOS 15 (Sequoia), Control-click → Open no longer bypasses
+    Gatekeeper. The route is System Settings → Privacy & Security →
+    "Open Anyway", then confirm.
+  - Some apps are reported as "damaged" instead, which only
+    `xattr -dr com.apple.quarantine` clears.
+  - Since 2026-09-01, Homebrew disables official casks that fail Gatekeeper
+    and has removed `--no-quarantine`, so Homebrew no longer helps unsigned
+    apps.
+  - Files fetched by `curl` carry no quarantine attribute, so a CLI installed
+    by script is unaffected.
 - **Anthropic policy:** third-party apps may not use a Claude subscription
   login through the Agent SDK. Launching the unmodified `claude` binary is
   allowed. Pi offers a Claude Pro/Max login, but using it falls under the same
   policy, which is why Claude work goes through Claude Code.
 
-## Assumptions requiring approval
+## Assumptions (approved 2026-09-29)
 
 1. **The skill library lives outside every discovery root.** Plain harness
    launches load none of it. Personas add skills, and hiding global skills is
@@ -86,15 +101,13 @@ deferring:
    generated files, so the whole pass-through and secret-denylist machinery
    goes away.
 
-→ Correct me now or I'll proceed with these.
-
 ## Objective
 
 Let a person keep one library of skills (plus MCP servers, instructions and
 harness extras), group it into personas, see exactly what each persona loads
 and what it costs in context, and start Claude Code or Pi (terminal or GUI)
 with that persona in one action. It should work the same on every machine they
-sync to, on Linux and macOS, with Windows as a bonus.
+sync to, on Linux and macOS. Windows follows in a later 2.x release.
 
 ## Concepts
 
@@ -131,8 +144,9 @@ sync to, on Linux and macOS, with Windows as a bonus.
   user's own `pi --mode rpc` in the chosen workspace with the user's
   environment and passes no trust flags, which makes it the realistic worst
   case. With project mode applied, test three trust states:
-  1. No `trust.json` entry: the persona's skills do not load, and
-     `aip verify`/`aip open` say why and how to fix it.
+  1. No `trust.json` entry: the persona's skills do not load. `aip verify`,
+     `aip open` and the app detect this, say why, and offer to trust the
+     folder. After the user confirms, the skills load.
   2. The folder recorded in `trust.json`, after one `pi` TUI run that
      answered yes: the skills load.
   3. `defaultProjectTrust: always`: the skills load.
@@ -144,8 +158,8 @@ sync to, on Linux and macOS, with Windows as a bonus.
   `settings.local.json` keeps every key and override aip did not set. `clear`
   restores the pre-aip state byte for byte.
 - **SC6 — Visibility.** For each persona and harness, the app shows:
-  - every skill that will be in the catalog, with its source (library, global
-    or plugin/package);
+  - every skill that will be in the catalog, with its source: library, global,
+    account (synced from claude.ai), or plugin/package;
   - an always-on token estimate for each, and the total;
   - live state from the harness probes, with any drift from the manifest
     flagged.
@@ -154,9 +168,12 @@ sync to, on Linux and macOS, with Windows as a bonus.
   in human-readable TOML/Markdown, and the app shows it as a side-by-side
   choice.
 - **SC8 — Install in one step.** Every channel in "Install" below installs
-  from one command or one download on a clean machine, with Git as the only
-  prerequisite. The CLI is on PATH afterwards, or one click away for the
-  AppImage. Node is not required at runtime.
+  from one command or one download on a clean macOS or Linux machine, with Git
+  as the only prerequisite. The CLI is on PATH afterwards, or one click away
+  from the app. Node is not required at runtime. On macOS, the one-time
+  Gatekeeper override is documented where users meet it: the download page,
+  the release notes and the `.dmg` window. It works as written on the oldest
+  and newest supported macOS.
 - **SC9 — Import from aip 0.x.** `aip import-v0` turns each 0.x profile into a
   persona, moves `skills/` into the library (deduplicated by content hash) and
   `AGENTS.md` into persona instructions, and reports anything it could not
@@ -176,8 +193,9 @@ sync to, on Linux and macOS, with Windows as a bonus.
 
 ## Scope for the first release
 
-- CLI: `init`, `list`, `show`, `launch [--terminal]`, `project [--clear]`,
-  `open`, `verify`, `sync`, `skills add|update|remove`, `import-v0`.
+- CLI: `init`, `list`, `show`, `launch [--terminal]`,
+  `project [--clear] [--trust-pi]`, `open [--trust-pi]`, `verify`, `sync`,
+  `skills add|update|remove`, `import-v0`.
 - App screens:
   - **Library:** skills with cost, source and update state.
   - **Personas:** checkbox editor with a live context budget per harness.
@@ -196,14 +214,28 @@ publishes checksums.
 
 | Platform | Channels | CLI on PATH |
 |---|---|---|
-| macOS | Homebrew cask; `.dmg` from GitHub Releases | The cask links `aip`; the `.dmg` app offers "Install command-line tool" |
+| macOS | Unsigned `.dmg` from GitHub Releases (Apple silicon and Intel) | The app offers "Install command-line tool", which links `aip` into `~/.local/bin` |
 | Linux | AppImage; `.deb`; `.rpm` (AUR later) | `.deb`/`.rpm` install it; AppImage offers "Install command-line tool", which links into `~/.local/bin` |
-| Windows | winget; `.msi` | The installer adds it |
-| Headless / VMs | `curl -fsSL …/install.sh \| sh`; `irm … \| iex` | The script puts the binary in `~/.local/bin` (or `%LOCALAPPDATA%`) |
+| Headless / VMs (macOS, Linux) | `curl -fsSL …/install.sh \| sh` | The script puts the binary in `~/.local/bin` |
+
+Windows is not in 2.0 (decision 11). Windows users of 0.x stay on 0.x until
+it ships.
+
+**First open on macOS** (the build is unsigned; decision 13). The same steps
+appear on the download page, in the release notes, and as the `.dmg`
+background:
+1. Drag aip to Applications and open it once. macOS blocks it.
+2. Open System Settings → Privacy & Security, click "Open Anyway" next to the
+   aip message, and confirm with "Open".
+3. If macOS says the app "is damaged and can't be opened", run
+   `xattr -dr com.apple.quarantine /Applications/aip.app` in Terminal, then
+   open it again.
 
 - **Record how aip was installed.** Every channel writes an install-method
   marker next to the binary. Updates use it (SC10).
-- **Not on npm.** 2.0 is never published to npm (see "Transition from 0.x").
+- **Not on npm or Homebrew in 2.0.** 2.0 is never published to npm (see
+  "Transition from 0.x"). Homebrew's official cask repository rejects unsigned
+  apps; a formula for the CLI alone, in a code-ministry tap, may follow.
 - **First run** (app and CLI alike):
   1. Detect `claude` and `pi` and their versions.
   2. Create a personas repository, or clone one from a Git URL.
@@ -232,7 +264,9 @@ this repository, its name, URL, issues and history.
 - **npm.** `@code-ministry/aip` stays on 0.x. Once 2.0.0 ships, run
   `npm deprecate @code-ministry/aip "…"` with a message naming the 2.0 install
   page. Deprecation only warns on install; existing 0.x installs keep working,
-  since they run on Bash/PowerShell and Git alone.
+  since they run on Bash/PowerShell and Git alone. The deprecation message
+  tells Windows users to stay on 0.x until a later 2.x release supports
+  Windows.
 - **0.x profiles** move over with `aip import-v0` (SC9), which also removes the
   0.x shell hook.
 
@@ -241,9 +275,10 @@ this repository, its name, URL, issues and history.
 **aip itself:**
 - **Stable channel only.** There are no betas or nightlies for users.
 - **Whoever installed aip updates it:**
-  - **Homebrew / winget / AUR:** the package manager. The app shows "update
-    available" and the command to run, but never replaces itself.
-  - **`.dmg`, AppImage, `.msi`:** the Tauri updater. It checks a signed
+  - **AUR, and any later package manager:** the package manager. The app
+    shows "update available" and the command to run, but never replaces
+    itself.
+  - **`.dmg` app, AppImage:** the Tauri updater. It checks a signed
     manifest on GitHub Releases, downloads and verifies the update, then
     restarts when the user agrees. Checks are **on by default** and can be
     turned off in settings. There are no silent background installs.
@@ -253,6 +288,10 @@ this repository, its name, URL, issues and history.
     signature before replacing the binary.
 - **The updater's signing key** is separate from Apple or Windows code
   signing and costs nothing. It lives only in CI secrets.
+- **To test before 2.0:** that an update applied by the updater to the
+  unsigned macOS app opens without a second Gatekeeper override. The updater
+  downloads it itself, so no quarantine attribute should be set, but this is
+  unverified.
 
 **Skills from Git:**
 - Sources are recorded as in 0.x. The Library screen shows upstream changes
@@ -285,13 +324,16 @@ this repository, its name, URL, issues and history.
 **Ask first**
 
 - Any global write: a marked block in `~/.claude/settings.json`, or links in
-  `~/.agents/skills`. This is the only way to cover claude.ai-synced skills or
-  GUI apps without a project folder.
+  `~/.agents/skills`. This is the only way to cover GUI apps without a project
+  folder. The one pre-approved case is recording Pi trust for a folder in
+  `~/.pi/agent/trust.json`, and only after the user confirms it for that
+  folder (decision 10).
 - Adding a harness (Codex first; then OpenCode, Gemini CLI or others).
 - An embedded terminal (xterm.js + portable-pty) instead of launching the
   user's own.
 - Code signing and notarization spend (Apple Developer Program, $99/yr;
-  Windows signing).
+  Windows signing), for example once users report the macOS first-open steps
+  as a barrier.
 - Adding a beta or nightly update channel.
 
 **Never**
@@ -314,12 +356,12 @@ this repository, its name, URL, issues and history.
    Symlinking into `~/.claude/skills` was rejected: it is global.
 2. **Pi hides global skills by `--no-skills` plus re-adding the kept ones**,
    because no per-skill hide flag exists.
-3. **Codex is deferred to v1.x.** Pi's Codex login covers the models. The
-   persona format and planner stay harness-neutral so Codex can be added
-   without a format change.
+3. **Codex is deferred to a later 2.x release.** Pi's Codex login covers the
+   models. The persona format and planner stay harness-neutral so Codex can be
+   added without a format change.
 4. **Terminal launch goes through the user's terminal:** `xdg-terminal-exec`
-   first on Linux with a fallback list, a `.command` file on macOS, and `wt` on
-   Windows, with an `AIP_TERMINAL` override.
+   first on Linux with a fallback list, and a `.command` file on macOS, with
+   an `AIP_TERMINAL` override. Windows (`wt`) comes with Windows support.
 5. **Tauri 2 + Rust core.** One Rust crate owns manifests, planning, applying
    and probes. The same binary is the CLI (`aip …`) and the app backend, and
    the UI is a web front end. Chosen over Electron + TypeScript for the
@@ -345,26 +387,39 @@ this repository, its name, URL, issues and history.
 9. **Token cost is an estimate** (characters / 4) until a harness exposes real
    numbers. `claude plugin details` reports projected token cost for plugins
    and can calibrate it.
+10. **Pi trust: detect, explain, and offer.**
+    - aip reads `~/.pi/agent/trust.json` whenever it writes project mode for
+      Pi. For an untrusted folder, it says the persona's skills will not load
+      in Pi GUIs and offers to trust that folder.
+    - It records trust only after the user confirms: a button in the app, or a
+      prompt or `--trust-pi` in the CLI.
+    - It never changes `defaultProjectTrust`, and never trusts a folder
+      silently.
+11. **Windows is not in 2.0.** 2.0 ships macOS and Linux only. The spike's
+    Windows paths (junctions, `wt`) are kept, but nothing is promised or
+    tested. Windows code signing is decided when Windows is scheduled.
+12. **claude.ai account skills are managed in Claude Code.**
+    - The Machine and Persona screens show synced account skills as
+      "account" with their context cost.
+    - Personas can hide them via `skillOverrides`, like any global skill.
+    - For the claude.ai and desktop chat apps, aip shows them read-only with a
+      link to the account's skills settings.
+    - A persona may also set `syncClaudeAiSkills = false` in
+      `[claude.settings]` to keep them out of Claude Code entirely.
+13. **macOS ships unsigned, as a `.dmg` from GitHub Releases, with first-open
+    instructions** (see "Install"). No Apple Developer Program fee for 2.0.
+    Accepted costs:
+    - every user makes a one-time Gatekeeper override;
+    - no Homebrew cask, since Homebrew now disables unsigned casks.
+
+    The CLI installed by script is not quarantined and needs no override.
+    Revisit signing if the first-open step proves a barrier.
 
 ## Open questions
 
-1. **Pi trust in project mode.** GUIs never prompt, so an untrusted folder
-   silently loses the persona's skills. Should aip only detect this and
-   explain it (read `trust.json`), or also offer to record trust? Recording
-   trust writes to `~/.pi/agent/trust.json`, so it is an ask-first global
-   write.
-2. **Windows.** Junctions avoid Developer Mode for skill links, but GUI deep
-   links and `wt` are untested. Is Windows in the first release, or a beta?
-3. **claude.ai account skills.** Is showing them read-only, with a link to the
-   settings page, enough for 1.0?
-4. **macOS signing.** Pay the $99/yr Apple Developer Program so the app opens
-   without a Gatekeeper override (recommended, given "very simple to
-   install"), or ship unsigned with instructions?
-5. **Windows signing.** Use a signing service (Azure Trusted Signing is
-   believed to cost ~$10/month; unverified), or accept the SmartScreen warning
-   for a Windows beta?
+None. Decisions 10–13 closed the last five on 2026-09-29.
 
-## Later: Codex (v1.x)
+## Later: Codex (after 2.0)
 
 The spike implements and verifies Codex already (`spike/src/render.mjs`,
 `probeCodex`, findings X1–X4). To add it:
