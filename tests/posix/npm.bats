@@ -1,5 +1,7 @@
 #!/usr/bin/env bats
 
+bats_require_minimum_version 1.5.0
+
 load test_helper
 
 SHIM="$BATS_TEST_DIRNAME/../../bin/aip.js"
@@ -63,8 +65,59 @@ setup() {
   [ "$status" -eq 0 ]
   grep -qx 'harness=npx' "$FAKE_CAPTURE"
   grep -qx 'arg=--yes' "$FAKE_CAPTURE"
-  grep -qx 'arg=@code-ministry/aip@latest' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip@^0' "$FAKE_CAPTURE"
+  ! grep -q '@latest' "$FAKE_CAPTURE"
   grep -qx 'arg=update' "$FAKE_CAPTURE"
+}
+
+@test "aip 2 notice: aip, aip update and aip doctor print it once on stderr" {
+  unset AIP_NO_V2_NOTICE
+  local notice="aip: note: aip 2 is coming"
+
+  run --separate-stderr aip update
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$stderr" | grep -c "^$notice")" -eq 1 ]
+  [[ "$output" != *"$notice"* ]]
+
+  run --separate-stderr aip
+  [ "$(printf '%s\n' "$stderr" | grep -c "^$notice")" -eq 1 ]
+  [[ "$output" != *"$notice"* ]]
+
+  run --separate-stderr aip doctor
+  [ "$(printf '%s\n' "$stderr" | grep -c "^$notice")" -eq 1 ]
+  [[ "$stderr" == *"'aip import-v0'"* ]]
+}
+
+@test "aip 2 notice: other commands stay quiet, and AIP_NO_V2_NOTICE hides it" {
+  unset AIP_NO_V2_NOTICE
+  run aip version
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'aip 2 is coming'* ]]
+
+  run aip list
+  [[ "$output" != *'aip 2 is coming'* ]]
+
+  AIP_NO_V2_NOTICE=1 run aip update
+  [ "$status" -eq 0 ]
+  [[ "$output" != *'aip 2 is coming'* ]]
+}
+
+@test "aip 2 notice keeps the exit status of the command it follows" {
+  unset AIP_NO_V2_NOTICE
+  local expected actual
+  AIP_NO_V2_NOTICE=1 run aip doctor
+  expected=$status
+  run aip doctor
+  actual=$status
+  [ "$actual" -eq "$expected" ]
+
+  AIP_NO_V2_NOTICE=1 run aip
+  expected=$status
+  run aip
+  [ "$status" -eq "$expected" ]
+
+  run aip update extra
+  [ "$status" -eq 2 ]
 }
 
 @test "aip update fails cleanly without Node.js and rejects extra arguments" {

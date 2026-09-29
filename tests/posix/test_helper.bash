@@ -10,6 +10,8 @@ setup_aip_test() {
   # A host session (e.g. running the suite from inside an agent) may export
   # harness selector variables; unset them so wrapper assertions stay hermetic.
   unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR OPENCODE_CONFIG_DIR AIP_PROFILE AIP_ACTIVE_PROFILE
+  # Keep exact-output assertions stable; notice tests unset this themselves.
+  export AIP_NO_V2_NOTICE=1
   mkdir -p "$HOME" "$_AIP_PROFILE_ROOT" "$FAKE_BIN"
   git config --global user.name "Aip Tests"
   git config --global user.email "aip@example.test"
