@@ -2,6 +2,22 @@
 
 [![Tests](https://github.com/code-ministry-ltd/aip/actions/workflows/test.yml/badge.svg)](https://github.com/code-ministry-ltd/aip/actions/workflows/test.yml)
 
+## aip 2
+
+> **aip 2 is coming.** It replaces swapped config folders with *personas*:
+> small manifests over one skill library, applied on top of each harness's
+> normal setup. That makes them work from GUI apps as well as terminals. It
+> ships as a desktop app plus the `aip` command for macOS and Linux, with
+> Claude Code and Pi supported first.
+>
+> - Your profiles will move over with `aip import-v0`.
+> - `aip update` keeps you on 0.x. aip 2 is not distributed through npm, and
+>   install instructions will appear here when it ships.
+> - **Windows users:** stay on 0.x until a later aip 2 release supports
+>   Windows.
+> - `aip`, `aip update` and `aip doctor` print a one-line reminder. Set
+>   `AIP_NO_V2_NOTICE=1` to hide it.
+
 Use separate AI profiles for work, personal projects and clients while launching Claude Code, OpenAI Codex, Pi and OpenCode normally.
 
 aip keeps **every profile in one Git repository** — the *profiles repository*, at `~/agent-profiles` by default. Each profile is an ordinary subdirectory with one common `AGENTS.md`, one shared `skills/` tree, and native per-harness launch settings. Because all profiles share a single repository, **one remote keeps everything in sync across all of your machines** with a single `aip remote add`.
@@ -69,7 +85,7 @@ the identity and re-run the installer.
 aip update
 ```
 
-Re-runs the idempotent installer against the latest published version and reports the version change (for example `Updated aip from 0.2.0 to 0.3.0`), including a refresh of the `aip` profile's management skill when it is marker-managed. The installed copy keeps working offline until you update it.
+Re-runs the idempotent installer against the latest published 0.x version and reports the version change (for example `Updated aip from 0.2.0 to 0.3.0`), including a refresh of the `aip` profile's management skill when it is marker-managed. The installed copy keeps working offline until you update it.
 
 ### Without installing
 
