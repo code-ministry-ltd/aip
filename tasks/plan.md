@@ -1,3 +1,349 @@
+# Plan: persona overlays and a desktop app (aip 2.0)
+
+Reads: `tasks/spec.md` ("persona overlays and a desktop app (aip 2.0)") and
+`spike/README.md`. **Planning only: no production-code changes in this
+phase.**
+
+## Overview
+
+aip 2.0 replaces "swap each harness's config home" with personas: small TOML
+manifests over one skill library, applied on top of each harness's normal home.
+They take effect in one of two modes:
+
+- **launch mode:** per-invocation flags;
+- **project mode:** links plus owned keys in one folder, for GUI apps.
+
+The spike proved the mechanisms against Claude Code 2.1.285 and Pi 0.85.0. What
+is left is to:
+
+- build them as a Rust core with a CLI and a Tauri app;
+- make them visible (context cost, drift);
+- ship them to macOS and Linux with updates;
+- move 0.x users across.
+
+The work is ordered so every phase ends with something the maintainer can use
+daily, CLI first:
+
+1. A small 0.x bridge release goes out on `main` straight away.
+2. On `next`, the CLI reaches launch mode, then project mode, then library
+   management and sync.
+3. Only then does the app arrive. It is a view over the same core, so it adds
+   screens, not behaviour.
+4. Distribution and the switch to `main` come last.
+
+## Architecture decisions
+
+- **D1 — one Cargo workspace, three crates.**
+  - `aip-core` (library): manifests, library, global discovery, planning,
+    applying, probes, sync, and aip's own state.
+  - `aip-cli`: the `aip` commands, via `clap`, as a library plus a thin binary.
+  - `aip-app`: Tauri 2. Its binary dispatches to `aip-cli` when given a
+    subcommand and opens the window otherwise, which gives the spec's "one
+    binary is both app and CLI".
+
+  A **CLI-only build** of `aip-cli` (no Tauri, no WebKitGTK) ships for
+  headless machines. It is the same code at the same version, so a VM never
+  needs webview libraries.
+
+- **D2 — planning is pure; applying is the only writer.** As in the spike,
+  `plan(persona, harness, mode, machine) -> Plan { command, args, ops, notes }`
+  reads nothing from disk except through an injected `Machine` snapshot
+  (global skills, `trust.json`, harness versions). `apply(ops)` executes the
+  plan and enforces the safety rules:
+  - create a link only where nothing exists or an aip link was;
+  - prune only links into the library;
+  - touch only owned keys in `settings.local.json`;
+  - keep a marked block in `.git/info/exclude`.
+
+  This lets most behaviour be tested with golden plans and no harness
+  installed.
+
+- **D3 — a `Harness` trait keeps Codex a later addition, not a rewrite.**
+  Claude and Pi each implement five operations:
+  - `discover_globals`
+  - `plan_launch`
+  - `plan_project`
+  - `probe`
+  - `trust` (Pi only; a no-op for Claude)
+
+  Persona tables for unknown harnesses are kept and reported, never rejected
+  (spec, "Concepts").
+
+- **D4 — probes are the source of truth for "what loaded".**
+  - `verify`, drift detection (SC6) and the harness-update re-check (SC11)
+    all call the real binaries: Claude's stream-json `system/init` event and
+    Pi's RPC `get_commands`, as in the spike.
+  - The planner's own prediction is shown only as "expected".
+
+- **D5 — Git through the `git` command, not a library.**
+  - Sync, skill installs and `import-v0` shell out to `git`. They inherit the
+    user's credentials, SSH config and signing exactly as 0.x did.
+  - Sync is explicit, or on an opt-in timer, and never runs inside a launch.
+
+- **D6 — aip's own state lives in platform directories, never in the
+  personas repository.**
+  - Data: owned project overrides, last-verified harness versions, the
+    install-method marker, settings.
+  - Location: `dirs` config and cache paths (`~/.config/aip`, `~/.cache/aip`;
+    `~/Library/Application Support/aip` on macOS).
+  - Default personas repository: `~/agent-personas`, so it cannot be confused
+    with 0.x's `~/agent-profiles`.
+
+- **D7 — the app UI is Svelte 5 + Vite, with no direct file or process
+  access.**
+  - Every read and write goes through Tauri commands into `aip-core`, so the
+    CLI and app cannot diverge and the webview needs no fs or shell plugin.
+  - Svelte was chosen for a small bundle and simple components; switching to
+    React before Phase 5 costs nothing.
+
+- **D8 — the spike is the executable reference until Phase 3 closes.** Its
+  fixtures and expected plans are ported as golden tests. `spike/` stays on
+  `main` for reference and is deleted with the rest of 0.x on `next`. Its
+  README findings move into `docs/harness-findings.md`.
+
+## Phased task list
+
+### Phase 0 — 0.10.0 bridge release (on `main`, shell)
+
+1. **0.x users are pointed at 2.0 and can never be moved onto it by npm**
+   - `aip update` fetches `@code-ministry/aip@^0` instead of `@latest`
+     (`aip.sh:34`, `aip.ps1:2959`).
+   - `aip`, `aip update` and `aip doctor` print one notice line naming the 2.0
+     install page and `aip import-v0`, worded so it reads correctly before 2.0
+     ships ("aip 2 is coming: …").
+   - README banner and changelog entry.
+   - Cover in bats and Pester: the pinned spec is what reaches `npx`, and the
+     notice prints once per command.
+
+*Checkpoint 0: both suites pass. A version bump to 0.10.0 needs the
+maintainer's explicit approval, as for every 0.x release.*
+
+### Phase 1 — walking skeleton: see your personas (CLI, `next`)
+
+1. **The 2.0 tree exists, builds and tests on macOS and Linux**
+   - Create `next` from `main`. Its first commit removes the 0.x
+     implementation, per the spec's "Transition from 0.x".
+   - Add the workspace (D1) and CI: `cargo fmt`, `clippy -D warnings`, and
+     `cargo test` on `ubuntu-latest` and `macos-latest`.
+
+2. **`aip init`, `aip list` and `aip show` read a real machine**
+   - Persona manifests: `format = 1`; unknown keys are an error, but unknown
+     harness tables only warn.
+   - Library loading with name/directory checks.
+   - Global discovery for Claude, including `~/.claude/skills/synced/…`
+     labelled "account", and for Pi.
+   - Token estimates.
+   - Port the spike's frontmatter and validation tests.
+
+*Checkpoint 1: on the maintainer's Mac, `aip list` and `aip show` agree with
+`spike/bin/aipx.mjs`, run from a `main` checkout, for the same root and
+machine.*
+
+### Phase 2 — launch mode: use a persona from the terminal
+
+1. **`aip launch PERSONA claude|pi [--terminal] [-- ARGS]` starts a real
+   session**
+   - Claude: generated inline plugin, `--settings` with `skillOverrides` and
+     passthrough, `--mcp-config`, `--append-system-prompt-file`.
+   - Pi: `--no-skills` plus re-adds, `--skill`, `--append-system-prompt`, and
+     `[pi] args`.
+   - Terminal launch: `xdg-terminal-exec` and the fallback list on Linux, a
+     `.command` file on macOS, and `AIP_TERMINAL`.
+   - Golden-plan tests ported from the spike, plus an SC4 test: snapshot
+     `~/.claude`, `~/.agents`, `~/.pi` and the project before and after
+     applying a launch plan in a temporary HOME.
+
+2. **`aip verify PERSONA HARNESS` asks the harness what it loaded**
+   - Probes as in D4, with the result table and exit status (SC1 launch
+     half).
+   - Record the harness version on success (feeds SC11).
+
+3. **Harness drift is caught nightly (SC11, CI half)**
+   - A scheduled workflow installs the latest `claude` and `pi` and runs
+     `verify` for the example personas in a sandboxed HOME.
+   - On failure it opens an issue naming the harness versions.
+
+*Checkpoint 2: the maintainer uses `aip launch` for daily Claude and Pi work.
+The nightly job is green against the current harness releases (Pi is at 0.99.x
+now, not the spike's 0.85).*
+
+### Phase 3 — project mode: GUI apps and Paseo
+
+1. **`aip project PERSONA [--clear]` writes and removes a persona in a folder
+   exactly**
+   - Links in `.claude/skills` and `.agents/skills`, owned `skillOverrides`,
+     and the `.git/info/exclude` block.
+   - Owned state is kept in D6, so `--clear` restores the folder byte for byte
+     (SC5).
+   - `aip show` and `aip list` report "this folder has persona X applied",
+     because project links persist into later launches (seen in the spike).
+
+2. **Pi trust is detected and offered (decision 10)**
+   - Read `~/.pi/agent/trust.json` using Pi's own resolution order.
+   - Warn when project mode would be invisible to Pi GUIs, and record trust
+     only after a prompt or `--trust-pi`.
+   - Never touch `defaultProjectTrust`.
+
+3. **`aip open PERSONA claude-desktop [DIR]` and `aip verify --mode
+   project`**
+   - Deep link via `open` or `xdg-open`.
+   - Project-mode verify reports Pi's "hide" as a known limit.
+
+*Checkpoint 3 (manual, on the Mac):*
+- *SC2: the Claude desktop Code tab lists the persona's skills after
+  `aip open`.*
+- *SC3: Paseo passes all three trust states.*
+
+*Record both results in `docs/harness-findings.md`.*
+
+### Phase 4 — library management, sync and migration from 0.x
+
+1. **`aip skills add|update|remove` manage the library from Git**
+   - Source sidecar as in 0.x.
+   - `update` shows the upstream diff before replacing anything.
+   - Locally written skills are never touched.
+
+2. **`aip sync` keeps personas on every machine without surprises (SC7)**
+   - Pull, commit and push through `git`.
+   - Conflicts are reported per file with both sides and never left
+     mid-rebase.
+   - An opt-in timer.
+   - A newer `format` is refused with "update aip".
+   - `aip clone URL` sets up a second machine.
+
+3. **`aip import-v0` brings 0.x profiles across (SC9)**
+   - Profiles become personas, `skills/` goes into the library deduplicated
+     by content hash, and `AGENTS.md` becomes persona instructions.
+   - Everything not carried over is reported.
+   - The shell hook is removed after showing the file and the line.
+   - Tested against fixture repositories generated by the 0.x suite's own
+     `aip create`.
+
+*Checkpoint 4: the maintainer's real 0.x profiles repository imports cleanly
+on a second machine, which then runs a synced persona.*
+
+### Phase 5 — the desktop app
+
+1. **The app opens, and the same binary still answers CLI subcommands (D1,
+   D7)**
+   - Tauri shell with Svelte; Tauri commands wrap `aip-core`.
+   - Linux smoke test under Xvfb in CI.
+   - Document `WEBKIT_DISABLE_DMABUF_RENDERER=1` for the known WebKitGTK
+     blank-window bug.
+
+2. **Library and Machine screens: see everything and what it costs (SC6)**
+   - Every skill with its source (library, global, account, plugin/package),
+     always-on tokens, and update state.
+   - Detected harness versions and drift from the probes.
+   - For account skills, a read-only "claude.ai / desktop chat" note with the
+     settings link.
+
+3. **Personas screen: edit with a live context budget**
+   - Checkbox editor per harness, writing the same TOML the CLI reads; the
+     round trip keeps comments and ordering (`toml_edit`).
+
+4. **Launch screen: persona × harness × folder, terminal or GUI**
+   - Recent folders; launch in a terminal; `open` for Claude desktop.
+   - A Pi trust prompt when needed.
+   - Sync status and a conflict view showing both sides.
+
+*Checkpoint 5: the maintainer uses the app instead of the CLI for a week
+without needing the terminal to manage personas.*
+
+### Phase 6 — distribution and updates
+
+1. **Release CI builds every channel from a tag (SC8)**
+   - macOS: unsigned `.dmg`, Apple silicon and Intel.
+   - Linux: AppImage, `.deb` and `.rpm`.
+   - CLI-only tarballs for macOS and Linux (D1).
+   - Checksums for everything.
+   - The install-method marker is written per channel.
+
+2. **`install.sh` and "Install command-line tool"**
+   - The script detects OS and CPU, verifies the checksum, installs into
+     `~/.local/bin` and warns if that is not on PATH.
+   - The app button links its own binary.
+
+3. **Updates never fight the installer (SC10)**
+   - Tauri updater with the signing key in CI secrets and checks on by
+     default, for the `.dmg` app and the AppImage.
+   - `aip self-update` for script installs.
+   - A notice for `.deb` and `.rpm`, and refusal for package-manager installs.
+   - Tests per channel, driven by the marker.
+   - **Test early** that an updater-applied update to the unsigned macOS app
+     opens without a second Gatekeeper override (spec "Updates").
+
+4. **First-run flow and the local half of SC11**
+   - Detect harnesses; create or clone the personas repository; offer
+     `import-v0`.
+   - Re-run `verify` for the user's personas when a harness version is newer
+     than the last verified one.
+
+5. **macOS first-open instructions are where users meet them (SC8, decision
+   13)**
+   - Download page, release notes, and the `.dmg` background.
+   - Checked on the oldest and newest supported macOS.
+
+*Checkpoint 6: a clean Mac and a clean Linux VM each install, first-run,
+launch a persona and take one update through their own channel.*
+
+### Phase 7 — switch `main` to 2.0 (requires explicit approval)
+
+1. **2.0.0 ships and 0.x is retired gracefully**
+   - Tag the last 0.x release and create `v0` from it; merge `next` into
+     `main`.
+   - Rewrite README and CHANGELOG, then tag `v2.0.0`.
+   - The maintainer runs `npm deprecate @code-ministry/aip "…"`, including the
+     Windows note.
+   - The maintainer pays for macOS signing before 2.0 is shared publicly
+     (decision 13); signing then adds a Homebrew cask.
+
+*Checkpoint 7: a 0.x user follows the banner, installs 2.0, runs
+`aip import-v0`, and launches their old profile as a persona.*
+
+## Risks and mitigations
+
+- **The Claude probe needs a login and may spend a few tokens.**
+  - The spike killed the process at `system/init`, but a request was already
+    in flight.
+  - Phase 2.2 first checks whether `init` arrives before authentication fails
+    when there are no credentials. If it does, CI needs no secret. If not, the
+    nightly job uses an API-key secret with a spending cap, and `verify` says
+    it may use a few tokens.
+- **Harnesses change flags faster than aip releases.** Pi moved from 0.85 to
+  0.99 during planning. Mitigations:
+  - the nightly drift job lands in Phase 2, not at the end;
+  - every mechanism is behind the `Harness` trait;
+  - `docs/harness-findings.md` records the version each mechanism was last
+    verified on.
+- **Project-mode files surprise users later.** Links persist until cleared and
+  also affect later launches in that folder. Mitigations:
+  - `show`, `list` and the app always report personas applied to the current
+    folder;
+  - `--clear` is exact and tested byte for byte;
+  - everything aip writes is Git-excluded.
+- **A Linux desktop without WebKitGTK, or with its blank-window bug.**
+  - Headless machines get the CLI-only build.
+  - The app documents the DMA-BUF workaround.
+  - Setting it automatically is considered only if a reliable detection turns
+    up during Phase 5.
+- **Unsigned macOS builds frustrate the first testers.** The first-open steps
+  are verified on real macOS versions (Phase 6.5). Signing is already decided
+  before any public sharing.
+- **Scope creep in the app.** The app adds no behaviour beyond `aip-core`
+  (D7). Phase 5 lists exactly four screens. Everything else waits for 2.x.
+- **Rust is new to this repository.** Mitigations:
+  - keep the core small and synchronous (no async runtime outside Tauri);
+  - enforce `clippy -D warnings` and golden tests;
+  - port the spike's behaviour one module at a time, with its tests first.
+
+## Open questions
+
+None blocking. D7 (Svelte) can be changed to React at no cost before Phase 5
+starts.
+
+---
+
 # Plan: adopt an existing profiles repository on a fresh install (vNext)
 
 Reads: `tasks/spec.md` (adoption addendum). **Planning only: no
