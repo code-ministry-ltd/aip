@@ -18,9 +18,9 @@ Pin the npm fetch to `@code-ministry/aip@^0` (`aip.sh:34`) and add a one-line
 notice to `aip`, `aip update` and `aip doctor` ("aip 2 is coming: …", with the
 2.0 install page and `aip import-v0`). See the spec, "Transition from 0.x".
 
-- [ ] The fake `npx` receives `@code-ministry/aip@^0 update`, never `@latest`.
+- [x] The fake `npx` receives `@code-ministry/aip@^0 update`, never `@latest`.
   Update the existing `@latest` assertion in `tests/posix/npm.bats:66`.
-- [ ] Each of the three commands prints the notice exactly once; other
+- [x] Each of the three commands prints the notice exactly once; other
   commands and harness wrappers print nothing new.
 - Verify: `npx bats tests/posix/npm.bats && npm run test:posix`
 - Deps: — · Files: `aip.sh`, `tests/posix/npm.bats` · Size: S
@@ -29,7 +29,7 @@ notice to `aip`, `aip update` and `aip doctor` ("aip 2 is coming: …", with the
 
 Mirror T32 in `aip.ps1:2959` with the same wording.
 
-- [ ] Pester asserts the same `npx` arguments (updating the `@latest`
+- [x] Pester asserts the same `npx` arguments (updating the `@latest`
   assertion at `tests/powershell/Aip.Tests.ps1:181`) and the same notice lines
   as bats.
 - Verify: `pwsh -NoProfile -File tests/run-powershell.ps1`
@@ -40,7 +40,7 @@ Mirror T32 in `aip.ps1:2959` with the same wording.
 Add a README banner and a changelog entry that describe the notice and the
 pinned update without promising a release date.
 
-- [ ] The banner names the 2.0 install page placeholder and `aip import-v0`,
+- [x] The banner names the 2.0 install page placeholder and `aip import-v0`,
   and says Windows users should stay on 0.x.
 - Verify: `git diff --check && rg -n 'aip 2' README.md CHANGELOG.md`
 - Deps: T32, T33 · Files: `README.md`, `CHANGELOG.md` · Size: S
