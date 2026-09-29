@@ -78,9 +78,6 @@ deferring:
    manifests. It never contains harness homes, credentials, sessions or
    generated files, so the whole pass-through and secret-denylist machinery
    goes away.
-5. **Tauri 2 + Rust core.** One Rust crate owns manifests, planning, applying
-   and probes. The same binary is the CLI (`aip …`) and the app backend, and
-   the UI is a web front end.
 
 → Correct me now or I'll proceed with these.
 
@@ -209,7 +206,12 @@ sync to, on Linux and macOS, with Windows as a bonus.
 4. **Terminal launch goes through the user's terminal:** `xdg-terminal-exec`
    first on Linux with a fallback list, a `.command` file on macOS, and `wt` on
    Windows, with an `AIP_TERMINAL` override.
-5. **Token cost is an estimate** (characters / 4) until a harness exposes real
+5. **Tauri 2 + Rust core.** One Rust crate owns manifests, planning, applying
+   and probes. The same binary is the CLI (`aip …`) and the app backend, and
+   the UI is a web front end. Chosen over Electron + TypeScript for the
+   download size (~5–10 MB against 120 MB+) and a CLI with no runtime (SC8).
+   The spike's JavaScript is ported, not reused.
+6. **Token cost is an estimate** (characters / 4) until a harness exposes real
    numbers. `claude plugin details` reports projected token cost for plugins
    and can calibrate it.
 
