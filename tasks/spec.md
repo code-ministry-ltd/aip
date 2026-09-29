@@ -51,6 +51,16 @@ deferring:
   expose:
   - Claude reads `.claude/skills` and `.claude/settings.local.json`.
   - Pi reads `.agents/skills`, but only in trusted projects.
+- **Pi GUIs never prompt for trust.** A project with an `.agents/skills`
+  directory needs trust. Pi resolves it in this order:
+  1. the `-a`/`-na` flags
+  2. an extension's `project_trust` event
+  3. `~/.pi/agent/trust.json`
+  4. `defaultProjectTrust`
+
+  Only the interactive TUI asks. `pi --mode rpc`, which Paseo and most Pi GUIs
+  spawn, treats "ask" as untrusted. So a folder must be trusted once (in the
+  TUI, or via `defaultProjectTrust`) before project mode works in a GUI.
 - **Pi's project settings cannot exclude global skills**, so in project mode
   Pi can add skills but not hide global ones.
 - **Claude desktop opens on a folder** via the `claude://code/new?folder=` deep
@@ -120,9 +130,15 @@ sync to, on Linux and macOS, with Windows as a bonus.
 - **SC2 — Claude desktop.** `aip open PERSONA claude-desktop DIR` writes
   project mode and opens the deep link. A manual test on macOS confirms the
   Code tab lists the persona's skills.
-- **SC3 — Pi GUIs and wrappers.** In a folder the user has trusted in Pi,
-  project mode makes the persona's skills appear in a Pi GUI that spawns
-  `pi --mode rpc` (checked with one existing Pi GUI) and in Paseo.
+- **SC3 — Pi from a GUI (Paseo).** The reference GUI is Paseo. It spawns the
+  user's own `pi --mode rpc` in the chosen workspace with the user's
+  environment and passes no trust flags, which makes it the realistic worst
+  case. With project mode applied, test three trust states:
+  1. No `trust.json` entry: the persona's skills do not load, and
+     `aip verify`/`aip open` say why and how to fix it.
+  2. The folder recorded in `trust.json`, after one `pi` TUI run that
+     answered yes: the skills load.
+  3. `defaultProjectTrust: always`: the skills load.
 - **SC4 — No global side effects.** Launch mode never writes to `~/.claude`,
   `~/.agents` or `~/.pi`, or to the project. A test snapshots those trees
   before and after.
@@ -211,7 +227,16 @@ sync to, on Linux and macOS, with Windows as a bonus.
    the UI is a web front end. Chosen over Electron + TypeScript for the
    download size (~5–10 MB against 120 MB+) and a CLI with no runtime (SC8).
    The spike's JavaScript is ported, not reused.
-6. **Token cost is an estimate** (characters / 4) until a harness exposes real
+6. **Paseo is the reference Pi GUI** (SC3). It uses the user's installed `pi`
+   and `~/.pi/agent` and adds no trust override. The alternatives were
+   rejected as test targets:
+   - pi-gui runs Pi in-process from a bundled SDK and always trusts the
+     project.
+   - picot bundles its own `pi` and always passes `--approve`.
+
+   Both would mask trust problems. Pi Desktop (FaqFirebase/pi-desktop) behaves
+   like Paseo and is the fallback.
+7. **Token cost is an estimate** (characters / 4) until a harness exposes real
    numbers. `claude plugin details` reports projected token cost for plugins
    and can calibrate it.
 
@@ -219,14 +244,15 @@ sync to, on Linux and macOS, with Windows as a bonus.
 
 1. **Repository and name.** A new `code-ministry-ltd/aip-app` (or similar)
    with the npm name moved at 2.0, or a `v2` branch here?
-2. **Pi trust in project mode.** Should `aip open` offer to trust the folder
-   for Pi, or only explain the limit?
+2. **Pi trust in project mode.** GUIs never prompt, so an untrusted folder
+   silently loses the persona's skills. Should aip only detect this and
+   explain it (read `trust.json`), or also offer to record trust? Recording
+   trust writes to `~/.pi/agent/trust.json`, so it is an ask-first global
+   write.
 3. **Windows.** Junctions avoid Developer Mode for skill links, but GUI deep
    links and `wt` are untested. Is Windows in the first release, or a beta?
 4. **claude.ai account skills.** Is showing them read-only, with a link to the
    settings page, enough for 1.0?
-5. **Which Pi GUI to certify against (SC3)?** Candidates: Pi Desktop, pi-gui,
-   picot. All of them spawn `pi --mode rpc`.
 
 ## Later: Codex (v1.x)
 

@@ -44,7 +44,8 @@ It refuses to replace real files, and `--clear` removes only what it made.
 
 ## What was verified (2026-09-29, Linux, sandboxed HOME)
 
-Versions: Claude Code 2.1.285, Codex CLI 0.159.1, Pi 0.85.0. Method: Claude's
+Versions: Claude Code 2.1.285, Codex CLI 0.159.1, Pi 0.85.0. Pi's latest
+release is 0.99.1; re-run `aipx verify` against it before relying on P1–P4. Method: Claude's
 stream-json `system/init` event, Codex app-server `skills/list`, Pi RPC
 `get_commands` (the same probes `aipx verify` uses).
 
