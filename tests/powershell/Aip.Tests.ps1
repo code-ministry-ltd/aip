@@ -124,6 +124,8 @@ BeforeEach {
     $env:PI_CODING_AGENT_DIR = $null
     $env:OPENCODE_CONFIG_DIR = $null
     $env:AIP_ACTIVE_PROFILE = $null
+    # Keep test output quiet; the notice tests clear this themselves.
+    $env:AIP_NO_V2_NOTICE = '1'
     $env:GIT_CONFIG_GLOBAL = Join-Path $TestDrive 'gitconfig'
     $env:GIT_CONFIG_NOSYSTEM = '1'
     if (Test-Path -LiteralPath $script:AipProfileRoot) { Remove-Item -LiteralPath $script:AipProfileRoot -Recurse -Force }
@@ -147,6 +149,7 @@ BeforeEach {
 
 AfterEach {
     $env:AIP_PROFILE = $null
+    $env:AIP_NO_V2_NOTICE = $null
     $env:FAKE_CAPTURE = $null
     $env:FAKE_EXIT_STATUS = $null
     $env:GIT_CONFIG_GLOBAL = $null
@@ -178,10 +181,64 @@ It 'update delegates to the npm package update command' {
         $lines = Get-Content -LiteralPath $script:FakeCapture
         $lines | Should -Contain 'harness=npx'
         $lines | Should -Contain 'arg=--yes'
-        $lines | Should -Contain 'arg=@code-ministry/aip@latest'
+        $lines | Should -Contain 'arg=@code-ministry/aip@^0'
+        $lines | Should -Not -Contain 'arg=@code-ministry/aip@latest'
         $lines | Should -Contain 'arg=update'
     }
     finally { $env:PATH = $savedPath }
+}
+
+Context 'aip 2 notice' {
+    BeforeAll {
+        # The notice goes straight to the process stderr, so capture that.
+        function Get-AipStderr {
+            param([scriptblock]$Script)
+            $original = [Console]::Error
+            $writer = [IO.StringWriter]::new()
+            [Console]::SetError($writer)
+            try { & $Script *> $null } finally { [Console]::SetError($original) }
+            $writer.ToString()
+        }
+        function Get-NoticeCount {
+            param([string]$Text)
+            @(($Text -split "`r?`n") | Where-Object { $_ -like 'aip: note: aip 2 is coming*' }).Count
+        }
+    }
+
+    It 'aip, aip update and aip doctor print it once on stderr' {
+        $env:AIP_NO_V2_NOTICE = $null
+        New-FakeHarness 'npx'
+        $savedPath = $env:PATH
+        $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
+        try {
+            Get-NoticeCount (Get-AipStderr { aip update }) | Should -Be 1
+            $global:LASTEXITCODE | Should -Be 0
+            Get-NoticeCount (Get-AipStderr { aip }) | Should -Be 1
+            $doctor = Get-AipStderr { aip doctor }
+            Get-NoticeCount $doctor | Should -Be 1
+            $doctor | Should -BeLike "*'aip import-v0'*"
+        }
+        finally { $env:PATH = $savedPath }
+    }
+
+    It 'other commands stay quiet, and AIP_NO_V2_NOTICE hides it' {
+        $env:AIP_NO_V2_NOTICE = $null
+        Get-NoticeCount (Get-AipStderr { aip version }) | Should -Be 0
+        Get-NoticeCount (Get-AipStderr { aip list }) | Should -Be 0
+        $env:AIP_NO_V2_NOTICE = '1'
+        Get-NoticeCount (Get-AipStderr { aip }) | Should -Be 0
+    }
+
+    It 'keeps the exit status of the command it follows' {
+        $env:AIP_NO_V2_NOTICE = '1'
+        aip doctor *> $null
+        $expected = $global:LASTEXITCODE
+        $env:AIP_NO_V2_NOTICE = $null
+        Get-AipStderr { aip doctor } | Out-Null
+        $global:LASTEXITCODE | Should -Be $expected
+        Get-AipStderr { aip update extra } | Out-Null
+        $global:LASTEXITCODE | Should -Be 2
+    }
 }
 
 It 'update rejects extra arguments without invoking npx' {
