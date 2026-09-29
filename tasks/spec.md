@@ -156,13 +156,26 @@ sync to, on Linux and macOS, with Windows as a bonus.
   and optionally on a timer, never inside a launch. A conflict can only occur
   in human-readable TOML/Markdown, and the app shows it as a side-by-side
   choice.
-- **SC8 — Install in one step.** Homebrew cask (macOS), AppImage + deb + rpm
-  (Linux) and winget (Windows), each built by CI from a tag. The CLI ships in
-  the same package. Node is not required at runtime.
+- **SC8 — Install in one step.** Every channel in "Install" below installs
+  from one command or one download on a clean machine, with Git as the only
+  prerequisite. The CLI is on PATH afterwards, or one click away for the
+  AppImage. Node is not required at runtime.
 - **SC9 — Import from aip 0.x.** `aip import-v0` turns each 0.x profile into a
   persona, moves `skills/` into the library (deduplicated by content hash) and
   `AGENTS.md` into persona instructions, and reports anything it could not
   carry over: native settings files, and all Codex and OpenCode configuration.
+  It also removes 0.x's marked shell-profile line, after showing the file and
+  the line, so the old `claude`/`pi` wrappers stop setting
+  `CLAUDE_CONFIG_DIR`/`PI_CODING_AGENT_DIR` behind 2.0's back.
+- **SC10 — Updates never fight the installer.** An install made through a
+  package manager is never self-updated. Direct-download builds update through
+  the signed updater, and `curl | sh` installs through `aip self-update`. A
+  test per channel confirms each takes the right path.
+- **SC11 — Harness drift is caught.** Nightly CI runs the `verify` checks
+  against the latest `claude` and `pi`, and fails with the breaking version.
+  On a user's machine, a harness version newer than the last verified one
+  triggers a re-check of the user's personas, with a warning if anything no
+  longer loads.
 
 ## Scope for the first release
 
@@ -177,6 +190,63 @@ sync to, on Linux and macOS, with Windows as a bonus.
 - MCP servers for Claude (via `--mcp-config` / `.mcp.json`). Pi has no
   built-in MCP; a persona's `mcp_servers` are skipped for Pi with a note.
 - Pi extensions and packages through `[pi] args` (`-e`) only.
+
+## Install
+
+One Rust binary is both the desktop app and the `aip` CLI, so they can never
+disagree about versions. CI builds every channel from a release tag and
+publishes checksums.
+
+| Platform | Channels | CLI on PATH |
+|---|---|---|
+| macOS | Homebrew cask; `.dmg` from GitHub Releases | The cask links `aip`; the `.dmg` app offers "Install command-line tool" |
+| Linux | AppImage; `.deb`; `.rpm` (AUR later) | `.deb`/`.rpm` install it; AppImage offers "Install command-line tool", which links into `~/.local/bin` |
+| Windows | winget; `.msi` | The installer adds it |
+| Headless / VMs | `curl -fsSL …/install.sh \| sh`; `irm … \| iex` | The script puts the binary in `~/.local/bin` (or `%LOCALAPPDATA%`) |
+
+- **Record how aip was installed.** Every channel writes an install-method
+  marker next to the binary. Updates use it (SC10).
+- **Keep the npm command working (optional).** `npx @code-ministry/aip` can
+  fetch the matching binary, as esbuild and Biome do, so the command 0.x users
+  know keeps working.
+- **First run** (app and CLI alike):
+  1. Detect `claude` and `pi` and their versions.
+  2. Create a personas repository, or clone one from a Git URL.
+  3. If aip 0.x is present, offer `import-v0` (SC9).
+
+## Updates
+
+**aip itself:**
+- **Stable channel only.** There are no betas or nightlies for users.
+- **Whoever installed aip updates it:**
+  - **Homebrew / winget / AUR:** the package manager. The app shows "update
+    available" and the command to run, but never replaces itself.
+  - **`.dmg`, AppImage, `.msi`:** the Tauri updater. It checks a signed
+    manifest on GitHub Releases, downloads and verifies the update, then
+    restarts when the user agrees. Checks are **on by default** and can be
+    turned off in settings. There are no silent background installs.
+  - **`.deb` / `.rpm`:** a notice with a download link. An apt or rpm
+    repository may come later.
+  - **`curl | sh`:** `aip self-update`, which verifies the checksum and
+    signature before replacing the binary.
+- **The updater's signing key** is separate from Apple or Windows code
+  signing and costs nothing. It lives only in CI secrets.
+
+**Skills from Git:**
+- Sources are recorded as in 0.x. The Library screen shows upstream changes
+  and a diff before applying them; `aip skills update NAME|--all` does the
+  same.
+- Skills written locally are never touched.
+
+**The personas repository:**
+- Plain Git, on explicit sync or an opt-in timer, never during a launch.
+- Manifests carry `format = 1`. A newer aip migrates old formats once, in a
+  visible commit. An older aip refuses a newer format and says to update.
+
+**Claude Code and Pi:**
+- aip never installs, pins or downgrades them.
+- It records the last harness version each check passed on, and re-verifies
+  when that version changes (SC11).
 
 ## Boundaries
 
@@ -198,7 +268,9 @@ sync to, on Linux and macOS, with Windows as a bonus.
 - Adding a harness (Codex first; then OpenCode, Gemini CLI or others).
 - An embedded terminal (xterm.js + portable-pty) instead of launching the
   user's own.
-- Code signing and notarization spend (Apple Developer Program, $99/yr).
+- Code signing and notarization spend (Apple Developer Program, $99/yr;
+  Windows signing).
+- Adding a beta or nightly update channel.
 
 **Never**
 
@@ -207,6 +279,8 @@ sync to, on Linux and macOS, with Windows as a bonus.
 - Commit credentials, sessions, caches or generated files to the personas
   repository.
 - Rebase or sync inside a harness launch.
+- Self-update an install that a package manager owns, or install an update
+  without the user agreeing to the restart.
 - Delete or overwrite a file or link aip did not create.
 
 ## Resolved decisions
@@ -236,7 +310,10 @@ sync to, on Linux and macOS, with Windows as a bonus.
 
    Both would mask trust problems. Pi Desktop (FaqFirebase/pi-desktop) behaves
    like Paseo and is the fallback.
-7. **Token cost is an estimate** (characters / 4) until a harness exposes real
+7. **Stable-only releases, with update checks on by default in
+   direct-download builds.** Package-manager installs are updated by their
+   package manager (see "Updates").
+8. **Token cost is an estimate** (characters / 4) until a harness exposes real
    numbers. `claude plugin details` reports projected token cost for plugins
    and can calibrate it.
 
@@ -253,6 +330,12 @@ sync to, on Linux and macOS, with Windows as a bonus.
    links and `wt` are untested. Is Windows in the first release, or a beta?
 4. **claude.ai account skills.** Is showing them read-only, with a link to the
    settings page, enough for 1.0?
+5. **macOS signing.** Pay the $99/yr Apple Developer Program so the app opens
+   without a Gatekeeper override (recommended, given "very simple to
+   install"), or ship unsigned with instructions?
+6. **Windows signing.** Use a signing service (Azure Trusted Signing is
+   believed to cost ~$10/month; unverified), or accept the SmartScreen warning
+   for a Windows beta?
 
 ## Later: Codex (v1.x)
 
