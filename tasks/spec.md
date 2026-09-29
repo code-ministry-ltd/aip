@@ -74,17 +74,14 @@ deferring:
 
 ## Assumptions requiring approval
 
-1. **A clean break, in a new repository.** aip 2.0 is a new engine plus app,
-   not an evolution of `aip.sh`. The npm name `@code-ministry/aip` moves to it
-   at 2.0; 0.x stays installable and gets a one-way importer.
-2. **The skill library lives outside every discovery root.** Plain harness
+1. **The skill library lives outside every discovery root.** Plain harness
    launches load none of it. Personas add skills, and hiding global skills is
    the exception.
-3. **Launch, never host.** The app starts the unmodified `claude` and `pi`
+2. **Launch, never host.** The app starts the unmodified `claude` and `pi`
    binaries (inline, in a terminal, or via deep link). It never embeds the
    Agent SDK or Pi's SDK for conversations. The probes used by `verify` are the
    only exception, and they never start a conversation.
-4. **Git holds text only.** The personas repository contains the library and
+3. **Git holds text only.** The personas repository contains the library and
    manifests. It never contains harness homes, credentials, sessions or
    generated files, so the whole pass-through and secret-denylist machinery
    goes away.
@@ -206,13 +203,38 @@ publishes checksums.
 
 - **Record how aip was installed.** Every channel writes an install-method
   marker next to the binary. Updates use it (SC10).
-- **Keep the npm command working (optional).** `npx @code-ministry/aip` can
-  fetch the matching binary, as esbuild and Biome do, so the command 0.x users
-  know keeps working.
+- **Not on npm.** 2.0 is never published to npm (see "Transition from 0.x").
 - **First run** (app and CLI alike):
   1. Detect `claude` and `pi` and their versions.
   2. Create a personas repository, or clone one from a Git URL.
   3. If aip 0.x is present, offer `import-v0` (SC9).
+
+## Transition from 0.x
+
+aip 2.0 is a new engine plus app, not an evolution of `aip.sh`, but it keeps
+this repository, its name, URL, issues and history.
+
+- **Branches.**
+  - 2.0 is built on `next`. Its first commit deletes the 0.x implementation
+    (`aip.sh`, `aip.ps1`, installers, Bats/Pester suites, `bin/aip.js`) in one
+    reviewable change.
+  - `main` keeps serving 0.x until 2.0.0 is ready, then `next` merges into it.
+  - A `v0` branch from the last 0.x tag takes security fixes only.
+- **CI and releases.** Workflows are replaced at the switch. GitHub Releases
+  carry the app and binaries from 2.0.0 on; the 0.x releases stay listed.
+- **Final 0.x release (0.10.0).**
+  - `aip update` pins its npm fetch to `@code-ministry/aip@^0`, not `@latest`
+    (`aip.sh:34`, `aip.ps1:2959`), so no future publish can move a 0.x user
+    onto something else.
+  - `aip`, `aip update` and `aip doctor` print a one-line notice pointing to
+    the 2.0 install instructions and `aip import-v0`.
+  - The README gains a banner saying the same.
+- **npm.** `@code-ministry/aip` stays on 0.x. Once 2.0.0 ships, run
+  `npm deprecate @code-ministry/aip "…"` with a message naming the 2.0 install
+  page. Deprecation only warns on install; existing 0.x installs keep working,
+  since they run on Bash/PowerShell and Git alone.
+- **0.x profiles** move over with `aip import-v0` (SC9), which also removes the
+  0.x shell hook.
 
 ## Updates
 
@@ -281,6 +303,8 @@ publishes checksums.
 - Rebase or sync inside a harness launch.
 - Self-update an install that a package manager owns, or install an update
   without the user agreeing to the restart.
+- Publish 2.0 to npm under `@code-ministry/aip`: 0.x's `aip update` fetches
+  from that name, and releases before 0.10.0 fetch `@latest`.
 - Delete or overwrite a file or link aip did not create.
 
 ## Resolved decisions
@@ -313,27 +337,30 @@ publishes checksums.
 7. **Stable-only releases, with update checks on by default in
    direct-download builds.** Package-manager installs are updated by their
    package manager (see "Updates").
-8. **Token cost is an estimate** (characters / 4) until a harness exposes real
+8. **Same repository; npm stays on 0.x** (see "Transition from 0.x"). A new
+   repository was rejected: a major version can replace the codebase, and
+   keeping the repository keeps its name, URL, issues and history. Publishing
+   2.0 to npm as a binary fetcher was deferred: npm was only ever a delivery
+   route, and leaving it on 0.x means no 0.x `aip update` can land on 2.0.
+9. **Token cost is an estimate** (characters / 4) until a harness exposes real
    numbers. `claude plugin details` reports projected token cost for plugins
    and can calibrate it.
 
 ## Open questions
 
-1. **Repository and name.** A new `code-ministry-ltd/aip-app` (or similar)
-   with the npm name moved at 2.0, or a `v2` branch here?
-2. **Pi trust in project mode.** GUIs never prompt, so an untrusted folder
+1. **Pi trust in project mode.** GUIs never prompt, so an untrusted folder
    silently loses the persona's skills. Should aip only detect this and
    explain it (read `trust.json`), or also offer to record trust? Recording
    trust writes to `~/.pi/agent/trust.json`, so it is an ask-first global
    write.
-3. **Windows.** Junctions avoid Developer Mode for skill links, but GUI deep
+2. **Windows.** Junctions avoid Developer Mode for skill links, but GUI deep
    links and `wt` are untested. Is Windows in the first release, or a beta?
-4. **claude.ai account skills.** Is showing them read-only, with a link to the
+3. **claude.ai account skills.** Is showing them read-only, with a link to the
    settings page, enough for 1.0?
-5. **macOS signing.** Pay the $99/yr Apple Developer Program so the app opens
+4. **macOS signing.** Pay the $99/yr Apple Developer Program so the app opens
    without a Gatekeeper override (recommended, given "very simple to
    install"), or ship unsigned with instructions?
-6. **Windows signing.** Use a signing service (Azure Trusted Signing is
+5. **Windows signing.** Use a signing service (Azure Trusted Signing is
    believed to cost ~$10/month; unverified), or accept the SmartScreen warning
    for a Windows beta?
 
