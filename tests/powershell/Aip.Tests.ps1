@@ -188,6 +188,45 @@ It 'update delegates to the npm package update command' {
     finally { $env:PATH = $savedPath }
 }
 
+It 'update runs npx outside any local package, so a checkout cannot satisfy @^0' -Skip:$IsWindows {
+    # A local package named @code-ministry/aip would satisfy the range, and npx
+    # would then run it instead of fetching from the registry.
+    $project = Join-Path $TestDrive 'aip checkout'
+    New-Item -ItemType Directory -Path $project -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $project 'package.json') -Value '{"name":"@code-ministry/aip","version":"0.9.5"}'
+    $fake = Join-Path $script:FakeBin 'npx'
+    @'
+#!/bin/sh
+printf 'cwd=%s\n' "$(pwd -P)" >"${FAKE_CAPTURE:?}"
+[ -e package.json ] && printf 'package.json=present\n' >>"$FAKE_CAPTURE"
+printf 'arg=%s\n' "$@" >>"$FAKE_CAPTURE"
+exit "${FAKE_EXIT_STATUS:-0}"
+'@ | Set-Content -LiteralPath $fake -NoNewline
+    & chmod +x $fake
+    $savedPath = $env:PATH
+    $env:PATH = "$script:FakeBin$([IO.Path]::PathSeparator)$savedPath"
+    Push-Location -LiteralPath $project
+    try {
+        aip update
+        $global:LASTEXITCODE | Should -Be 0
+        $lines = Get-Content -LiteralPath $script:FakeCapture
+        $ranIn = ($lines | Where-Object { $_ -like 'cwd=*' }) -replace '^cwd=', ''
+        $ranIn | Should -Not -Be (Resolve-Path -LiteralPath $project).ProviderPath
+        $lines | Should -Not -Contain 'package.json=present'
+        $lines | Should -Contain 'arg=@code-ministry/aip@^0'
+        Test-Path -LiteralPath $ranIn | Should -BeFalse
+        (Get-Location).ProviderPath | Should -Be (Resolve-Path -LiteralPath $project).ProviderPath
+        $env:FAKE_EXIT_STATUS = '3'
+        aip update
+        $global:LASTEXITCODE | Should -Be 3
+    }
+    finally {
+        $env:FAKE_EXIT_STATUS = '0'
+        Pop-Location
+        $env:PATH = $savedPath
+    }
+}
+
 Context 'aip 2 notice' {
     BeforeAll {
         # The notice goes straight to the process stderr, so capture that.
