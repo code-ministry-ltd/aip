@@ -22,6 +22,12 @@ _aip_warn() {
   printf 'aip: warning: %s\n' "$*" >&2
 }
 
+# One-line pointer to aip 2, on stderr so scripted stdout is unchanged.
+_aip_v2_notice() {
+  [ -n "${AIP_NO_V2_NOTICE-}" ] && return 0
+  printf '%s\n' "aip: note: aip 2 is coming, with personas and a desktop app; your profiles will move over with 'aip import-v0'. See https://github.com/code-ministry-ltd/aip#aip-2 (set AIP_NO_V2_NOTICE=1 to hide this)" >&2
+}
+
 _aip_update() {
   [ "$#" -eq 0 ] || { _aip_error 'usage: aip update'; return 2; }
   (
@@ -31,7 +37,8 @@ _aip_update() {
       _aip_error 'update requires Node.js (npx) on PATH'
       return 1
     fi
-    command npx --yes @code-ministry/aip@latest update
+    # Pinned to 0.x: aip 2 is not distributed through npm.
+    command npx --yes '@code-ministry/aip@^0' update
   )
 }
 
@@ -4724,9 +4731,12 @@ _aip_remote() {
 }
 
 aip() {
+  local aip_status
   if [ "$#" -eq 0 ]; then
     _aip_status
-    return
+    aip_status=$?
+    _aip_v2_notice
+    return "$aip_status"
   fi
   local command=$1
   shift
@@ -4738,7 +4748,12 @@ aip() {
     clone) _aip_clone "$@" ;;
     default) _aip_default "$@" ;;
     delete) _aip_delete "$@" ;;
-    doctor) _aip_doctor "$@" ;;
+    doctor)
+      _aip_doctor "$@"
+      aip_status=$?
+      _aip_v2_notice
+      return "$aip_status"
+      ;;
     list) _aip_list "$@" ;;
     local) _aip_local "$@" ;;
     help) _aip_help "$@" ;;
@@ -4753,7 +4768,10 @@ aip() {
     sync-packages) _aip_sync_packages "$@" ;;
     use) _aip_use "$@" ;;
     uninstall) _aip_uninstall "$@" ;;
-    update) _aip_update "$@" ;;
+    update)
+      _aip_v2_notice
+      _aip_update "$@"
+      ;;
     version) _aip_version "$@" ;;
     which) _aip_which "$@" ;;
   esac
