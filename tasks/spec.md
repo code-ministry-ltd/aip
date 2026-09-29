@@ -1,3 +1,213 @@
+# Spec: persona overlays and a desktop app (aip 2.0)
+
+Living document — update before implementing a changed decision. The spike in
+`spike/` backs every "verified" claim below; its README has the evidence.
+
+## Problem
+
+aip 0.x selects a profile by pointing each harness at a whole alternative
+config home (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`). Three
+consequences follow, and they are the three complaints this spec answers:
+
+1. **Brittle and large.** A swapped home loses credentials, plugin caches,
+   keybindings and history, so aip rebuilds them per profile with pass-through
+   symlinks, keeps the homes in Git, and rebases at every launch. That is most
+   of `aip.sh` + `aip.ps1` (~9,800 lines) and most of the recent changelog.
+2. **Opaque.** A profile is a directory tree, not a statement of what it loads
+   or what it costs in context.
+3. **Terminal only.** GUI apps (Claude desktop, the ChatGPT/Codex app, Pi GUIs,
+   Paseo) are not started from a shell that ran `aip use`, so they never see
+   the selector variable.
+
+## Project facts (verified; see `spike/README.md`)
+
+- All three harnesses can add or hide skills **per session on top of their
+  normal home**:
+  - Claude Code: `--plugin-dir`, `--settings` (`skillOverrides`,
+    `enabledPlugins`, `disableBundledSkills`), `--mcp-config`,
+    `--append-system-prompt-file`.
+  - Codex: `-c` overrides, including
+    `skills.config=[{name=…,enabled=false}]`.
+  - Pi: `--no-skills`, `--skill`, `-e`, `--append-system-prompt`.
+- The same files also work **per project**, which is the only lever GUI apps
+  expose:
+  - Claude reads `.claude/skills` and `.claude/settings.local.json`.
+  - Codex reads `.agents/skills`.
+  - Pi reads `.agents/skills`, but only in trusted projects.
+- **Codex has no per-launch skill path.** It discovers `<cwd>/.agents/skills`,
+  so persona skills for Codex are always linked into the project.
+- **Codex ignores project-layer `skills.config`, and Pi's project settings
+  cannot exclude global skills.** In project mode those two harnesses can add
+  skills but not hide global ones.
+- **`codex app-server` rejects `--profile`.** Codex `profile v2` files are
+  therefore not a usable persona carrier.
+- **Deep links open the GUI apps on a folder:** `claude://code/new?folder=` and
+  `codex://threads/new?path=`. Neither carries settings.
+- **claude.ai, Cowork and ChatGPT chat skills are account settings with no
+  API.** Anthropic's Skills API explicitly does not reach claude.ai.
+- **Anthropic policy:** third-party apps may not use a Claude subscription
+  login through the Agent SDK. Launching the unmodified `claude` binary is
+  allowed.
+
+## Assumptions requiring approval
+
+1. **A clean break, in a new repository.** aip 2.0 is a new engine plus app,
+   not an evolution of `aip.sh`. The npm name `@code-ministry/aip` moves to it
+   at 2.0; 0.x stays installable and gets a one-way importer.
+2. **The skill library lives outside every discovery root.** Plain harness
+   launches load none of it. Personas add skills, and hiding global skills is
+   the exception.
+3. **Launch, never host.** The app starts the unmodified `claude`, `codex` and
+   `pi` binaries (inline, in a terminal, or via deep link). It never embeds
+   the Agent SDK or `codex app-server` for conversations. The probes used by
+   `verify` are the only exception, and they never start a conversation.
+4. **Git holds text only.** The personas repository contains the library and
+   manifests. It never contains harness homes, credentials, sessions or
+   generated files, so the whole pass-through and secret-denylist machinery
+   goes away.
+5. **Tauri 2 + Rust core.** One Rust crate owns manifests, planning, applying
+   and probes. The same binary is the CLI (`aip …`) and the app backend, and
+   the UI is a web front end.
+
+→ Correct me now or I'll proceed with these.
+
+## Objective
+
+Let a person keep one library of skills (plus MCP servers, instructions and
+harness extras), group it into personas, see exactly what each persona loads
+and what it costs in context, and start Claude Code, Codex or Pi (terminal or
+GUI) with that persona in one action. It should work the same on every machine
+they sync to, on Linux and macOS, with Windows as a bonus.
+
+## Concepts
+
+- **Library:** `library/skills/<name>/SKILL.md` (Agent Skills format), with a
+  source sidecar for skills installed from Git so they can be updated.
+- **Persona:** `personas/<name>.toml`, containing:
+  - `description`
+  - `skills` (library names)
+  - `exclude_skills` / `inherit_global_skills`
+  - `instructions` (a file)
+  - `mcp_servers`
+  - harness passthrough tables: `[claude.settings]`, `[codex.config]`,
+    `[pi] args`
+- **Launch mode:** per-invocation flags, with nothing global changed. Codex
+  skill links in `<cwd>/.agents/skills` are the documented exception.
+- **Project mode:** links plus owned keys inside one folder, excluded through
+  `.git/info/exclude`, for GUI apps and wrappers. It persists until cleared.
+- **Global skills:** whatever each harness discovers outside aip. aip shows
+  them and can hide them per persona, but never moves or deletes them.
+
+## Success criteria
+
+- **SC1 — Any start path works.** For every harness × persona, `aip verify`
+  reports the persona's skills loaded and its hidden skills absent:
+  - in launch mode, for all three harnesses;
+  - in project mode, for Claude, and for Codex and Pi except "hide", which is
+    reported as a known limit, not a pass.
+- **SC2 — GUI apps.** `aip open PERSONA claude-desktop|codex-app DIR` writes
+  project mode and opens the deep link. A manual test on macOS confirms the app
+  session lists the persona's skills.
+- **SC3 — No global side effects.** Launch mode never writes to `~/.claude`,
+  `~/.codex`, `~/.agents` or `~/.pi`. A test snapshots those trees before and
+  after.
+- **SC4 — Nothing foreign is touched.** Links are created only where nothing
+  exists, or replace an aip link. Pruning removes only links into the library.
+  `settings.local.json` keeps every key and override aip did not set. `clear`
+  restores the pre-aip state byte for byte.
+- **SC5 — Visibility.** For each persona and harness, the app shows:
+  - every skill that will be in the catalog, with its source (library, global
+    or plugin);
+  - an always-on token estimate for each, and the total;
+  - live state from the harness probes, with any drift from the manifest
+    flagged.
+- **SC6 — Sync without ceremony.** Pull, commit and push run on explicit sync
+  and optionally on a timer, never inside a launch. A conflict can only occur
+  in human-readable TOML/Markdown, and the app shows it as a side-by-side
+  choice.
+- **SC7 — Install in one step.** Homebrew cask (macOS), AppImage + deb + rpm
+  (Linux) and winget (Windows), each built by CI from a tag. The CLI ships in
+  the same package. Node is not required at runtime.
+- **SC8 — Import from aip 0.x.** `aip import-v0` turns each 0.x profile into a
+  persona, moves `skills/` into the library (deduplicated by content hash) and
+  `AGENTS.md` into persona instructions, and reports anything it could not
+  carry over (native settings files).
+
+## Scope for the first release
+
+- CLI: `init`, `list`, `show`, `launch [--terminal]`, `project [--clear]`,
+  `open`, `verify`, `sync`, `skills add|update|remove`, `import-v0`.
+- App screens:
+  - **Library:** skills with cost, source and update state.
+  - **Personas:** checkbox editor with a live context budget per harness.
+  - **Launch:** persona × harness × folder picker, recent folders, terminal
+    vs GUI.
+  - **Machine:** detected harness versions, global skills, drift.
+- MCP servers for Claude (via `--mcp-config` / `.mcp.json`) and Codex (`-c`).
+
+## Boundaries
+
+**Always**
+
+- Treat each harness's own home as read-only from launch mode.
+- Probe with the real binaries, not by re-implementing discovery, whenever the
+  answer matters (SC1, SC5).
+- Keep the persona format harness-neutral. Harness-specific keys go only in
+  the passthrough tables.
+- Record owned project state (overrides aip set, links it made) so `clear` is
+  exact.
+
+**Ask first**
+
+- Any global write: a marked block in `~/.claude/settings.json` or
+  `~/.codex/config.toml`, or links in `~/.agents/skills`. This is the only way
+  to cover claude.ai-synced skills or GUI apps without a project folder.
+- Adding OpenCode, Gemini CLI or any fourth harness.
+- An embedded terminal (xterm.js + portable-pty) instead of launching the
+  user's own.
+- Code signing and notarization spend (Apple Developer Program, $99/yr).
+
+**Never**
+
+- Store or proxy Claude or ChatGPT credentials, or host conversations through
+  the Agent SDK on a subscription login.
+- Commit credentials, sessions, caches or generated files to the personas
+  repository.
+- Rebase or sync inside a harness launch.
+- Delete or overwrite a file or link aip did not create.
+
+## Resolved decisions
+
+1. **Skills for Claude ride in a generated inline plugin in launch mode**
+   (`aip-<persona>:<skill>` names), and in `.claude/skills` in project mode.
+   Symlinking into `~/.claude/skills` was rejected: it is global.
+2. **Codex carries a persona in `-c` flags, not profile files**, because
+   app-server rejects `--profile` and `-c` works for every entry point.
+3. **Pi hides global skills by `--no-skills` plus re-adding the kept ones**,
+   because no per-skill hide flag exists.
+4. **Terminal launch goes through the user's terminal:** `xdg-terminal-exec`
+   first on Linux with a fallback list, a `.command` file on macOS, and `wt` on
+   Windows, with an `AIP_TERMINAL` override.
+5. **Token cost is an estimate** (characters / 4) until a harness exposes real
+   numbers. `claude plugin details` reports projected token cost for plugins
+   and can calibrate it.
+
+## Open questions
+
+1. **Repository and name.** A new `code-ministry-ltd/aip-app` (or similar)
+   with the npm name moved at 2.0, or a `v2` branch here?
+2. **Pi trust in project mode.** Should `aip open` offer to trust the folder
+   for Pi, or only explain the limit?
+3. **Codex hide in project mode.** Is a marked global `[[skills.config]]` block
+   in `~/.codex/config.toml` (ask-first, above) acceptable while X3 stays
+   broken upstream, or should it be reported upstream only?
+4. **Windows.** Junctions avoid Developer Mode for skill links, but GUI deep
+   links and `wt` are untested. Is Windows in the first release, or a beta?
+5. **claude.ai / ChatGPT account skills.** Is showing them read-only, with a
+   link to the settings page, enough for 1.0?
+
+---
+
 # Spec: adopt an existing profiles repository on a fresh install (vNext)
 
 Living document — update before implementing a changed decision.

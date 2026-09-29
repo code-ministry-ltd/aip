@@ -1,0 +1,19 @@
+{
+  "name": "aipx-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway spike: persona overlays for Claude Code, Codex and Pi without swapping config homes",
+  "type": "module",
+  "bin": {
+    "aipx": "bin/aipx.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "smol-toml": "1.9.0"
+  }
+}

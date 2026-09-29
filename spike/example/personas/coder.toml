@@ -1,0 +1,11 @@
+description = "Everyday coding, lean context"
+skills = ["commit-messages"]
+inherit_global_skills = false
+
+[mcp_servers.fetch]
+command = "uvx"
+args = ["mcp-server-fetch"]
+
+# Also drop the skills that ship inside Claude Code itself.
+[claude.settings]
+disableBundledSkills = true
