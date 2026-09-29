@@ -332,8 +332,8 @@ this repository, its name, URL, issues and history.
 - An embedded terminal (xterm.js + portable-pty) instead of launching the
   user's own.
 - Code signing and notarization spend (Apple Developer Program, $99/yr;
-  Windows signing), for example once users report the macOS first-open steps
-  as a barrier.
+  Windows signing). The maintainer has already decided to pay for macOS
+  signing before 2.0 is shared publicly (decision 13); ask only about timing.
 - Adding a beta or nightly update channel.
 
 **Never**
@@ -413,7 +413,9 @@ this repository, its name, URL, issues and history.
     - no Homebrew cask, since Homebrew now disables unsigned casks.
 
     The CLI installed by script is not quarantined and needs no override.
-    Revisit signing if the first-open step proves a barrier.
+    Unsigned is for the development period, when the maintainer uses "Open
+    Anyway". Pay for signing and notarization before 2.0 is shared publicly.
+    Signing then enables a Homebrew cask and removes the first-open steps.
 
 ## Open questions
 
