@@ -52,11 +52,10 @@ explicit approval.*
 
 ## T35 — The 2.0 tree builds and tests on macOS and Linux
 
-Create `next` from `main`. The first commit removes the 0.x implementation
-(`aip.sh`, `aip.ps1`, installers, `bin/aip.js`, `tests/`, `extensions/`,
-`package*.json`) and moves `spike/README.md` findings to
-`docs/harness-findings.md`. The second commit adds the Cargo workspace
-(`crates/aip-core`, `crates/aip-cli`) and a CI workflow (plan D1, D8).
+Add the Cargo workspace (`crates/aip-core`, `crates/aip-cli`) and a CI
+workflow alongside 0.x (plan D0, D1), and copy the `spike/README.md` findings
+to `docs/harness-findings.md` (D8). Removing the 0.x implementation waits for
+the Phase 8 switch (D0).
 
 - [ ] `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and
   `cargo test --workspace` pass on `ubuntu-latest` and `macos-latest`.
@@ -591,8 +590,11 @@ launch a persona and take one update through their own channel.*
 
 ## T65 — 2.0.0 ships and 0.x is retired gracefully
 
-Tag the last 0.x release and create `v0` from it. Merge `next` into `main`,
-rewrite README and CHANGELOG, and tag `v2.0.0`.
+Tag the last 0.x release and create `v0` from it. On `main`, remove the 0.x
+implementation (`aip.sh`, `aip.ps1`, the 0.x installers, `bin/aip.js`, the
+bats and Pester suites, `extensions/`, `package*.json`, `spike/`) in one
+reviewable commit (plan D0). Then rewrite README and CHANGELOG, and tag
+`v2.0.0`.
 
 The maintainer does three things by hand:
 - runs `npm deprecate @code-ministry/aip "…"`, including the Windows note;
