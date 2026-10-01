@@ -1,0 +1,7 @@
+format = 1
+description = "Everyday coding"
+skills = ["commit-messages"]
+
+[mcp_servers.fetch]
+command = "uvx"
+args = ["mcp-server-fetch"]
