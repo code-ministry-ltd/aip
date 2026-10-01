@@ -1,0 +1,12 @@
+format = 1
+description = "Long-form writing"
+skills = ["prose", "citations"]
+
+# Appended to the system prompt (Claude, Pi).
+instructions = "writer.md"
+
+# Harness-specific extras, applied only with this persona:
+# [claude.settings]            # merged into the generated --settings file
+# model = "opus"
+# [pi]
+# args = ["-e", "npm:@someone/pi-extension"]

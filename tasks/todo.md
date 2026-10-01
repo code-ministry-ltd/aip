@@ -57,9 +57,9 @@ workflow alongside 0.x (plan D0, D1), and copy the `spike/README.md` findings
 to `docs/harness-findings.md` (D8). Removing the 0.x implementation waits for
 the Phase 8 switch (D0).
 
-- [ ] `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and
+- [x] `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and
   `cargo test --workspace` pass on `ubuntu-latest` and `macos-latest`.
-- [ ] `aip --version` prints the workspace version.
+- [x] `aip --version` prints the workspace version.
 - Verify: `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace`
 - Deps: T34 · Files: workspace root, `crates/`, `.github/workflows/`,
   `docs/harness-findings.md` · Size: M
@@ -69,10 +69,10 @@ the Phase 8 switch (D0).
 `aip-core` reads `library/skills/*/SKILL.md` and `personas/*.toml` (spec,
 "Concepts"). Port the spike's frontmatter and validation tests.
 
-- [ ] `format = 1` is required. A newer format is refused with "update aip".
-- [ ] An unknown top-level key is an error naming the file and the key. An
+- [x] `format = 1` is required. A newer format is refused with "update aip".
+- [x] An unknown top-level key is an error naming the file and the key. An
   unknown harness table (e.g. `[codex.config]`) loads with a warning.
-- [ ] A skill whose directory and `name` differ, a missing library skill, and
+- [x] A skill whose directory and `name` differ, a missing library skill, and
   a missing instructions file are errors naming the file.
 - Verify: `cargo test -p aip-core manifest library`
 - Deps: T35 · Files: `crates/aip-core/src/{manifest,library}.rs` · Size: M
@@ -85,9 +85,9 @@ Discover Claude global skills (`~/.claude/skills`, including
 token estimates (characters / 4). Build this as the `Machine` snapshot (plan
 D2).
 
-- [ ] A fixture HOME with user, synced and dot-directory skills yields the
+- [x] A fixture HOME with user, synced and dot-directory skills yields the
   expected names, sources and estimates for each harness.
-- [ ] `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR`, if set, are honoured as the
+- [x] `CLAUDE_CONFIG_DIR` and `PI_CODING_AGENT_DIR`, if set, are honoured as the
   harness would honour them.
 - Verify: `cargo test -p aip-core machine`
 - Deps: T36 · Files: `crates/aip-core/src/machine.rs` · Size: M
@@ -97,9 +97,9 @@ D2).
 Add CLI commands over T36–T37, with `--root` and `AIP_ROOT`. The default root
 is `~/agent-personas` (D6).
 
-- [ ] `aip init` creates the example library and personas in an empty root and
+- [x] `aip init` creates the example library and personas in an empty root and
   refuses a non-empty one.
-- [ ] `aip list` and `aip show` match `spike/bin/aipx.mjs` (from a `main`
+- [x] `aip list` and `aip show` match `spike/bin/aipx.mjs` (from a `main`
   checkout) for the same root and fixture HOME, apart from the documented
   "account" source label.
 - Verify: `cargo test -p aip-cli && cargo run -p aip-cli -- list --root "$(mktemp -d)/r"`
@@ -125,23 +125,23 @@ Project discovery uses three sources:
 `aip skills ls [--folder DIR] [--harness H] [--json]` prints the inventory,
 or one folder's per-harness stack.
 
-- [ ] A fixture HOME with a skill in every source, and two workspace projects
+- [x] A fixture HOME with a skill in every source, and two workspace projects
   (one nested under a parent folder with its own skills), lists every location
   exactly once, with scope, harnesses, source, read-only flag and cost.
-- [ ] Identical copies share a content hash and are flagged as duplicates;
+- [x] Identical copies share a content hash and are flagged as duplicates;
   same-name skills with different content are flagged as variants.
-- [ ] `--folder` on the nested project prints each harness's stack: everywhere,
+- [x] `--folder` on the nested project prints each harness's stack: everywhere,
   inherited parent layers (Pi: `.agents/skills` up to the Git root), and the
   folder itself.
-- [ ] Scanning never descends past the depth limit or outside workspace roots
+- [x] Scanning never descends past the depth limit or outside workspace roots
   and harness homes.
-- [ ] Only the keys of `~/.claude.json` `projects` are read. A fixture whose
+- [x] Only the keys of `~/.claude.json` `projects` are read. A fixture whose
   other values hold secrets proves they never reach the inventory or the logs.
-- [ ] Decoding `~/.claude/projects/` names (the fallback) resolves `-` to `/`,
+- [x] Decoding `~/.claude/projects/` names (the fallback) resolves `-` to `/`,
   `-`, `.` or a space only where that path exists. Fixtures:
   `skills-and-extensions`, `obsidian-md`, and a removed folder that gets
   skipped. It never opens a file inside those directories.
-- [ ] Filtering: the home folder is not listed as a project; `~/.claude` is
+- [x] Filtering: the home folder is not listed as a project; `~/.claude` is
   skipped; temporary folders are grouped under "Other"; a missing
   `/Volumes/…` path is listed as unavailable.
 - Verify: `cargo test -p aip-core inventory && cargo test -p aip-cli skills_ls`
