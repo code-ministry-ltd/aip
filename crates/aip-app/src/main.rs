@@ -134,6 +134,8 @@ pub fn handle_start(app: &tauri::AppHandle, start: &Start) {
 
 fn main() {
     let args: Vec<OsString> = std::env::args_os().collect();
+    // This binary has the picker, so file-manager menus offer "Choose…".
+    aip_core::integrations::set_picker_available();
     let start = match classify(&args) {
         Mode::Cli(argv) => std::process::exit(aip_cli::run(argv)),
         Mode::Say(s) => {
@@ -180,6 +182,8 @@ fn main() {
             commands::sync_resolve,
             commands::pick_context,
             commands::reveal,
+            commands::integrations,
+            commands::set_integration,
             commands::close_window,
         ])
         .setup(move |app| {
@@ -216,6 +220,12 @@ fn main() {
                     debug(format_args!("deep link: {url}"));
                     let url = url.to_string();
                     later(&handle, move |app| urls::handle(app, &url));
+                }
+            });
+            // Personas may have changed by hand or by another machine's sync.
+            std::thread::spawn(|| {
+                if let Err(e) = aip_core::integrations::refresh() {
+                    debug(format_args!("refreshing file-manager menus: {e:#}"));
                 }
             });
             if smoke {

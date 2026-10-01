@@ -62,6 +62,24 @@ pub enum Command {
     /// Turn aip 0.x profiles into personas
     #[command(name = "import-v0")]
     ImportV0(ImportArgs),
+    /// File-manager menus (Finder, Dolphin, Nautilus, Nemo): list, enable, disable
+    Integrations {
+        #[command(subcommand)]
+        action: Option<IntegrationsCommand>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IntegrationsCommand {
+    /// Install a file manager's "Open with aip" menu
+    Enable { name: String },
+    /// Remove the files aip installed for a file manager
+    Disable {
+        /// finder, dolphin, nautilus, nemo, or all
+        name: String,
+    },
+    /// Rewrite the installed menus (after personas change)
+    Refresh,
 }
 
 #[derive(Subcommand, Debug)]

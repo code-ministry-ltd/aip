@@ -43,6 +43,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Command::Sync(a) => manage_cmds::sync_cmd(&ctx.root, a),
         Command::Clone { url, dir } => manage_cmds::clone_cmd(&ctx.root, &url, dir),
         Command::ImportV0(a) => manage_cmds::import(&ctx.root, a),
+        Command::Integrations { action } => manage_cmds::integrations(&ctx.root, action),
         Command::Launch(a) => launch_cmds::launch(&ctx.root, a),
         Command::Verify(a) => launch_cmds::verify(&ctx.root, a),
         Command::Project(a) => launch_cmds::project(&ctx.root, a),

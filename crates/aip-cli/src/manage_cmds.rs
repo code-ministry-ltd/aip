@@ -1,7 +1,8 @@
 //! Resolving duplicates, the library from Git, personas, sync and import.
 
 use crate::output::tilde;
-use crate::{ImportArgs, PersonaCommand, SkillsCommand, SyncArgs};
+use crate::{ImportArgs, IntegrationsCommand, PersonaCommand, SkillsCommand, SyncArgs};
+use aip_core::integrations::{self, Kind};
 use aip_core::inventory::{self, Discovery, Inventory};
 use aip_core::ops::{self, OpPlan};
 use aip_core::sync::{self, Outcome, Side};
@@ -321,4 +322,42 @@ pub fn import(root: &Path, a: ImportArgs) -> Result<i32> {
         }
     }
     Ok(code)
+}
+
+fn kind(name: &str) -> Result<Kind> {
+    Kind::parse(name).ok_or_else(|| {
+        anyhow::anyhow!("unknown file manager '{name}' (finder, dolphin, nautilus or nemo)")
+    })
+}
+
+pub fn integrations(root: &Path, action: Option<IntegrationsCommand>) -> Result<i32> {
+    match action {
+        None => {
+            let all = integrations::status();
+            for s in &all {
+                let state = match (s.enabled, s.available) {
+                    (true, _) => "on ",
+                    (false, true) => "off",
+                    (false, false) => "n/a",
+                };
+                println!("{state}  {:<9} {:<26} {}", s.name, s.label, s.note);
+            }
+            println!("\nTurn one on with: aip integrations enable NAME");
+        }
+        Some(IntegrationsCommand::Enable { name }) => {
+            println!("{}", integrations::enable(kind(&name)?, root)?)
+        }
+        Some(IntegrationsCommand::Disable { name }) if name == "all" => {
+            integrations::disable_all()?;
+            println!("removed every file-manager menu aip installed");
+        }
+        Some(IntegrationsCommand::Disable { name }) => {
+            println!("{}", integrations::disable(kind(&name)?)?)
+        }
+        Some(IntegrationsCommand::Refresh) => {
+            integrations::refresh()?;
+            println!("menus rewritten");
+        }
+    }
+    Ok(0)
 }

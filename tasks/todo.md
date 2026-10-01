@@ -482,10 +482,16 @@ not register for the unsigned app, `aip integrations enable finder` installs
 a generated Quick Action in `~/Library/Services` that opens
 `aip://pick?dir=…`.
 
+*Built:* the Quick Action only. An NSServices entry in the app's own
+Info.plist needs a native services provider, which Tauri does not expose, so
+`aip integrations enable finder` (or the toggle in This machine) installs
+`~/Library/Services/Open with aip.workflow`
+(`crates/aip-core/src/integrations/finder.rs`).
+
 - [ ] Manual, on the maintainer's Mac: right-clicking a folder in Finder shows
   "Open with aip…" (under Services or Quick Actions) and opens the picker on
   that folder.
-- [ ] The generated Quick Action matches its golden file, and `disable`
+- [x] The generated Quick Action matches its golden file, and `disable`
   removes it.
 - Verify: `cargo test -p aip-core integrations::finder` plus the manual check
 - Deps: T57 · Files: `crates/aip-app/Info.plist`, `crates/aip-core/src/integrations/finder.rs` · Size: M
@@ -504,11 +510,15 @@ Add `aip integrations enable|disable dolphin|nautilus|nemo`:
 The menus are regenerated whenever personas change, and removed by `disable`
 and on uninstall.
 
-- [ ] Golden-file tests for each template, including folder paths with spaces
-  and quotes.
-- [ ] Adding or removing a persona regenerates the Dolphin and Nemo files and
+- [x] Golden-file tests for each template, including folder paths with spaces
+  and quotes. (Golden files in `crates/aip-core/src/integrations/golden/`;
+  Exec quoting round-trips, and a generated Nautilus script is run on an
+  awkward folder.)
+- [x] Adding or removing a persona regenerates the Dolphin and Nemo files and
   the Nautilus scripts. The Nautilus extension reads personas live.
-- [ ] `disable` removes every file aip installed, and nothing else.
+  (Regenerated after every journalled change, undo, sync that pulls, app
+  start, and `aip integrations refresh`.)
+- [x] `disable` removes every file aip installed, and nothing else.
 - [ ] Manual, in KDE Plasma 6, GNOME and Cinnamon VMs: right-click a folder,
   and launch Claude and Pi with a chosen persona.
 - Verify: `cargo test -p aip-core integrations` plus the manual checks

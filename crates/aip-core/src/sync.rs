@@ -130,6 +130,15 @@ fn show(root: &Path, spec: &str) -> Option<String> {
 
 /// Commit local changes, then integrate with `origin` and push.
 pub fn sync(root: &Path) -> Result<Outcome> {
+    let o = sync_repo(root)?;
+    if matches!(o, Outcome::Pulled | Outcome::Merged) {
+        // New or removed personas show up in file-manager menus.
+        let _ = crate::integrations::refresh();
+    }
+    Ok(o)
+}
+
+fn sync_repo(root: &Path) -> Result<Outcome> {
     if !root.join(".git").exists() {
         bail!(
             "{} is not a Git repository; run 'aip init' first",
@@ -200,6 +209,12 @@ pub fn sync(root: &Path) -> Result<Outcome> {
 
 /// Finish a conflicted sync by taking one side per file, then push.
 pub fn resolve(root: &Path, choices: &[(String, Side)]) -> Result<Outcome> {
+    let o = resolve_conflict(root, choices)?;
+    let _ = crate::integrations::refresh();
+    Ok(o)
+}
+
+fn resolve_conflict(root: &Path, choices: &[(String, Side)]) -> Result<Outcome> {
     let b = branch(root)?;
     let remote_ref = format!("origin/{b}");
     let merged = git_raw(

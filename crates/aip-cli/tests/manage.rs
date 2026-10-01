@@ -151,3 +151,50 @@ fn rm_by_path_works_in_a_folder_aip_has_not_discovered() {
     h.ok(&["skills", "undo", "--yes"]);
     assert!(copy.join("SKILL.md").exists());
 }
+
+#[test]
+fn integrations_follow_personas_and_disable_cleanly() {
+    let h = Home::new();
+    h.ok(&["init"]);
+    let actions = h.path(".local/share/nemo/actions");
+    fs::create_dir_all(&actions).unwrap();
+    fs::write(actions.join("theirs.nemo_action"), "[Nemo Action]\n").unwrap();
+    let count = || {
+        fs::read_dir(&actions)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("aip-")
+            })
+            .count()
+    };
+
+    h.ok(&["integrations", "enable", "nemo"]);
+    // The command-line binary has no picker: (none, coder, writer) × 3 targets.
+    assert_eq!(count(), 9);
+    assert!(h.ok(&["integrations"]).contains("on   nemo"));
+
+    // A persona added by hand appears on refresh...
+    h.write(
+        "agent-personas/personas/reviewer.toml",
+        "format = 1\nskills = []\n",
+    );
+    h.ok(&["integrations", "refresh"]);
+    assert!(actions.join("aip-reviewer-pi.nemo_action").exists());
+    // ...and a removed one goes with the next change made through aip.
+    fs::remove_file(h.path("agent-personas/personas/reviewer.toml")).unwrap();
+    h.ok(&["persona", "add", "coder", "prose", "--yes"]);
+    assert!(!actions.join("aip-reviewer-pi.nemo_action").exists());
+    assert_eq!(count(), 9);
+
+    h.ok(&["integrations", "disable", "all"]);
+    assert_eq!(count(), 0);
+    assert!(actions.join("theirs.nemo_action").exists());
+    assert!(!h
+        .run(&["integrations", "enable", "explorer"])
+        .status
+        .success());
+}
