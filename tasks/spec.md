@@ -618,27 +618,28 @@ this repository, its name, URL, issues and history.
       skills.
 
 17. **Claude Code projects come from its own records, read for folder paths
-    only (2026-10-01).**
-    - `~/.claude/projects/` has one directory per folder Claude Code has
-      been used in. It is named after the path with `/`, `.` and other
-      characters replaced by `-`, for example
-      `-Users-jim-Documents-obsidian-md-Notes-Tech-AI-bible-skills` (confirmed
-      on the maintainer's Mac).
-    - The encoding is lossy, so aip decodes a name by walking the disk from
-      `/`. At each `-` it tries `/`, `-`, `.` and a space, and keeps the
-      readings that exist. A name with no existing reading is skipped; one
-      with several is listed once per reading.
-    - The exact paths in the keys of `~/.claude.json` `projects` take
-      precedence when present.
-    - aip reads only directory names and those keys. It never opens session
-      files or other values.
+    only (2026-10-01; confirmed on the maintainer's Mac).**
+    - **Primary:** the keys of `~/.claude.json` `projects`, which are exact
+      absolute paths. There were 24 on the maintainer's Mac.
+    - **Fallback:** the directory names in `~/.claude/projects/`, used only
+      when a folder is missing from the keys. There were 6 there. The names
+      are the path with `/` (and other characters) turned into `-`, so the
+      encoding is lossy. aip decodes a name by walking the disk, trying `/`,
+      `-`, `.` and a space at each `-`, and keeps only readings that exist.
+    - **Filtering:**
+      - the home folder is not a project, since its `.claude/skills` *is* the
+        global set;
+      - `~/.claude` itself is skipped;
+      - temporary folders (`/tmp`, `/private/tmp`, `/var/folders`) are shown
+        collapsed under "Other";
+      - folders that do not exist right now, such as an unmounted
+        `/Volumes/…`, are shown as unavailable, never treated as deleted.
+    - aip reads only those keys and directory names. It never reads other
+      values in `~/.claude.json` or opens session files.
 
 ## Open questions
 
-1. **Exact project paths from `~/.claude.json`.** Confirm on the maintainer's
-   Mac that its `projects` keys list the same folders exactly (decision 17).
-   Until then, the decoded `~/.claude/projects/` names are the only Claude
-   source.
+None. Decision 17 closed the last one on 2026-10-01.
 
 ## Later: Codex (after 2.0)
 
