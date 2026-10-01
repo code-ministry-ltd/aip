@@ -118,8 +118,9 @@ daily, CLI first:
     more.
 
 - **D10 — every skill operation is plan, preview, apply, journal.** Delete,
-  move, copy, collect and add-to-persona each produce a plan that the CLI
-  prints and the app draws. Applying a plan writes a journal entry first:
+  copy to library, and add to or remove from a persona each produce a plan
+  that the CLI prints and the app draws. The model leaves room for move and
+  collect after 2.0. Applying a plan writes a journal entry first:
   - the operation;
   - a copy of anything it will overwrite, kept in the D6 state directory;
   - the Trash location of anything it deletes.
@@ -257,13 +258,13 @@ now, not the spike's 0.85).*
 
 ### Phase 4 — skill operations, library management, sync and migration from 0.x
 
-1. **`aip skills mv|cp|rm|collect|undo` manage skills anywhere, safely (D10,
-   SC13)**
+1. **`aip skills rm|cp|diff|undo` and `aip persona add|remove` resolve
+   duplicates safely (D10, SC13)**
    - Every operation prints its plan and asks; `--yes` is for scripts.
    - Deletes go to the system Trash (`trash` crate), and overwrites are copied
      into the journal first.
-   - `collect` gathers a selection into the library: identical copies merge,
-     and differing ones show a diff and ask.
+   - `cp` copies only into the library, asking for a new name on a clash.
+     `diff` compares two copies.
    - Read-only sources refuse with their reason and offer `cp` to the library.
    - `undo` restores the previous state byte for byte, and is tested for every
      operation.
@@ -314,9 +315,11 @@ on a second machine, which then runs a synced persona.*
      with the maintainer as clickable mock-ups on real inventory data from
      Phase 1.
 
-3. **Managing in the skill manager (SC13)**
-   - Drag and drop between scopes, and right-click actions: delete, move,
-     copy, collect into library, add to persona, reveal in file manager.
+3. **Resolving duplicates in the skill manager and the launch preview
+   (SC13)**
+   - Right-click actions: delete a copy, copy into the library, compare, add
+     to or remove from a persona, reveal in file manager.
+   - The same actions appear on flagged rows in the launch preview.
    - Each one shows the D10 preview and applies on confirmation.
    - Undo, plus a history panel.
 
