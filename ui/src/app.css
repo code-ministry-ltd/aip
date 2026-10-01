@@ -1,0 +1,212 @@
+/* aip design tokens: warm orange and amber from the app's artwork, a deep
+   navy ink, and cream paper. Light by default, dark when the system is. */
+:root {
+  --paper: #fbf6ec;
+  --surface: #ffffff;
+  --surface-2: #f4ecdd;
+  --line: #e6dccb;
+  --ink: #1c2230;
+  --ink-2: #4a5263;
+  --ink-3: #7b8394;
+  --accent: #e0661b;
+  --accent-ink: #ffffff;
+  --accent-soft: #fde6d4;
+  --amber: #b97a06;
+  --amber-soft: #fbefcf;
+  --red: #c2412d;
+  --red-soft: #fbe2dc;
+  --green: #2f7d4f;
+  --green-soft: #ddf1e4;
+  --claude: #c96a42;
+  --pi: #3d6fb6;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(28, 34, 48, 0.06), 0 4px 16px rgba(28, 34, 48, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Ubuntu, Cantarell, 'Noto Sans', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #141922;
+    --surface: #1c2230;
+    --surface-2: #232b3b;
+    --line: #2e3748;
+    --ink: #efe8da;
+    --ink-2: #c2bba9;
+    --ink-3: #8d8a80;
+    --accent: #f07a2e;
+    --accent-soft: #3a2618;
+    --amber: #e9b44c;
+    --amber-soft: #3a3018;
+    --red: #ef7a65;
+    --red-soft: #3c211d;
+    --green: #6cc492;
+    --green-soft: #1b3326;
+    --claude: #e39272;
+    --pi: #7ea6e6;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 22px;
+}
+h2 {
+  font-size: 16px;
+}
+h3 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 6px 12px;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+button:hover {
+  border-color: var(--ink-3);
+}
+button:active {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+button.primary:hover {
+  filter: brightness(1.05);
+}
+button.ghost {
+  border-color: transparent;
+  background: transparent;
+}
+button.ghost:hover {
+  background: var(--surface-2);
+}
+button.danger {
+  color: var(--red);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.badge.claude {
+  background: color-mix(in srgb, var(--claude) 16%, transparent);
+  color: var(--claude);
+}
+.badge.pi {
+  background: color-mix(in srgb, var(--pi) 16%, transparent);
+  color: var(--pi);
+}
+.badge.warn {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+.badge.bad {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.badge.good {
+  background: var(--green-soft);
+  color: var(--green);
+}
+.badge.ro {
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--ink-3);
+}

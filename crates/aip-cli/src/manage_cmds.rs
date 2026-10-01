@@ -76,7 +76,12 @@ pub fn skills(root: &Path, cmd: SkillsCommand) -> Result<i32> {
     match cmd {
         SkillsCommand::Ls(_) => unreachable!("handled by commands::skills_ls"),
         SkillsCommand::Rm { skill, yes } => {
-            let inv = inventory(root)?;
+            let mut inv = inventory(root)?;
+            // A path into a folder aip has not discovered still works.
+            if let Ok(p) = std::fs::canonicalize(&skill) {
+                let d = Discovery::from_env(Some(root.to_path_buf()));
+                inventory::include_project_of(&mut inv, &d, &p);
+            }
             let dir = resolve_skill(&inv, &skill, false)?;
             run_plan(&ops::plan_rm(&inv, &dir)?, yes)
         }

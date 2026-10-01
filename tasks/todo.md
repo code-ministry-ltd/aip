@@ -386,8 +386,10 @@ Add `crates/aip-app` (Tauri 2, Svelte 5 + Vite; D1, D7). Its binary calls
 commands wrap `aip-core`; the webview has no fs or shell plugin. Add an Xvfb
 smoke test on Linux, and document `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 
-- [ ] `aip-app list` prints the same output as `aip list`.
-- [ ] The Linux smoke test opens the window, calls one command and exits 0.
+- [x] `aip-app list` prints the same output as `aip list`.
+- [x] The Linux smoke test opens the window, calls one command and exits 0.
+  (`ci/scripts/app-smoke.sh`; the window must be built with
+  `--features custom-protocol` to serve `ui/dist`.)
 - Verify: `cargo test -p aip-app && xvfb-run cargo run -p aip-app -- --smoke-test`
 - Deps: T52 · Files: `crates/aip-app/`, `ui/` · Size: L
 
@@ -405,9 +407,11 @@ review them with the maintainer. Then build:
   settings link.
 
 - [ ] The mock-ups are approved by the maintainer and kept in `docs/design/`.
-- [ ] Component tests render a fixture inventory with one lane per harness and
+  (Screens are in `docs/design/README.md`; approval pending.)
+- [x] Component tests render a fixture inventory with one lane per harness and
   every source type.
-- [ ] Folder-view totals equal `aip skills ls --folder` for the same fixture.
+- [x] Folder-view totals equal `aip skills ls --folder` for the same fixture.
+  (Both show `inventory::stack`'s total; the UI test checks it displays it.)
 - Verify: `npm --prefix ui test && cargo test -p aip-app`
 - Deps: T53, T39 · Files: `ui/src/routes/manager/`, `docs/design/` · Size: L
 
@@ -419,11 +423,11 @@ review them with the maintainer. Then build:
 - Each action shows the D10 preview and applies on confirmation.
 - Undo, and a history panel.
 
-- [ ] Every action calls the same core operation as its CLI command (asserted
+- [x] Every action calls the same core operation as its CLI command (asserted
   with a fake core).
-- [ ] Cancelling a preview changes nothing. Confirming shows exactly the
+- [x] Cancelling a preview changes nothing. Confirming shows exactly the
   previewed changes.
-- [ ] End to end in a temporary HOME: delete a project copy that duplicates a
+- [x] End to end in a temporary HOME: delete a project copy that duplicates a
   persona skill, and the preview no longer flags it. Then undo restores it.
 - Verify: `npm --prefix ui test && cargo test -p aip-app manage`
 - Deps: T54, T49 · Files: `ui/src/routes/manager/`, `crates/aip-app/src/commands.rs` · Size: L
@@ -434,9 +438,9 @@ A checkbox editor per harness, with the always-on token total updating live.
 Writes go through `aip-core` using `toml_edit`, so comments and key order
 survive.
 
-- [ ] Toggling a skill and saving produces a one-line diff in a commented
-  fixture persona.
-- [ ] The budget total equals `aip show` for the same persona.
+- [x] Toggling a skill and saving produces a one-line diff in a commented
+  fixture persona. (`ops::plan_persona_set`; it lives in `ops.rs`.)
+- [x] The budget total equals `aip show` for the same persona.
 - Verify: `cargo test -p aip-core persona_edit && npm --prefix ui test`
 - Deps: T55 · Files: `crates/aip-core/src/persona_edit.rs`, `ui/src/routes/personas/` · Size: M
 
@@ -456,11 +460,11 @@ survive.
   - sync status, the opt-in timer, and a conflict view with both sides;
   - the integration toggles used in Phase 6.
 
-- [ ] Every launch path calls the core `launch` (asserted with a fake core),
+- [x] Every launch path calls the core `launch` (asserted with a fake core),
   and `--dry-run` URLs print the planned command.
-- [ ] `xdg-open 'aip://pick?dir=…'` opens the picker on that folder, on Linux
+- [x] `xdg-open 'aip://pick?dir=…'` opens the picker on that folder, on Linux
   CI under Xvfb.
-- [ ] The picker can be driven with the keyboard alone, in either order.
+- [x] The picker can be driven with the keyboard alone, in either order.
 - Verify: `npm --prefix ui test && cargo test -p aip-app launch`
 - Deps: T56 · Files: `ui/src/routes/{launch,machine}/`, `crates/aip-app/src/{commands,urls}.rs` · Size: L
 

@@ -1,0 +1,34 @@
+[package]
+name = "aip-app"
+description = "The aip desktop app: skills, personas and launching"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "aip-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+aip-core = { path = "../aip-core" }
+aip-cli = { path = "../aip-cli" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-single-instance = "2"
+
+[features]
+# Serve the built UI (ui/dist) from the binary instead of the Vite dev server.
+# `tauri build` turns this on; plain `cargo build` needs `--features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -221,6 +221,20 @@ pub fn expand_home(p: &Path, home: &Path) -> PathBuf {
 pub struct Settings {
     #[serde(default)]
     pub workspaces: Vec<PathBuf>,
+    /// The app's opt-in sync timer (spec SC7); `None` means manual sync only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_interval_minutes: Option<u32>,
+    /// Check for app updates on start (direct-download builds; spec decision 7).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub update_checks: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 impl Settings {
@@ -232,7 +246,16 @@ impl Settings {
         fs::read_to_string(Settings::path(state_dir))
             .ok()
             .and_then(|t| toml::from_str(&t).ok())
-            .unwrap_or_default()
+            .unwrap_or_else(|| Settings {
+                update_checks: true,
+                ..Default::default()
+            })
+    }
+
+    pub fn save(&self, state_dir: &Path) -> Result<()> {
+        fs::create_dir_all(state_dir)?;
+        fs::write(Settings::path(state_dir), toml::to_string(self)?)?;
+        Ok(())
     }
 }
 
@@ -603,32 +626,59 @@ pub fn build(d: &Discovery) -> Result<Inventory> {
     }
     let projects = discover_projects(d);
     for p in projects.iter().filter(|p| p.available && !p.other) {
-        let scope = Scope::Folder {
-            path: p.path.clone(),
-        };
-        let real = d.real_path(&p.path);
-        for h in Harness::ALL {
-            for root in project_skill_roots(&real, h, true) {
-                for mut loc in locations_in(&root, 1, &scope, Source::Project, &[h]) {
-                    // The same folder read by both harnesses (none today) would merge here.
-                    if let Some(existing) =
-                        locations.iter_mut().find(|l| l.skill.dir == loc.skill.dir)
-                    {
-                        if !existing.harnesses.contains(&h) {
-                            existing.harnesses.push(h);
-                        }
-                        continue;
-                    }
-                    loc.harnesses = vec![h];
-                    locations.push(loc);
-                }
-            }
-        }
+        add_project_locations(&mut locations, d, &p.path);
     }
     Ok(Inventory {
         locations,
         projects,
     })
+}
+
+fn add_project_locations(locations: &mut Vec<Location>, d: &Discovery, path: &Path) {
+    let scope = Scope::Folder {
+        path: path.to_path_buf(),
+    };
+    let real = d.real_path(path);
+    for h in Harness::ALL {
+        for root in project_skill_roots(&real, h, true) {
+            for mut loc in locations_in(&root, 1, &scope, Source::Project, &[h]) {
+                // The same folder read by both harnesses (none today) would merge here.
+                if let Some(existing) = locations.iter_mut().find(|l| l.skill.dir == loc.skill.dir)
+                {
+                    if !existing.harnesses.contains(&h) {
+                        existing.harnesses.push(h);
+                    }
+                    continue;
+                }
+                loc.harnesses = vec![h];
+                locations.push(loc);
+            }
+        }
+    }
+}
+
+/// The project a project skill lives in, for `<project>/.claude/skills/<name>`,
+/// `<project>/.agents/skills/<name>` or `<project>/.pi/skills/<name>`.
+pub fn project_of_skill(dir: &Path) -> Option<PathBuf> {
+    let skills = dir.parent()?;
+    let dot = skills.parent()?;
+    let named = |p: &Path, n: &str| p.file_name().is_some_and(|f| f == n);
+    (named(skills, "skills") && [".claude", ".agents", ".pi"].iter().any(|n| named(dot, n)))
+        .then(|| dot.parent().map(Path::to_path_buf))
+        .flatten()
+}
+
+/// Make sure the project holding `dir` is in the inventory, so skills in
+/// folders aip has not discovered (a folder picked by hand, a temporary
+/// folder) can still be managed.
+pub fn include_project_of(inv: &mut Inventory, d: &Discovery, dir: &Path) {
+    let Some(project) = project_of_skill(dir) else {
+        return;
+    };
+    if inv.locations.iter().any(|l| l.skill.dir == dir) {
+        return;
+    }
+    add_project_locations(&mut inv.locations, d, &project);
 }
 
 /// Duplicate groups across the whole inventory: same bare name in more than
@@ -690,6 +740,8 @@ pub struct Row {
     pub shadowed: bool,
     /// Every copy has the same content.
     pub identical: bool,
+    /// What happens, in plain words (see [`Row::outcome`]).
+    pub outcome: String,
 }
 
 impl Row {
@@ -931,7 +983,11 @@ pub fn stack(
             shadowed: out.iter().any(|c| !c.loads) && out.len() > 1,
             identical,
             copies: out,
+            outcome: String::new(),
         });
+    }
+    for r in rows.iter_mut() {
+        r.outcome = r.outcome(&layers);
     }
 
     Stack {
@@ -946,6 +1002,25 @@ pub fn stack(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn project_of_skill_recognises_project_skill_folders() {
+        let p = |s: &str| project_of_skill(Path::new(s));
+        assert_eq!(
+            p("/w/shop/.claude/skills/review"),
+            Some(PathBuf::from("/w/shop"))
+        );
+        assert_eq!(
+            p("/w/shop/.agents/skills/review"),
+            Some(PathBuf::from("/w/shop"))
+        );
+        assert_eq!(
+            p("/w/shop/.pi/skills/review"),
+            Some(PathBuf::from("/w/shop"))
+        );
+        assert_eq!(p("/w/shop/skills/review"), None);
+        assert_eq!(p("/w/shop/.claude/agents/review"), None);
+    }
+
     use super::*;
     use crate::library::tests::{skill_md, write};
     use crate::library::{load_library, load_persona};
