@@ -617,12 +617,28 @@ this repository, its name, URL, issues and history.
       clear it, and the launch preview of a plain launch there shows those
       skills.
 
+17. **Claude Code projects come from its own records, read for folder paths
+    only (2026-10-01).**
+    - `~/.claude/projects/` has one directory per folder Claude Code has
+      been used in. It is named after the path with `/`, `.` and other
+      characters replaced by `-`, for example
+      `-Users-jim-Documents-obsidian-md-Notes-Tech-AI-bible-skills` (confirmed
+      on the maintainer's Mac).
+    - The encoding is lossy, so aip decodes a name by walking the disk from
+      `/`. At each `-` it tries `/`, `-`, `.` and a space, and keeps the
+      readings that exist. A name with no existing reading is skipped; one
+      with several is listed once per reading.
+    - The exact paths in the keys of `~/.claude.json` `projects` take
+      precedence when present.
+    - aip reads only directory names and those keys. It never opens session
+      files or other values.
+
 ## Open questions
 
-1. **Where Claude Code records projects.** Confirm on a real machine which
-   per-project record (for example in `~/.claude.json` or `~/.claude/projects/`)
-   lists the folders it has been used in, and read only the folder paths from
-   it.
+1. **Exact project paths from `~/.claude.json`.** Confirm on the maintainer's
+   Mac that its `projects` keys list the same folders exactly (decision 17).
+   Until then, the decoded `~/.claude/projects/` names are the only Claude
+   source.
 
 ## Later: Codex (after 2.0)
 

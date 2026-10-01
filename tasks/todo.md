@@ -120,7 +120,8 @@ Project discovery uses three sources:
 - workspace roots set in aip's settings, scanned to depth 4;
 - folders aip has launched in;
 - harness per-folder records: Pi's per-folder sessions, and Claude Code's
-  record once spec open question 2 is confirmed.
+  `~/.claude/projects/` names decoded against the disk, preferring the exact
+  `~/.claude.json` `projects` keys when present (spec decision 17).
 
 `aip skills ls [--folder DIR] [--harness H] [--json]` prints the inventory,
 or one folder's per-harness stack.
@@ -135,6 +136,10 @@ or one folder's per-harness stack.
   folder itself.
 - [ ] Scanning never descends past the depth limit or outside workspace roots
   and harness homes.
+- [ ] Decoding `~/.claude/projects/` names resolves `-` to `/`, `-`, `.` or a
+  space only where that path exists (fixtures: `skills-and-extensions`,
+  `obsidian.md`, a removed folder that gets skipped). It never opens a file
+  inside those directories.
 - Verify: `cargo test -p aip-core inventory && cargo test -p aip-cli skills_ls`
 - Deps: T38 · Files: `crates/aip-core/src/inventory.rs`, `crates/aip-cli/src/skills.rs` · Size: L
 
