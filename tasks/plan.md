@@ -186,8 +186,8 @@ maintainer's explicit approval, as for every 0.x release.*
      - project folders.
    - Project discovery: workspace roots (limited depth), aip's launch
      history, and harness per-folder records. Those are Pi's sessions, and
-     Claude Code's `~/.claude/projects/` names decoded against the disk,
-     preferring the exact `~/.claude.json` keys (spec decision 17).
+     Claude Code's `~/.claude.json` `projects` keys, with
+     `~/.claude/projects/` names as a fallback (spec decision 17).
    - `aip skills ls --folder DIR` prints the per-harness folder stack.
    - Duplicates (same hash) and variants (same name) are flagged.
 
