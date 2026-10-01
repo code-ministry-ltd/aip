@@ -32,7 +32,6 @@ login, which Pi's docs describe as officially endorsed by OpenAI (Codex for
 OSS). Reasons for deferring:
 
 - Codex needs project writes even in launch mode.
-- The Codex app cannot hide global skills.
 - Codex's config surface changed most during the spike (profile v2, an
   app-server that rejects `--profile`, ignored project skill toggles).
 - Two harnesses keep the test matrix to 2 harnesses × 2 modes × 2 operating
@@ -40,13 +39,13 @@ OSS). Reasons for deferring:
 
 ## Project facts (verified; see `spike/README.md`)
 
-- **Both 2.0 harnesses can add or hide skills per session on top of their
-  normal home:**
-  - Claude Code: `--plugin-dir`, `--settings` (`skillOverrides`,
-    `enabledPlugins`, `disableBundledSkills`), `--mcp-config`,
-    `--append-system-prompt-file`.
-  - Pi: `--no-skills`, `--skill`, `-e`, `--append-system-prompt` (accepts a
-    file path).
+- **Both 2.0 harnesses can add skills per session on top of their normal
+  home:**
+  - Claude Code: `--plugin-dir`, `--settings` (for example `enabledPlugins`),
+    `--mcp-config`, `--append-system-prompt-file`.
+  - Pi: `--skill`, `-e`, `--append-system-prompt` (accepts a file path).
+  (The spike also verified ways to *hide* skills. Personas are additive
+  (decision 2), so 2.0 does not use them.)
 - **The same result also works per project**, which is the only lever GUI apps
   expose:
   - Claude reads `.claude/skills` and `.claude/settings.local.json`.
@@ -61,16 +60,14 @@ OSS). Reasons for deferring:
   Only the interactive TUI asks. `pi --mode rpc`, which Paseo and most Pi GUIs
   spawn, treats "ask" as untrusted. So a folder must be trusted once (in the
   TUI, or via `defaultProjectTrust`) before project mode works in a GUI.
-- **Pi's project settings cannot exclude global skills**, so in project mode
-  Pi can add skills but not hide global ones.
 - **Claude desktop opens on a folder** via the `claude://code/new?folder=` deep
   link, which carries no settings.
 - **claude.ai and Cowork skills are account settings with no API.** Anthropic's
   Skills API explicitly does not reach claude.ai.
 - **Claude Code syncs those account skills to disk.** They land in
   `~/.claude/skills/synced/<id>/<skill>/` (unless `syncClaudeAiSkills` is
-  `false`) and load like any global skill, so `skillOverrides` can hide them
-  per persona. Only the claude.ai and desktop chat apps are out of reach.
+  `false`) and load like any global skill: always on, in every persona. Only
+  the claude.ai and desktop chat apps are out of reach.
 - **Unsigned macOS apps need a one-time manual override.**
   - Since macOS 15 (Sequoia), Control-click → Open no longer bypasses
     Gatekeeper. The route is System Settings → Privacy & Security →
@@ -90,8 +87,7 @@ OSS). Reasons for deferring:
 ## Assumptions (approved 2026-09-29)
 
 1. **The skill library lives outside every discovery root.** Plain harness
-   launches load none of it. Personas add skills, and hiding global skills is
-   the exception.
+   launches load none of it. Personas only add skills (decision 2).
 2. **Launch, never host.** The app starts the unmodified `claude` and `pi`
    binaries (inline, in a terminal, or via deep link). It never embeds the
    Agent SDK or Pi's SDK for conversations. The probes used by `verify` are the
@@ -116,7 +112,6 @@ sync to, on Linux and macOS. Windows follows in a later 2.x release.
 - **Persona:** `personas/<name>.toml`, containing:
   - `description`
   - `skills` (library names)
-  - `exclude_skills` / `inherit_global_skills`
   - `instructions` (a file)
   - `mcp_servers`
   - harness passthrough tables: `[claude.settings]`, `[pi] args`
@@ -126,17 +121,19 @@ sync to, on Linux and macOS. Windows follows in a later 2.x release.
   project changed.
 - **Project mode:** links plus owned keys inside one folder, excluded through
   `.git/info/exclude`, for GUI apps and wrappers. It persists until cleared.
-- **Global skills:** whatever each harness discovers outside aip. aip shows
-  them and can hide them per persona, but never moves or deletes them.
+- **Global skills:** whatever each harness discovers outside aip, such as
+  `~/.claude/skills`, `~/.agents/skills`, Claude's synced account skills and
+  bundled skills.
+  - They are on in every persona: the user's "always" set.
+  - aip shows them, with their cost, in every persona's catalog, but never
+    hides, moves or deletes them.
+  - A user who wants personas to be the whole picture keeps no global skills.
 
 ## Success criteria
 
-- **SC1 — Any start path works.** For both harnesses × every persona,
-  `aip verify` reports the persona's skills loaded and its hidden skills
-  absent:
-  - in launch mode, for Claude and Pi;
-  - in project mode, for Claude, and for Pi except "hide", which is reported as
-    a known limit, not a pass.
+- **SC1 — Any start path works.** For both harnesses × every persona × both
+  modes, `aip verify` reports every persona skill loaded and every global skill
+  still loaded. Additive means nothing aip did removed anything.
 - **SC2 — Claude desktop.** `aip open PERSONA claude-desktop DIR` writes
   project mode and opens the deep link. A manual test on macOS confirms the
   Code tab lists the persona's skills.
@@ -356,8 +353,16 @@ this repository, its name, URL, issues and history.
 1. **Skills for Claude ride in a generated inline plugin in launch mode**
    (`aip-<persona>:<skill>` names), and in `.claude/skills` in project mode.
    Symlinking into `~/.claude/skills` was rejected: it is global.
-2. **Pi hides global skills by `--no-skills` plus re-adding the kept ones**,
-   because no per-skill hide flag exists.
+2. **Personas are additive (2026-10-01).** A persona adds skills, plugins,
+   MCP servers and instructions; it never hides anything.
+   - Global skills are the user's "always" set and stay on in every persona.
+     A user who wants personas to be the whole picture keeps no global skills.
+   - This drops `exclude_skills` and `inherit_global_skills`.
+   - Pi needs no `--no-skills`, and project mode now has the same capability as
+     launch mode for both harnesses.
+   - Anything a user puts in the `[claude.settings]` passthrough is their own
+     explicit choice; aip itself never generates hiding settings
+     (`skillOverrides`, `disableBundledSkills`, `syncClaudeAiSkills`).
 3. **Codex is deferred to a later 2.x release.** Pi's Codex login covers the
    models. The persona format and planner stay harness-neutral so Codex can be
    added without a format change.
@@ -400,14 +405,13 @@ this repository, its name, URL, issues and history.
 11. **Windows is not in 2.0.** 2.0 ships macOS and Linux only. The spike's
     Windows paths (junctions, `wt`) are kept, but nothing is promised or
     tested. Windows code signing is decided when Windows is scheduled.
-12. **claude.ai account skills are managed in Claude Code.**
+12. **claude.ai account skills are shown as global skills.**
     - The Machine and Persona screens show synced account skills as
-      "account" with their context cost.
-    - Personas can hide them via `skillOverrides`, like any global skill.
+      "account", always on, with their context cost.
+    - aip does not hide them (decision 2). The Machine screen says how to keep
+      them out of Claude Code (Claude's own `syncClaudeAiSkills: false`).
     - For the claude.ai and desktop chat apps, aip shows them read-only with a
       link to the account's skills settings.
-    - A persona may also set `syncClaudeAiSkills = false` in
-      `[claude.settings]` to keep them out of Claude Code entirely.
 13. **macOS ships unsigned, as a `.dmg` from GitHub Releases, with first-open
     instructions** (see "Install"). No Apple Developer Program fee for 2.0.
     Accepted costs:
@@ -431,14 +435,12 @@ The spike implements and verifies Codex already (`spike/src/render.mjs`,
 - **Launch mode works fully.**
   - Persona skills are linked into `<cwd>/.agents/skills` (Git-excluded),
     because Codex has no per-launch skill path.
-  - Hiding and extras go through `-c` overrides:
-    `skills.config=[{name=…,enabled=false}]`, `mcp_servers.<n>={…}`,
+  - Extras go through `-c` overrides: `mcp_servers.<n>={…}`,
     `developer_instructions`.
   - Use `-c`, not `--profile`: `codex app-server` rejects `--profile`.
-- **Project mode / Codex app** (`codex://threads/new?path=`) can add skills via
-  `.agents/skills` but cannot hide global ones: project-layer `skills.config`
-  loads but is ignored (X3). Revisit once that is fixed upstream, or offer an
-  ask-first global block in `~/.codex/config.toml`.
+- **Project mode / Codex app** (`codex://threads/new?path=`) adds skills via
+  `.agents/skills`, verified (X4). With additive personas (decision 2), X3
+  (Codex ignores project-layer `skills.config`) no longer matters.
 - **Verification** uses the app-server `skills/list` method, which needs no
   model call.
 
