@@ -1,5 +1,5 @@
 use crate::output::{pad, tilde};
-use crate::{Cli, Command, LsArgs, SkillsCommand};
+use crate::{launch_cmds, Cli, Command, LsArgs, SkillsCommand};
 use aip_core::inventory::{self, Discovery, Harness, LayerKind, Scope, Stack};
 use aip_core::library;
 use anyhow::{bail, Context, Result};
@@ -38,6 +38,10 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Command::List => list(&ctx),
         Command::Show { persona, dir } => show(&ctx, &persona, dir),
         Command::Skills(SkillsCommand::Ls(args)) => skills_ls(&ctx, args),
+        Command::Launch(a) => launch_cmds::launch(&ctx.root, a),
+        Command::Verify(a) => launch_cmds::verify(&ctx.root, a),
+        Command::Project(a) => launch_cmds::project(&ctx.root, a),
+        Command::Open(a) => launch_cmds::open(&ctx.root, a),
     }
 }
 
@@ -135,7 +139,7 @@ fn list(ctx: &Ctx) -> Result<i32> {
     Ok(0)
 }
 
-fn cwd_or(dir: Option<PathBuf>) -> Result<PathBuf> {
+pub(crate) fn cwd_or(dir: Option<PathBuf>) -> Result<PathBuf> {
     let d = match dir {
         Some(d) => d,
         None => std::env::current_dir()?,
@@ -177,7 +181,7 @@ fn show(ctx: &Ctx, name: &str, dir: Option<PathBuf>) -> Result<i32> {
     let globals = inventory::global_locations(&d);
     println!("\nIn {}:", tilde(&folder));
     for h in Harness::ALL {
-        let s = inventory::stack(&d, &globals, &folder, h, Some(&p), true);
+        let s = inventory::stack(&d, &globals, &folder, h, Some(&p), pi_trusted(&folder));
         let flagged = s.rows.iter().filter(|r| r.flagged()).count();
         println!(
             "  {}{:>3} skills load, ~{}t always on{}",
@@ -199,6 +203,13 @@ fn show(ctx: &Ctx, name: &str, dir: Option<PathBuf>) -> Result<i32> {
         );
     }
     Ok(0)
+}
+
+/// Whether Pi loads project skills here when started without asking (GUIs).
+fn pi_trusted(folder: &std::path::Path) -> bool {
+    aip_core::trust::pi_trust(folder)
+        .map(|t| t.trusted_without_ui())
+        .unwrap_or(false)
 }
 
 fn harness_filter(h: &Option<String>) -> Result<Vec<Harness>> {
@@ -226,7 +237,16 @@ fn skills_ls(ctx: &Ctx, args: LsArgs) -> Result<i32> {
         let globals = inventory::global_locations(&d);
         let stacks: Vec<Stack> = harnesses
             .iter()
-            .map(|&h| inventory::stack(&d, &globals, &folder, h, persona.as_ref(), true))
+            .map(|&h| {
+                inventory::stack(
+                    &d,
+                    &globals,
+                    &folder,
+                    h,
+                    persona.as_ref(),
+                    pi_trusted(&folder),
+                )
+            })
             .collect();
         if args.json {
             println!("{}", serde_json::to_string_pretty(&stacks)?);
@@ -348,7 +368,18 @@ fn print_stack(s: &Stack, only_flagged: bool) {
             .join(" → ")
     );
     if !s.project_layers_load {
-        println!("  note: Pi does not trust this folder, so its project skills do not load");
+        let ask = matches!(
+            aip_core::trust::pi_trust(&s.folder),
+            Ok(aip_core::trust::Trust::Ask)
+        );
+        println!(
+            "  note: Pi does not trust this folder, so its project skills do not load{}",
+            if ask {
+                " (Pi in a terminal will ask; Pi GUIs will not)"
+            } else {
+                ""
+            }
+        );
     }
     for r in s.rows.iter().filter(|r| !only_flagged || r.flagged()) {
         println!(

@@ -162,13 +162,13 @@ Define the `Harness` trait (D3), and implement Claude's `plan_launch` and the
 - `--mcp-config`;
 - `--append-system-prompt-file`.
 
-- [ ] Golden plans for `writer` and `coder` match the spike's plans, minus
+- [x] Golden plans for `writer` and `coder` match the spike's plans, minus
   the hiding the spike also produced (spec decision 2: additive only). No
   generated plan contains `skillOverrides`, `disableBundledSkills` or
   `--no-skills`.
-- [ ] `apply` refuses to replace a real file or a foreign link, and prunes only
+- [x] `apply` refuses to replace a real file or a foreign link, and prunes only
   links into the library.
-- [ ] SC4: applying a launch plan in a temporary HOME leaves `~/.claude`,
+- [x] SC4: applying a launch plan in a temporary HOME leaves `~/.claude`,
   `~/.agents`, `~/.pi` and the project byte-for-byte unchanged (snapshot
   test).
 - Verify: `cargo test -p aip-core plan::claude apply sc4`
@@ -181,7 +181,7 @@ Implement Pi's `plan_launch` (additive only): `--skill` per persona skill,
 `--append-system-prompt <file>`, and `[pi] args`. `mcp_servers` produce a
 note, not an error.
 
-- [ ] Golden plans match the spike's for both example personas, and global
+- [x] Golden plans match the spike's for both example personas, and global
   skills stay discoverable (no `--no-skills`).
 - Verify: `cargo test -p aip-core plan::pi`
 - Deps: T40 · Files: `crates/aip-core/src/harness/pi.rs` · Size: S
@@ -192,11 +192,11 @@ Add `aip launch PERSONA claude|pi [--dir] [--terminal] [--dry-run] [-- ARGS]`.
 Terminal launch uses `xdg-terminal-exec`, then the Linux fallback list, then
 `AIP_TERMINAL`; on macOS it writes a `.command` file (plan decision 4).
 
-- [ ] `--dry-run` prints the exact command line and planned operations, and
+- [x] `--dry-run` prints the exact command line and planned operations, and
   writes nothing.
-- [ ] Unit tests cover the terminal selection for macOS, a Linux machine with
+- [x] Unit tests cover the terminal selection for macOS, a Linux machine with
   only `kitty`, and `AIP_TERMINAL`.
-- [ ] Arguments after `--` reach the harness unchanged and after aip's own.
+- [x] Arguments after `--` reach the harness unchanged and after aip's own.
 - Verify: `cargo test -p aip-cli launch terminal`
 - Deps: T41 · Files: `crates/aip-cli/src/launch.rs`, `crates/aip-core/src/terminal.rs` · Size: M
 
@@ -210,10 +210,10 @@ stream-json `init` (kill on arrival; child environment stripped of
 with the result table and exit status. Record the harness version on success
 (D6).
 
-- [ ] With a fixture HOME, `verify` passes for `writer` and `coder` on both
+- [x] With a fixture HOME, `verify` passes for `writer` and `coder` on both
   harnesses in launch mode, on Linux and macOS.
-- [ ] A deliberately wrong expectation fails with exit 1 and names the skill.
-- [ ] `verify` warns before a Claude probe that it may use a few tokens, unless
+- [x] A deliberately wrong expectation fails with exit 1 and names the skill.
+- [x] `verify` warns before a Claude probe that it may use a few tokens, unless
   the finding above shows it needs none.
 - Verify: `AIP_E2E=1 cargo test -p aip-cli --test verify -- --nocapture`
 - Deps: T42 · Files: `crates/aip-core/src/probe.rs`, `crates/aip-cli/src/verify.rs`,
@@ -243,12 +243,12 @@ Implement `plan_project` for Claude (`.claude/skills` links and owned
 Pi (`.agents/skills` links). Add the `.git/info/exclude` block, owned state in
 the D6 cache keyed by folder, and `aip project PERSONA|--clear`.
 
-- [ ] `--clear` restores a fixture folder byte for byte: user keys and user
+- [x] `--clear` restores a fixture folder byte for byte: user keys and user
   overrides in `settings.local.json`, the user's exclude lines, and real skill
   folders all survive. Empty folders aip created are removed.
-- [ ] Re-applying the same persona is a no-op. Switching personas prunes only
+- [x] Re-applying the same persona is a no-op. Switching personas prunes only
   the previous persona's links.
-- [ ] `aip show` and `aip list` report "this folder has persona X applied" for
+- [x] `aip show` and `aip list` report "this folder has persona X applied" for
   the current folder.
 - Verify: `cargo test -p aip-core plan::project apply::project && cargo test -p aip-cli project`
 - Deps: T43 · Files: `crates/aip-core/src/harness/{claude,pi}.rs`,
@@ -261,10 +261,10 @@ Resolve trust as Pi does: flags, then `trust.json`, then
 folder, warn that Pi GUIs will not load the skills, and offer to record trust
 (a prompt, or `--trust-pi`). Never change `defaultProjectTrust`.
 
-- [ ] Untrusted, trusted-in-`trust.json` and `defaultProjectTrust: always`
+- [x] Untrusted, trusted-in-`trust.json` and `defaultProjectTrust: always`
   fixtures produce, respectively: a warning with an offer, silence, and
   silence.
-- [ ] Recording trust writes exactly one `trust.json` entry for the folder,
+- [x] Recording trust writes exactly one `trust.json` entry for the folder,
   and only after confirmation. Declining writes nothing.
 - Verify: `cargo test -p aip-core trust && cargo test -p aip-cli project_trust`
 - Deps: T45 · Files: `crates/aip-core/src/harness/pi.rs`, `crates/aip-cli/src/project.rs` · Size: M
@@ -276,8 +276,8 @@ Add `aip open PERSONA claude-desktop [DIR] [--trust-pi]` (project mode, then
 `aip verify --mode project`, which checks every persona skill and every
 global skill loaded, as in launch mode.
 
-- [ ] `--dry-run` prints the deep link and the planned operations.
-- [ ] Project-mode `verify` passes for Claude, and for Pi with `-a` standing in
+- [x] `--dry-run` prints the deep link and the planned operations.
+- [x] Project-mode `verify` passes for Claude, and for Pi with `-a` standing in
   for trust.
 - Verify: `AIP_E2E=1 cargo test -p aip-cli --test verify project`
 - Deps: T46 · Files: `crates/aip-cli/src/{open,verify}.rs` · Size: S

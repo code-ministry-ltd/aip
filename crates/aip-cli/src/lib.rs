@@ -2,6 +2,7 @@
 //! subcommands to the same code (plan D1).
 
 mod commands;
+mod launch_cmds;
 mod output;
 
 use clap::{Args, Parser, Subcommand};
@@ -38,6 +39,81 @@ pub enum Command {
     /// See and resolve skills everywhere on the machine
     #[command(subcommand)]
     Skills(SkillsCommand),
+    /// Start Claude Code, Pi or Claude desktop in a folder with a persona
+    Launch(LaunchArgs),
+    /// Ask a harness what it loaded, and check it against the preview
+    Verify(VerifyArgs),
+    /// Write a persona into a folder (for GUI apps), or clear it
+    Project(ProjectArgs),
+    /// Write a persona into a folder and open a desktop app there
+    Open(OpenArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct LaunchArgs {
+    /// Persona name, or "none" for the plain harness
+    pub persona: String,
+    /// claude, pi or claude-desktop
+    pub target: String,
+    /// Folder to start in (default: current directory)
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// Open a new terminal window instead of running here
+    #[arg(long)]
+    pub terminal: bool,
+    /// Print the plan without changing anything
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Extra arguments for the harness
+    #[arg(last = true)]
+    pub args: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct VerifyArgs {
+    /// Persona name, or "none"
+    pub persona: String,
+    /// claude or pi
+    pub harness: String,
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// launch (default) or project
+    #[arg(long, default_value = "launch")]
+    pub mode: String,
+    /// Seconds to wait for the harness
+    #[arg(long, default_value_t = 60)]
+    pub timeout: u64,
+}
+
+#[derive(Args, Debug)]
+pub struct ProjectArgs {
+    /// Persona to write into the folder
+    #[arg(required_unless_present = "clear")]
+    pub persona: Option<String>,
+    /// Remove what aip wrote into the folder
+    #[arg(long, conflicts_with = "persona")]
+    pub clear: bool,
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// Comma-separated harnesses (default: claude,pi)
+    #[arg(long, value_name = "LIST")]
+    pub harness: Option<String>,
+    /// Record Pi trust for this folder without asking
+    #[arg(long)]
+    pub trust_pi: bool,
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct OpenArgs {
+    pub persona: String,
+    /// The desktop app (claude-desktop)
+    pub app: String,
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Subcommand, Debug)]
