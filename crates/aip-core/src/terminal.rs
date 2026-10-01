@@ -100,6 +100,46 @@ pub fn on_path(program: &str) -> bool {
     })
 }
 
+/// Start `command args` in `folder` in a new window of the user's terminal
+/// (`AIP_TERMINAL` overrides the choice).
+pub fn run_in_terminal(command: &str, args: &[String], folder: &Path) -> Result<()> {
+    let os = if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let override_ = std::env::var("AIP_TERMINAL").ok();
+    match terminal_plan(command, args, folder, os, override_.as_deref(), &on_path)? {
+        TerminalPlan::CommandFile { script } => {
+            let dir = crate::paths::cache_dir().join("launch");
+            std::fs::create_dir_all(&dir)?;
+            let file = dir.join(format!("aip-{}-{}.command", std::process::id(), rand_id()));
+            std::fs::write(&file, script)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
+            }
+            crate::launch::open_url(&file.to_string_lossy())
+        }
+        TerminalPlan::Spawn { program, args } => {
+            std::process::Command::new(&program)
+                .args(&args)
+                .current_dir(folder)
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("cannot start {program}: {e}"))?;
+            Ok(())
+        }
+    }
+}
+
+fn rand_id() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

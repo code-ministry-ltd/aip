@@ -63,6 +63,76 @@ pub fn prepare_harness(
     Ok((plan, applied))
 }
 
+/// What a launch did, for the caller to report.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Report {
+    pub log: Vec<String>,
+    pub notes: Vec<String>,
+    /// The command line run (harness targets) or the URL opened (desktop).
+    pub started: String,
+}
+
+/// A program and its arguments, for the caller to run in the foreground.
+pub type Command = (String, Vec<String>);
+
+/// Launch `target` in `folder` with an optional persona. Harnesses open in
+/// a new terminal window (`new_window`) or are returned for the caller to
+/// run inline; Claude desktop gets project mode and its deep link.
+pub fn launch(
+    root: &Path,
+    folder: &Path,
+    target: Target,
+    persona: Option<&Persona>,
+    extra_args: &[String],
+    new_window: bool,
+    dry_run: bool,
+) -> Result<(Report, Option<Command>)> {
+    let mut r = Report::default();
+    match target {
+        Target::ClaudeDesktop => {
+            if persona.is_some() {
+                let out = crate::project::apply_project(
+                    root,
+                    folder,
+                    &[Harness::Claude],
+                    persona,
+                    dry_run,
+                )?;
+                r.log = out.applied.log;
+                r.notes = out.plan.notes;
+                r.notes.push(format!(
+                    "the persona stays in {} until it is cleared",
+                    folder.display()
+                ));
+            }
+            let url = claude_desktop_url(folder);
+            if !dry_run {
+                let _ = record_launch(folder, target, persona.map(|p| p.name.as_str()));
+                open_url(&url)?;
+            }
+            r.started = url;
+            Ok((r, None))
+        }
+        Target::Harness(h) => {
+            let (plan, applied) = prepare_harness(root, h, persona, dry_run)?;
+            r.log = applied.log;
+            r.notes = plan.notes.clone();
+            let mut args = plan.args.clone();
+            args.extend(extra_args.iter().cloned());
+            r.started = crate::terminal::command_line(&plan.command, &args);
+            if dry_run {
+                return Ok((r, None));
+            }
+            let _ = record_launch(folder, target, persona.map(|p| p.name.as_str()));
+            if new_window {
+                crate::terminal::run_in_terminal(&plan.command, &args, folder)?;
+                return Ok((r, None));
+            }
+            Ok((r, Some((plan.command, args))))
+        }
+    }
+}
+
 /// Remember a launch folder (feeds project discovery and recent folders).
 pub fn record_launch(folder: &Path, target: Target, persona: Option<&str>) -> Result<()> {
     let file = paths::state_dir().join("launches.json");

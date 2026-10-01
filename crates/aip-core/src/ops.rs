@@ -245,6 +245,134 @@ pub fn plan_persona_edit(
     })
 }
 
+/// Plan setting a persona's whole skill list at once (the app's editor saves
+/// this way, as one undoable change). Skills already listed keep their place
+/// and formatting; new ones are appended in the order given.
+pub fn plan_persona_set(root: &Path, persona: &str, skills: &[String]) -> Result<OpPlan> {
+    let file = library::persona_file(root, persona);
+    let text = fs::read_to_string(&file).with_context(|| format!("no persona '{persona}'"))?;
+    let lib = library::load_library(root)?;
+    if let Some(missing) = skills.iter().find(|s| !lib.contains_key(s.as_str())) {
+        bail!("'{missing}' is not in the library; copy it in first with 'aip skills cp'");
+    }
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("parsing {}", file.display()))?;
+    let arr = doc
+        .entry("skills")
+        .or_insert(toml_edit::value(toml_edit::Array::new()))
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("{}: skills must be a list", file.display()))?;
+    let current: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let removed: Vec<&String> = current.iter().filter(|c| !skills.contains(c)).collect();
+    let added: Vec<&String> = skills.iter().filter(|s| !current.contains(s)).collect();
+    if removed.is_empty() && added.is_empty() {
+        bail!("persona {persona} already has exactly these skills");
+    }
+    let mut i = 0;
+    while i < arr.len() {
+        match arr.get(i).and_then(|v| v.as_str()) {
+            Some(n) if !skills.iter().any(|s| s == n) => {
+                remove_keeping_comments(arr, i);
+            }
+            _ => i += 1,
+        }
+    }
+    // New entries copy the last entry's layout, so a one-per-line list stays
+    // one per line.
+    let decor = arr.iter().last().map(|v| v.decor().clone());
+    for name in &added {
+        let mut v = toml_edit::Value::from(name.as_str());
+        if let Some(d) = &decor {
+            *v.decor_mut() = d.clone();
+            // A comment after the old last entry sits in the array's trailing
+            // text; keep it on that entry's line.
+            let indent = d.prefix().and_then(|p| p.as_str()).unwrap_or("");
+            let trailing = arr.trailing().as_str().unwrap_or("").to_string();
+            if let (Some(n), Some(m)) = (trailing.find('\n'), indent.rfind('\n')) {
+                v.decor_mut()
+                    .set_prefix(format!("{}{}", &trailing[..=n], &indent[m + 1..]));
+                arr.set_trailing(&trailing[n..]);
+            }
+        } else if !arr.is_empty() {
+            v.decor_mut().set_prefix(" ");
+        }
+        arr.push_formatted(v);
+    }
+    let mut preview = vec![];
+    for a in &added {
+        preview.push(format!(
+            "add \"{a}\" to the skills list in {}",
+            file.display()
+        ));
+    }
+    for r in &removed {
+        preview.push(format!(
+            "remove \"{r}\" from the skills list in {}",
+            file.display()
+        ));
+    }
+    let mut parts = vec![];
+    if !added.is_empty() {
+        parts.push(format!(
+            "add {}",
+            added
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !removed.is_empty() {
+        parts.push(format!(
+            "remove {}",
+            removed
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(OpPlan {
+        summary: format!("persona {persona}: {}", parts.join("; ")),
+        preview,
+        steps: vec![Step::WriteFile {
+            path: file,
+            content: doc.to_string(),
+        }],
+    })
+}
+
+/// Remove an array entry from a one-per-line list. In TOML a comment after an
+/// entry belongs to the next entry's prefix, so the comment lines before the
+/// removed entry move on to whatever follows it, and the removed line's own
+/// trailing comment goes with it.
+fn remove_keeping_comments(arr: &mut toml_edit::Array, i: usize) {
+    fn raw(r: Option<&toml_edit::RawString>) -> String {
+        r.and_then(|r| r.as_str()).unwrap_or("").to_string()
+    }
+    let prefix = raw(arr.get(i).and_then(|v| v.decor().prefix()));
+    arr.remove(i);
+    let head = match prefix.rfind('\n') {
+        Some(n) => prefix[..=n].to_string(),
+        None => return,
+    };
+    let rest = |next: &str| match next.find('\n') {
+        Some(n) => format!("{head}{}", &next[n + 1..]),
+        None => next.to_string(),
+    };
+    if let Some(next) = arr.get_mut(i) {
+        let q = raw(next.decor().prefix());
+        next.decor_mut().set_prefix(rest(&q));
+    } else {
+        let t = raw(Some(arr.trailing()));
+        arr.set_trailing(rest(&t));
+    }
+}
+
 fn trash(path: &Path) -> Result<()> {
     if let Some(dir) = std::env::var_os("AIP_TRASH_DIR").filter(|v| !v.is_empty()) {
         let dir = PathBuf::from(dir);
@@ -640,6 +768,44 @@ mod tests {
             .contains("not in the library"));
         undo_last().unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), before);
+    }
+
+    #[test]
+    fn persona_set_is_a_one_line_change_in_a_commented_list() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        env(fx.path());
+        let file = library::persona_file(fx.path(), "writer");
+        let before = "# Writing work.\nformat = 1\ndescription = \"Writer\"\n\n# What it adds\nskills = [\n  \"prose\",     # clarity\n  \"citations\",\n]\n";
+        fs::write(&file, before).unwrap();
+        let set = |names: &[&str]| {
+            let v: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+            execute(&plan_persona_set(fx.path(), "writer", &v).unwrap()).unwrap();
+            fs::read_to_string(&file).unwrap()
+        };
+        let changed = |a: &str, b: &str| {
+            let (a, b): (Vec<_>, Vec<_>) = (a.lines().collect(), b.lines().collect());
+            let removed = a.iter().filter(|l| !b.contains(l)).count();
+            let added = b.iter().filter(|l| !a.contains(l)).count();
+            (removed, added)
+        };
+        let after = set(&["prose"]);
+        assert_eq!(changed(before, &after), (1, 0), "{after}");
+        assert!(after.contains("\"prose\",     # clarity"));
+        let again = set(&["prose", "citations"]);
+        assert_eq!(changed(&after, &again), (0, 1), "{again}");
+        assert!(
+            plan_persona_set(fx.path(), "writer", &["prose".into(), "citations".into()])
+                .unwrap_err()
+                .to_string()
+                .contains("already has exactly")
+        );
+        assert!(plan_persona_set(fx.path(), "writer", &["nope".into()])
+            .unwrap_err()
+            .to_string()
+            .contains("not in the library"));
+        undo_last().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), after);
     }
 
     #[test]

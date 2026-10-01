@@ -11,5 +11,5 @@ git add .github/workflows/rust.yml && git commit -m "ci: enable aip 2 workflow"
 
 | Workflow | Purpose | Secrets |
 |---|---|---|
-| `rust.yml` | fmt, clippy and tests for the Rust workspace and UI on Ubuntu and macOS | none |
+| `rust.yml` | UI tests and build; fmt, clippy and tests for the Rust workspace on Ubuntu and macOS; on Linux, the app smoke test, CLI passthrough and `aip://` hand-over under Xvfb (`ci/scripts/app-smoke.sh`) | none |
 | `harness-drift.yml` | nightly: latest Claude Code and Pi against aip's checks; opens an issue on failure | `ANTHROPIC_API_KEY` (optional, with a spending cap; without it only the Pi checks run) |

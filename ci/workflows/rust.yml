@@ -3,9 +3,9 @@ name: aip 2
 on:
   push:
     branches: [main]
-    paths: ['Cargo.*', 'crates/**', 'ui/**', '.github/workflows/rust.yml']
+    paths: ['Cargo.*', 'crates/**', 'ui/**', 'ci/scripts/**', '.github/workflows/rust.yml']
   pull_request:
-    paths: ['Cargo.*', 'crates/**', 'ui/**', '.github/workflows/rust.yml']
+    paths: ['Cargo.*', 'crates/**', 'ui/**', 'ci/scripts/**', '.github/workflows/rust.yml']
   workflow_dispatch:
 
 permissions:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust and UI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,6 +24,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Install Linux app dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev \
+            xvfb dbus-x11 xdg-utils libglib2.0-bin
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI tests and build
+        run: |
+          npm ci --prefix ui
+          npm --prefix ui test
+          npm --prefix ui run build
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
       - name: Format
@@ -32,3 +49,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: App smoke test, CLI passthrough and aip:// (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p aip-cli -p aip-app --features aip-app/custom-protocol
+          ci/scripts/app-smoke.sh

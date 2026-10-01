@@ -6,7 +6,6 @@ use crate::{LaunchArgs, OpenArgs, ProjectArgs, VerifyArgs};
 use aip_core::inventory::{self, Discovery, Harness};
 use aip_core::launch::{self, Target};
 use aip_core::library::Persona;
-use aip_core::terminal::{self, TerminalPlan};
 use aip_core::{probe, project, trust};
 use anyhow::{bail, Context, Result};
 use std::io::{IsTerminal, Write};
@@ -110,102 +109,33 @@ pub fn launch(root: &Path, a: LaunchArgs) -> Result<i32> {
     })?;
     let folder = cwd_or(a.dir)?;
     let persona = persona_arg(root, &a.persona)?;
-    match target {
-        Target::ClaudeDesktop => open_desktop(root, &folder, persona.as_ref(), a.dry_run),
-        Target::Harness(h) => {
-            let (plan, applied) = launch::prepare_harness(root, h, persona.as_ref(), a.dry_run)?;
-            print_log(&applied.log, a.dry_run);
-            for n in &plan.notes {
-                println!("note: {n}");
-            }
-            let mut args = plan.args.clone();
-            args.extend(a.args);
-            let line = terminal::command_line(&plan.command, &args);
-            if a.dry_run {
-                println!("would run (in {}): {line}", tilde(&folder));
-                return Ok(0);
-            }
-            let _ =
-                launch::record_launch(&folder, target, persona.as_ref().map(|p| p.name.as_str()));
-            if a.terminal {
-                run_in_terminal(&plan.command, &args, &folder)?;
-                println!("opened a terminal: {line}");
-                return Ok(0);
-            }
-            let status = std::process::Command::new(&plan.command)
+    let (report, inline) = launch::launch(
+        root,
+        &folder,
+        target,
+        persona.as_ref(),
+        &a.args,
+        a.terminal,
+        a.dry_run,
+    )?;
+    print_log(&report.log, a.dry_run);
+    for n in &report.notes {
+        println!("note: {n}");
+    }
+    match (target, a.dry_run, inline) {
+        (Target::ClaudeDesktop, true, _) => println!("would open {}", report.started),
+        (Target::ClaudeDesktop, false, _) => println!("opened {}", report.started),
+        (_, true, _) => println!("would run (in {}): {}", tilde(&folder), report.started),
+        (_, false, None) => println!("opened a terminal: {}", report.started),
+        (_, false, Some((command, args))) => {
+            let status = std::process::Command::new(&command)
                 .args(&args)
                 .current_dir(&folder)
                 .status()
-                .with_context(|| format!("cannot run {}", plan.command))?;
-            Ok(status.code().unwrap_or(1))
+                .with_context(|| format!("cannot run {command}"))?;
+            return Ok(status.code().unwrap_or(1));
         }
     }
-}
-
-pub fn run_in_terminal(command: &str, args: &[String], folder: &Path) -> Result<()> {
-    let os = if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    };
-    let override_ = std::env::var("AIP_TERMINAL").ok();
-    match terminal::terminal_plan(
-        command,
-        args,
-        folder,
-        os,
-        override_.as_deref(),
-        &terminal::on_path,
-    )? {
-        TerminalPlan::CommandFile { script } => {
-            let dir = aip_core::paths::cache_dir().join("launch");
-            std::fs::create_dir_all(&dir)?;
-            let file = dir.join(format!("aip-{}.command", std::process::id()));
-            std::fs::write(&file, script)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
-            }
-            launch::open_url(&file.to_string_lossy())
-        }
-        TerminalPlan::Spawn { program, args } => {
-            std::process::Command::new(&program)
-                .args(&args)
-                .current_dir(folder)
-                .spawn()
-                .with_context(|| format!("cannot start {program}"))?;
-            Ok(())
-        }
-    }
-}
-
-fn open_desktop(
-    root: &Path,
-    folder: &Path,
-    persona: Option<&Persona>,
-    dry_run: bool,
-) -> Result<i32> {
-    if persona.is_some() {
-        project_write(root, folder, &[Harness::Claude], persona, false, dry_run)?;
-        println!(
-            "note: the persona stays in {} until 'aip project --clear --dir {}'",
-            tilde(folder),
-            tilde(folder)
-        );
-    }
-    let url = launch::claude_desktop_url(folder);
-    if dry_run {
-        println!("would open {url}");
-        return Ok(0);
-    }
-    let _ = launch::record_launch(
-        folder,
-        Target::ClaudeDesktop,
-        persona.map(|p| p.name.as_str()),
-    );
-    launch::open_url(&url)?;
-    println!("opened {url}");
     Ok(0)
 }
 
@@ -213,9 +143,17 @@ pub fn open(root: &Path, a: OpenArgs) -> Result<i32> {
     if a.app != "claude-desktop" {
         bail!("unknown app '{}' (expected claude-desktop)", a.app);
     }
-    let folder = cwd_or(a.dir)?;
-    let persona = persona_arg(root, &a.persona)?;
-    open_desktop(root, &folder, persona.as_ref(), a.dry_run)
+    launch(
+        root,
+        LaunchArgs {
+            persona: a.persona,
+            target: "claude-desktop".into(),
+            dir: a.dir,
+            terminal: false,
+            dry_run: a.dry_run,
+            args: Vec::new(),
+        },
+    )
 }
 
 pub fn project(root: &Path, a: ProjectArgs) -> Result<i32> {

@@ -140,3 +140,14 @@ fn clone_and_sync_between_two_homes() {
     assert!(a.ok(&["sync"]).contains("pulled"));
     assert!(a.path("agent-personas/personas/extra.toml").is_file());
 }
+
+#[test]
+fn rm_by_path_works_in_a_folder_aip_has_not_discovered() {
+    let h = Home::new();
+    h.ok(&["init"]);
+    let copy = h.skill("elsewhere/proj/.claude/skills", "notes", "Take notes.");
+    h.ok(&["skills", "rm", copy.to_str().unwrap(), "--yes"]);
+    assert!(!copy.exists());
+    h.ok(&["skills", "undo", "--yes"]);
+    assert!(copy.join("SKILL.md").exists());
+}
