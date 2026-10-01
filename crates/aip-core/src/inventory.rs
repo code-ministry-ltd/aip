@@ -22,7 +22,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Harness {
     Claude,
@@ -865,8 +867,15 @@ pub fn stack(
     // Group by bare name, preserving precedence order.
     let mut order: Vec<String> = Vec::new();
     let mut groups: BTreeMap<String, Vec<(usize, Location, bool)>> = BTreeMap::new();
+    let mut seen_dirs: BTreeSet<(String, PathBuf)> = BTreeSet::new();
     for c in copies {
         let name = c.1.skill.name.clone();
+        // A project-mode link to a library skill is the same copy as the
+        // persona's: count each real folder once per name.
+        let real = fs::canonicalize(&c.1.skill.dir).unwrap_or_else(|_| c.1.skill.dir.clone());
+        if !seen_dirs.insert((name.clone(), real)) {
+            continue;
+        }
         if !groups.contains_key(&name) {
             order.push(name.clone());
         }
@@ -1187,6 +1196,22 @@ mod tests {
             .copies
             .iter()
             .any(|c| c.loads && matches!(c.location.source, Source::Library)));
+    }
+
+    #[test]
+    fn a_project_mode_link_is_not_a_duplicate_of_its_persona_copy() {
+        let fx = fixture();
+        let g = global_locations(&fx.d);
+        let lib = load_library(&fx.root).unwrap();
+        let coder = load_persona(&fx.root, "coder", &lib).unwrap();
+        let front = real(&fx, "/Users/jim/code/shop/frontend");
+        let link = front.join(".agents/skills/commit-messages");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(lib["commit-messages"].dir.clone(), &link).unwrap();
+        let s = stack(&fx.d, &g, &front, Harness::Pi, Some(&coder), true);
+        let r = row(&s, "commit-messages");
+        assert_eq!(r.copies.len(), 1);
+        assert!(!r.flagged());
     }
 
     #[test]
