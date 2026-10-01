@@ -269,7 +269,13 @@ export function mock(cmd, args) {
     case 'sync_now':
       return Promise.resolve({ outcome: 'up_to_date', committed: false });
     case 'integrations':
-      return Promise.resolve([]);
+      return Promise.resolve([
+        { name: 'dolphin', label: 'Dolphin (KDE)', available: false, enabled: false, note: 'Right-click a folder ▸ aip ▸ persona · target' },
+        { name: 'nautilus', label: 'Files / Nautilus (GNOME)', available: true, enabled: true, note: 'Right-click a folder ▸ Scripts ▸ aip' },
+        { name: 'nemo', label: 'Nemo (Cinnamon)', available: true, enabled: false, note: 'Right-click a folder ▸ aip: persona · target' },
+      ]);
+    case 'set_integration':
+      return Promise.resolve(`${args.name} ${args.enabled ? 'on' : 'off'}`);
     default:
       return Promise.resolve(null);
   }

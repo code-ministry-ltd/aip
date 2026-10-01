@@ -5,6 +5,7 @@ pub mod apply;
 pub mod decode;
 pub mod gitsrc;
 pub mod import_v0;
+pub mod integrations;
 pub mod inventory;
 pub mod launch;
 pub mod library;

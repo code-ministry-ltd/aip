@@ -391,6 +391,13 @@ fn trash(path: &Path) -> Result<()> {
 
 /// Apply a plan, journalling first so it can be undone.
 pub fn execute(plan: &OpPlan) -> Result<Entry> {
+    let e = execute_journalled(plan)?;
+    // Persona menus in file managers follow the personas (best effort).
+    let _ = crate::integrations::refresh();
+    Ok(e)
+}
+
+fn execute_journalled(plan: &OpPlan) -> Result<Entry> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -515,6 +522,12 @@ pub fn history() -> Vec<Entry> {
 
 /// Undo the most recent operation. Refuses when something changed since.
 pub fn undo_last() -> Result<Option<Entry>> {
+    let e = undo_last_entry()?;
+    let _ = crate::integrations::refresh();
+    Ok(e)
+}
+
+fn undo_last_entry() -> Result<Option<Entry>> {
     let Some(entry) = history().into_iter().next() else {
         return Ok(None);
     };

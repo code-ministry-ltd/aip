@@ -403,6 +403,22 @@ pub fn reveal(path: PathBuf) -> Res<()> {
 }
 
 #[tauri::command]
+pub fn integrations() -> Vec<aip_core::integrations::Status> {
+    aip_core::integrations::status()
+}
+
+#[tauri::command]
+pub fn set_integration(name: String, enabled: bool) -> Res<String> {
+    use aip_core::integrations::{self, Kind};
+    let kind = Kind::parse(&name).ok_or_else(|| format!("unknown file manager {name}"))?;
+    if enabled {
+        integrations::enable(kind, &root()).map_err(err)
+    } else {
+        integrations::disable(kind).map_err(err)
+    }
+}
+
+#[tauri::command]
 pub fn close_window(window: tauri::Window) {
     let _ = window.close();
 }
