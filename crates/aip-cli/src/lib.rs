@@ -3,6 +3,7 @@
 
 mod commands;
 mod launch_cmds;
+mod manage_cmds;
 mod output;
 
 use clap::{Args, Parser, Subcommand};
@@ -47,6 +48,58 @@ pub enum Command {
     Project(ProjectArgs),
     /// Write a persona into a folder and open a desktop app there
     Open(OpenArgs),
+    /// Add a library skill to a persona, or remove it
+    #[command(subcommand)]
+    Persona(PersonaCommand),
+    /// Commit, pull and push the personas repository
+    Sync(SyncArgs),
+    /// Set up this machine from an existing personas repository
+    Clone {
+        url: String,
+        /// Where to put it (default: --root, or ~/agent-personas)
+        dir: Option<PathBuf>,
+    },
+    /// Turn aip 0.x profiles into personas
+    #[command(name = "import-v0")]
+    ImportV0(ImportArgs),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PersonaCommand {
+    /// Add a library skill to a persona
+    Add {
+        persona: String,
+        skill: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove a skill from a persona
+    Remove {
+        persona: String,
+        skill: String,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct SyncArgs {
+    /// Resolve a conflict: PATH=ours or PATH=theirs (repeatable)
+    #[arg(long = "take", value_name = "PATH=SIDE")]
+    pub take: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ImportArgs {
+    /// aip 0.x profiles folder (default: ~/agent-profiles)
+    #[arg(long, value_name = "DIR")]
+    pub from: Option<PathBuf>,
+    /// Apply without asking
+    #[arg(long)]
+    pub yes: bool,
+    /// Leave the 0.x shell hook in place
+    #[arg(long)]
+    pub keep_hook: bool,
 }
 
 #[derive(Args, Debug)]
@@ -120,6 +173,53 @@ pub struct OpenArgs {
 pub enum SkillsCommand {
     /// List every skill on the machine, or what loads in one folder
     Ls(LsArgs),
+    /// Move one copy of a skill to the Trash (undoable)
+    Rm {
+        skill: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Copy a skill into the library (undoable)
+    Cp {
+        skill: String,
+        /// Library name (needed when a different skill has the same name)
+        #[arg(long = "as", value_name = "NAME")]
+        as_name: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Compare two copies of a skill
+    Diff { a: String, b: String },
+    /// Undo the most recent skill or persona change
+    Undo {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Recent changes that can be undone
+    History,
+    /// Install a skill into the library from Git
+    Add {
+        /// owner/repo[/path] or a Git URL with an optional #path
+        source: String,
+        #[arg(long = "as", value_name = "NAME")]
+        as_name: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Update library skills installed from Git
+    Update {
+        name: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove a skill from the library (undoable)
+    Remove {
+        name: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Args, Debug)]
