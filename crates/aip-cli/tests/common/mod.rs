@@ -49,6 +49,12 @@ impl Home {
             .env("AIP_STATE_DIR", self.dir.path().join("state"))
             .env("AIP_CACHE_DIR", self.dir.path().join("cache"))
             .env("AIP_TEMP_PREFIXES", "")
+            .env("AIP_TRASH_DIR", self.dir.path().join("trash"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "Aip Tests")
+            .env("GIT_AUTHOR_EMAIL", "aip@example.test")
+            .env("GIT_COMMITTER_NAME", "Aip Tests")
+            .env("GIT_COMMITTER_EMAIL", "aip@example.test")
             .current_dir(cwd);
         c
     }

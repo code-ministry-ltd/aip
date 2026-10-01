@@ -1,5 +1,5 @@
 use crate::output::{pad, tilde};
-use crate::{launch_cmds, Cli, Command, LsArgs, SkillsCommand};
+use crate::{launch_cmds, manage_cmds, Cli, Command, LsArgs, SkillsCommand};
 use aip_core::inventory::{self, Discovery, Harness, LayerKind, Scope, Stack};
 use aip_core::library;
 use anyhow::{bail, Context, Result};
@@ -38,6 +38,11 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Command::List => list(&ctx),
         Command::Show { persona, dir } => show(&ctx, &persona, dir),
         Command::Skills(SkillsCommand::Ls(args)) => skills_ls(&ctx, args),
+        Command::Skills(cmd) => manage_cmds::skills(&ctx.root, cmd),
+        Command::Persona(cmd) => manage_cmds::persona(&ctx.root, cmd),
+        Command::Sync(a) => manage_cmds::sync_cmd(&ctx.root, a),
+        Command::Clone { url, dir } => manage_cmds::clone_cmd(&ctx.root, &url, dir),
+        Command::ImportV0(a) => manage_cmds::import(&ctx.root, a),
         Command::Launch(a) => launch_cmds::launch(&ctx.root, a),
         Command::Verify(a) => launch_cmds::verify(&ctx.root, a),
         Command::Project(a) => launch_cmds::project(&ctx.root, a),
@@ -82,7 +87,14 @@ fn init(ctx: &Ctx) -> Result<i32> {
         fs::create_dir_all(p.parent().unwrap())?;
         fs::write(&p, text).with_context(|| format!("writing {}", p.display()))?;
     }
+    aip_core::sync::ensure_repo(&ctx.root)?;
+    let committed = aip_core::sync::commit_local(&ctx.root, "aip init").unwrap_or(false);
     println!("Created {}", tilde(&ctx.root));
+    if !committed {
+        println!(
+            "  (not committed yet: Git needs user.name and user.email; 'aip sync' commits later)"
+        );
+    }
     println!(
         "  library/skills/  your skill library (no harness loads it until you pick a persona)"
     );

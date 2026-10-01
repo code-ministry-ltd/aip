@@ -315,14 +315,14 @@ apply, undo.
 - **Overwrites** are copied into the journal first.
 - **Read-only sources** refuse `rm` with their reason and offer `cp`.
 
-- [ ] Each operation prints its plan and changes nothing until confirmed (or
+- [x] Each operation prints its plan and changes nothing until confirmed (or
   `--yes`).
-- [ ] `rm` puts the skill in the Trash, and `undo` brings it back.
-- [ ] `cp` of a project or global skill into the library works, including the
+- [x] `rm` puts the skill in the Trash, and `undo` brings it back.
+- [x] `cp` of a project or global skill into the library works, including the
   rename on a clash.
-- [ ] After every operation in a scripted sequence, `undo` restores the
+- [x] After every operation in a scripted sequence, `undo` restores the
   fixture tree byte for byte.
-- [ ] Plugin, package, account and bundled skills refuse `rm`, giving the
+- [x] Plugin, package, account and bundled skills refuse `rm`, giving the
   owner as the reason.
 - Verify: `cargo test -p aip-core ops journal && cargo test -p aip-cli skills_ops`
 - Deps: T39 · Files: `crates/aip-core/src/{ops,journal}.rs`, `crates/aip-cli/src/skills.rs` · Size: L
@@ -333,9 +333,9 @@ Port 0.x's source forms (GitHub shorthand, Git URLs with `#path`) and the
 `.aip-source` sidecar. `update` shows the upstream diff and asks before
 replacing anything. Skills without a sidecar are never touched.
 
-- [ ] Adding from a `file://` fixture repository installs the skill and its
+- [x] Adding from a `file://` fixture repository installs the skill and its
   sidecar. Traversal and symlinked paths are refused.
-- [ ] `update` on an unchanged source reports "up to date". On a changed
+- [x] `update` on an unchanged source reports "up to date". On a changed
   source it shows the diff and replaces only after confirmation (or with
   `--yes`).
 - Verify: `cargo test -p aip-core skills && cargo test -p aip-cli skills`
@@ -347,11 +347,11 @@ Pull, commit and push through `git` (D5). Refuse a newer `format`. Report
 conflicts per file with both sides, and never leave a rebase in progress. Add
 an opt-in timer setting (consumed by the app) and `aip clone URL [DIR]`.
 
-- [ ] Two fixture clones that edit different personas both converge after a
+- [x] Two fixture clones that edit different personas both converge after a
   sync on each.
-- [ ] Editing the same persona on both sides reports the file and both
+- [x] Editing the same persona on both sides reports the file and both
   versions, leaves the repository clean and unchanged, and exits non-zero.
-- [ ] No command other than `sync` and `clone` contacts the remote.
+- [x] No command other than `sync` and `clone` contacts the remote.
 - Verify: `cargo test -p aip-core sync && cargo test -p aip-cli sync`
 - Deps: T50 · Files: `crates/aip-core/src/sync.rs`, `crates/aip-cli/src/sync.rs` · Size: L
 
@@ -365,10 +365,10 @@ Import each 0.x profile as a persona:
 After showing the file and the line, remove the marked 0.x shell-profile line
 if the user confirms.
 
-- [ ] Fixture 0.x repositories (generated once with 0.x's `aip create`, then
+- [x] Fixture 0.x repositories (generated once with 0.x's `aip create`, then
   committed as test data) import with the expected personas, library and
   report.
-- [ ] The shell hook is removed only after confirmation, and other lines in
+- [x] The shell hook is removed only after confirmation, and other lines in
   the profile are untouched.
 - Verify: `cargo test -p aip-core import_v0 && cargo test -p aip-cli import_v0`
 - Deps: T51 · Files: `crates/aip-core/src/import_v0.rs`, `crates/aip-cli/src/import_v0.rs`,
