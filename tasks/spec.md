@@ -104,8 +104,9 @@ Make skills easy to manage and easy to use. The two things that matter most:
 1. **Managing.** A beautiful app shows every skill on the machine: global for
    each harness, in each project, in the library, inside plugins. It shows
    visually where each one applies, so nobody has to reason about folder
-   paths. From there the user can delete, move, copy, or collect skills into
-   one place.
+   paths. Duplicates are obvious, and the user can resolve them: delete a
+   copy, copy a skill into the library, compare two copies, add a skill to a
+   persona or remove it. Broader reorganising comes after 2.0.
 2. **Invoking.** From the app, or by right-clicking a folder in the OS file
    manager, the user starts Claude Code or Pi (in a terminal) or a desktop app
    in that folder, with whichever persona they pick, in either order.
@@ -137,7 +138,8 @@ later 2.x release.
   - They are on in every persona: the user's "always" set.
   - aip shows them, with their cost, in every persona's catalog, and never
     hides them.
-  - The user can move, copy or delete them from the skill manager.
+  - The user can delete a copy, or copy one into the library, from the skill
+    manager.
   - A user who wants personas to be the whole picture keeps no global skills.
 - **Scope:** where a skill applies.
   - *Everywhere* (global, for one or more harnesses).
@@ -180,29 +182,31 @@ applies*, never paths to work out.
   - folders the harnesses themselves have recorded, such as Pi's per-folder
     sessions and Claude Code's per-project state. The exact Claude Code
     location is to be verified on a real machine.
-- **Operations.** Each one is available by drag and drop between scopes and
-  from a right-click menu:
-  - **Delete:** moves to the system Trash.
-  - **Move** or **copy** to another scope: everywhere, a project, or the
-    library.
-  - **Collect into library:** gather any selection into the library. Identical
-    copies merge automatically. Differing versions open a side-by-side diff to
-    pick one, or keep both under new names.
-  - **Add to persona.**
+- **Operations in 2.0:** what resolving duplicates needs (decision 14). Each
+  is available from a right-click menu and from the launch preview:
+  - **Delete a copy:** moves it to the system Trash.
+  - **Copy into the library:** so a persona can use it. A name clash with a
+    different library skill asks for a new name.
+  - **Compare:** two copies side by side.
+  - **Add to persona** and **remove from persona.**
   - **Reveal in file manager.**
+- **After 2.0:** moving skills between scopes, bulk "collect everything into
+  the library" with automatic merging, and drag and drop.
 - **Safety for every operation:**
   - it shows exactly what will change before applying;
   - it applies only on confirmation;
   - it is undoable from an operation journal (Undo, and a history list);
   - it refuses read-only sources with the reason ("managed by plugin X"),
     offering *copy to library* instead.
-- **CLI parity.** `aip skills ls|mv|cp|rm|collect|undo` do the same through
-  the same core.
+- **CLI parity.** `aip skills ls|rm|cp|diff|undo` and
+  `aip persona add|remove PERSONA SKILL` do the same through the same core.
+  `cp` copies only into the library.
 
 ## Launch preview: what will load
 
-The bridge between the skill manager and the persona manager. For a folder × harness
-× persona, before launching, show every skill that will be in the catalog:
+The bridge between the skill manager and the persona manager. For a
+folder × harness × persona, before launching, show every skill that will be
+in the catalog:
 - one row per skill name;
 - a column per layer: everywhere, each inherited parent folder, the folder,
   the persona;
@@ -322,12 +326,12 @@ harness × persona*:
   location exactly once with scope, harnesses, source, cost and duplicate
   flags. For any folder, the folder view's per-harness stack matches what
   `aip verify` reports from the real harness.
-- **SC13 — Managing skills is safe.**
-  - Delete, move, copy and collect show a preview and apply only on
-    confirmation.
+- **SC13 — Resolving duplicates is safe.**
+  - Delete, copy to library, and add to or remove from a persona each show a
+    preview and apply only on confirmation.
   - Deletes go to the system Trash.
   - Undo restores the previous state byte for byte.
-  - Identical copies merge without asking; differing ones always ask.
+  - Compare shows both copies side by side.
   - Read-only sources are refused with the reason and an offer to copy.
 - **SC14 — Launch from anywhere.** From the app's right-click menu, the
   picker, `aip://` URLs, Finder's "Open with aip…", and the Dolphin, Nautilus
@@ -339,7 +343,8 @@ harness × persona*:
 
 - CLI: `init`, `list`, `show`, `launch [--terminal]`,
   `project [--clear] [--trust-pi]`, `open [--trust-pi]`, `pick`, `verify`,
-  `sync`, `skills add|update|remove|ls|mv|cp|rm|collect|undo`,
+  `sync`, `skills add|update|remove|ls|rm|cp|diff|undo`,
+  `persona add|remove`,
   `integrations enable|disable`, `import-v0`.
 - App:
   - **Skill manager** (the home screen): scope map, folder view, inventory and
@@ -498,7 +503,7 @@ this repository, its name, URL, issues and history.
   without the user agreeing to the restart.
 - Publish 2.0 to npm under `@code-ministry/aip`: 0.x's `aip update` fetches
   from that name, and releases before 0.10.0 fetch `@latest`.
-- Delete, move or overwrite a skill or file aip did not create, unless the
+- Delete or overwrite a skill or file aip did not create, unless the
   user explicitly chose that operation for that skill in the skill manager or
   the CLI and confirmed the preview. Even then, deletes go to the Trash and
   the operation is journalled for undo.
@@ -579,12 +584,17 @@ this repository, its name, URL, issues and history.
     Anyway". Pay for signing and notarization before 2.0 is shared publicly.
     Signing then enables a Homebrew cask and removes the first-open steps.
 
-14. **The skill manager is the app's home screen and covers every skill on
-    the machine (2026-10-01).**
-    - It manages skills wherever they are, not only aip's own, because tidying
-      skills scattered across harnesses and projects is the main job.
-    - Safety comes from explicit choice, a preview, the Trash, and an
-      undo journal, not from refusing to touch files.
+14. **Two managers: skills and personas (2026-10-01).**
+    - The **skill manager** shows every skill on the machine and where it
+      applies, so duplicates are obvious.
+    - The **persona manager** edits personas and launches them.
+    - The **launch preview** joins the two.
+    - In 2.0, operations on skills outside aip are limited to resolving
+      duplicates: delete a copy, copy into the library, compare, add to or
+      remove from a persona. Moving between scopes, bulk collecting and drag
+      and drop come later.
+    - Safety comes from explicit choice, a preview, the Trash and an undo
+      journal.
     - Plugin, package, account and bundled skills stay read-only.
 15. **Every launch goes through one picker and one URL scheme (2026-10-01).**
     - The app's right-click menu, `aip pick`, `aip://` and every file-manager

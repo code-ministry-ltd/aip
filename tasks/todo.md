@@ -139,8 +139,8 @@ or one folder's per-harness stack.
 - Deps: T38 · Files: `crates/aip-core/src/inventory.rs`, `crates/aip-cli/src/skills.rs` · Size: L
 
 *Checkpoint 1: on the maintainer's Mac, `aip list` and `aip show` agree with
-the spike. `aip skills ls` finds every skill the maintainer knows about, including
-ones in project folders.*
+the spike. `aip skills ls` finds every skill the maintainer knows about,
+including ones in project folders.*
 
 ## Phase 2 — launch mode
 
@@ -292,27 +292,29 @@ Record versions and results in `docs/harness-findings.md`.
 
 ## Phase 4 — skill operations, library management, sync and import
 
-## T49 — `aip skills mv|cp|rm|collect|undo` manage skills anywhere, safely (SC13)
+## T49 — `aip skills rm|cp|diff|undo` and `aip persona add|remove` resolve duplicates (SC13)
 
-Implement plan D10 for every operation: plan, preview, confirm, journal,
+Implement plan D10 for the 2.0 operations: plan, preview, confirm, journal,
 apply, undo.
-- **Deletes** go to the system Trash (`trash` crate; a Trash directory
+- **`rm`** sends a copy to the system Trash (`trash` crate; a Trash directory
   override for tests).
+- **`cp`** copies a skill into the library, asking for a new name when a
+  different library skill already has that name.
+- **`diff`** compares two copies.
+- **`persona add|remove PERSONA SKILL`** edits a persona through
+  `toml_edit`.
 - **Overwrites** are copied into the journal first.
-- **`collect`** gathers a selection into the library: identical copies merge,
-  and differing copies show a diff and ask (keep one, or keep both renamed).
-- **Read-only sources** refuse with their reason and offer `cp` to the
-  library.
+- **Read-only sources** refuse `rm` with their reason and offer `cp`.
 
 - [ ] Each operation prints its plan and changes nothing until confirmed (or
   `--yes`).
-- [ ] `mv` and `cp` work between every pair of scopes: everywhere, a project,
-  the library.
 - [ ] `rm` puts the skill in the Trash, and `undo` brings it back.
+- [ ] `cp` of a project or global skill into the library works, including the
+  rename on a clash.
 - [ ] After every operation in a scripted sequence, `undo` restores the
   fixture tree byte for byte.
-- [ ] Plugin, package, account and bundled skills refuse `mv` and `rm`, giving
-  the owner as the reason.
+- [ ] Plugin, package, account and bundled skills refuse `rm`, giving the
+  owner as the reason.
 - Verify: `cargo test -p aip-core ops journal && cargo test -p aip-cli skills_ops`
 - Deps: T39 · Files: `crates/aip-core/src/{ops,journal}.rs`, `crates/aip-cli/src/skills.rs` · Size: L
 
@@ -400,11 +402,11 @@ review them with the maintainer. Then build:
 - Verify: `npm --prefix ui test && cargo test -p aip-app`
 - Deps: T53, T39 · Files: `ui/src/routes/manager/`, `docs/design/` · Size: L
 
-## T55 — Managing skills in the skill manager (SC13)
+## T55 — Resolving duplicates in the skill manager and launch preview (SC13)
 
-- Drag and drop between scopes.
-- Right-click actions: delete, move, copy, collect into library, add to
-  persona, reveal in file manager.
+- Right-click actions: delete a copy, copy into the library, compare, add to
+  or remove from a persona, reveal in file manager.
+- The same actions on flagged rows in the launch preview.
 - Each action shows the D10 preview and applies on confirmation.
 - Undo, and a history panel.
 
@@ -412,8 +414,8 @@ review them with the maintainer. Then build:
   with a fake core).
 - [ ] Cancelling a preview changes nothing. Confirming shows exactly the
   previewed changes.
-- [ ] End to end in a temporary HOME: move a project skill into the library,
-  then undo restores both places.
+- [ ] End to end in a temporary HOME: delete a project copy that duplicates a
+  persona skill, and the preview no longer flags it. Then undo restores it.
 - Verify: `npm --prefix ui test && cargo test -p aip-app manage`
 - Deps: T54, T49 · Files: `ui/src/routes/manager/`, `crates/aip-app/src/commands.rs` · Size: L
 
