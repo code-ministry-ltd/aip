@@ -40,6 +40,16 @@ daily, CLI first:
 
 ## Architecture decisions
 
+- **D0 — 2.0 is built alongside 0.x on the working branch (2026-10-01).**
+  - The session building 2.0 can only push its assigned branch, so there is
+    no separate `next` branch.
+  - The Rust workspace (`Cargo.toml`, `crates/`) and the app UI (`ui/`) are
+    added next to the 0.x scripts. 0.x keeps working and publishing
+    unchanged: npm ships only the files listed in `package.json`.
+  - Deleting the 0.x implementation moves to the Phase 8 switch, which
+    already needs the maintainer's approval.
+  - Where tasks say `next`, read "the working branch".
+
 - **D1 — one Cargo workspace, three crates.**
   - `aip-core` (library): manifests, library, global discovery, planning,
     applying, probes, sync, and aip's own state.
