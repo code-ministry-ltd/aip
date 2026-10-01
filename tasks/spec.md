@@ -199,6 +199,34 @@ applies*, never paths to work out.
 - **CLI parity.** `aip skills ls|mv|cp|rm|collect|undo` do the same through
   the same core.
 
+## Launch preview: what will load
+
+The bridge between the skill manager and the persona manager. For a folder × harness
+× persona, before launching, show every skill that will be in the catalog:
+- one row per skill name;
+- a column per layer: everywhere, each inherited parent folder, the folder,
+  the persona;
+- the result in plain words, for example "global copy loads; project copy
+  ignored", or "both load".
+
+Duplicates are flagged and explained using each harness's real rules,
+verified in the spike (`spike/README.md`, D1–D4):
+
+| Same name in… | Claude Code | Pi |
+|---|---|---|
+| global + project | one loads: **global wins** | one loads: **project wins** |
+| global or project + persona | **both load** (the persona's copy as `aip-<persona>:<name>`) | one loads: **the persona's copy is ignored** |
+
+Each flagged row offers decisions, never automatic ones (decision 16):
+- remove the skill from the persona;
+- delete the other copy (to the Trash, with undo);
+- compare the two copies side by side;
+- copy one into the library.
+
+The preview appears in the persona editor (for recent folders), in every
+launch menu and in the picker. Launching with no persona previews the default
+harness experience.
+
 ## Launching from anywhere
 
 One launch action, reachable everywhere, always as a choice of *folder ×
@@ -566,13 +594,22 @@ this repository, its name, URL, issues and history.
     - The macOS 2.0 menu is a single "Open with aip…" item until a signed
       Finder Sync extension allows a live tree.
 
+16. **Personas are chosen consciously, per launch (2026-10-01).**
+    - Without a persona, Claude and Pi behave exactly as they would without
+      aip: global plus project skills.
+    - A folder has no default persona. The picker remembering the last
+      choice for each folder is only a convenience.
+    - Duplicates are never de-duplicated automatically. The launch preview
+      shows them, and the user decides.
+    - Claude desktop is the one exception that persists. It needs project
+      mode, whose files stay in the folder until cleared. The app therefore
+      marks such a folder ("writer applied for Claude desktop") and offers to
+      clear it, and the launch preview of a plain launch there shows those
+      skills.
+
 ## Open questions
 
-1. **A default persona per folder.** Should a folder be able to remember a
-   persona that applies even when plain `claude` or `pi` is started there
-   (project mode as the default, like 0.x's `aip local`)? Or is "the picker
-   remembers my last choice per folder" enough?
-2. **Where Claude Code records projects.** Confirm on a real machine which
+1. **Where Claude Code records projects.** Confirm on a real machine which
    per-project record (for example in `~/.claude.json` or `~/.claude/projects/`)
    lists the folders it has been used in, and read only the folder paths from
    it.
