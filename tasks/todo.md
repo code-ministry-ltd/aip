@@ -116,12 +116,14 @@ the spike.*
 Define the `Harness` trait (D3), and implement Claude's `plan_launch` and the
 `apply` safety rules (D2):
 - a generated inline plugin with links into the library;
-- a `--settings` file with `skillOverrides` and `[claude.settings]`;
+- a `--settings` file with the `[claude.settings]` passthrough;
 - `--mcp-config`;
 - `--append-system-prompt-file`.
 
-- [ ] Golden plans for `writer` and `coder` (including `inherit_global_skills =
-  false` and `disableBundledSkills`) match the spike's plans.
+- [ ] Golden plans for `writer` and `coder` match the spike's plans, minus
+  the hiding the spike also produced (spec decision 2: additive only). No
+  generated plan contains `skillOverrides`, `disableBundledSkills` or
+  `--no-skills`.
 - [ ] `apply` refuses to replace a real file or a foreign link, and prunes only
   links into the library.
 - [ ] SC4: applying a launch plan in a temporary HOME leaves `~/.claude`,
@@ -131,14 +133,14 @@ Define the `Harness` trait (D3), and implement Claude's `plan_launch` and the
 - Deps: T38 · Files: `crates/aip-core/src/{harness,plan,apply}.rs`,
   `crates/aip-core/src/harness/claude.rs` · Size: L
 
-## T40 — Pi launch plans hide and add skills as verified
+## T40 — Pi launch plans add skills as verified
 
-Implement Pi's `plan_launch`: `--no-skills` plus re-adding the kept globals,
-`--skill` per persona skill, `--append-system-prompt <file>`, and `[pi] args`.
-`mcp_servers` produce a note, not an error.
+Implement Pi's `plan_launch` (additive only): `--skill` per persona skill,
+`--append-system-prompt <file>`, and `[pi] args`. `mcp_servers` produce a
+note, not an error.
 
-- [ ] Golden plans match the spike's for both example personas and for an
-  `exclude_skills` fixture.
+- [ ] Golden plans match the spike's for both example personas, and global
+  skills stay discoverable (no `--no-skills`).
 - Verify: `cargo test -p aip-core plan::pi`
 - Deps: T39 · Files: `crates/aip-core/src/harness/pi.rs` · Size: S
 
@@ -195,8 +197,8 @@ green against Pi 0.99.x and the current Claude Code.*
 ## T44 — `aip project` writes and clears a persona exactly (SC5)
 
 Implement `plan_project` for Claude (`.claude/skills` links and owned
-`skillOverrides` in `.claude/settings.local.json`) and for Pi
-(`.agents/skills` links). Add the `.git/info/exclude` block, owned state in
+`[claude.settings]` passthrough keys in `.claude/settings.local.json`) and for
+Pi (`.agents/skills` links). Add the `.git/info/exclude` block, owned state in
 the D6 cache keyed by folder, and `aip project PERSONA|--clear`.
 
 - [ ] `--clear` restores a fixture folder byte for byte: user keys and user
@@ -229,12 +231,12 @@ folder, warn that Pi GUIs will not load the skills, and offer to record trust
 
 Add `aip open PERSONA claude-desktop [DIR] [--trust-pi]` (project mode, then
 `claude://code/new?folder=` via `open` or `xdg-open`) and
-`aip verify --mode project`. Pi's "hide" is reported as a known limit, not a
-failure.
+`aip verify --mode project`, which checks every persona skill and every
+global skill loaded, as in launch mode.
 
 - [ ] `--dry-run` prints the deep link and the planned operations.
 - [ ] Project-mode `verify` passes for Claude, and for Pi with `-a` standing in
-  for trust, and reports Pi's hide as "limit".
+  for trust.
 - Verify: `AIP_E2E=1 cargo test -p aip-cli --test verify project`
 - Deps: T45 · Files: `crates/aip-cli/src/{open,verify}.rs` · Size: S
 

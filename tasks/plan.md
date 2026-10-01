@@ -143,10 +143,12 @@ machine.*
 
 1. **`aip launch PERSONA claude|pi [--terminal] [-- ARGS]` starts a real
    session**
-   - Claude: generated inline plugin, `--settings` with `skillOverrides` and
-     passthrough, `--mcp-config`, `--append-system-prompt-file`.
-   - Pi: `--no-skills` plus re-adds, `--skill`, `--append-system-prompt`, and
+   - Claude: generated inline plugin, `--settings` carrying the
+     `[claude.settings]` passthrough, `--mcp-config`,
+     `--append-system-prompt-file`.
+   - Pi: `--skill` per persona skill, `--append-system-prompt`, and
      `[pi] args`.
+   - Additive only (spec decision 2): nothing aip generates hides a skill.
    - Terminal launch: `xdg-terminal-exec` and the fallback list on Linux, a
      `.command` file on macOS, and `AIP_TERMINAL`.
    - Golden-plan tests ported from the spike, plus an SC4 test: snapshot
@@ -171,8 +173,9 @@ now, not the spike's 0.85).*
 
 1. **`aip project PERSONA [--clear]` writes and removes a persona in a folder
    exactly**
-   - Links in `.claude/skills` and `.agents/skills`, owned `skillOverrides`,
-     and the `.git/info/exclude` block.
+   - Links in `.claude/skills` and `.agents/skills`, the `[claude.settings]`
+     passthrough as owned keys in `.claude/settings.local.json`, and the
+     `.git/info/exclude` block.
    - Owned state is kept in D6, so `--clear` restores the folder byte for byte
      (SC5).
    - `aip show` and `aip list` report "this folder has persona X applied",
@@ -187,7 +190,8 @@ now, not the spike's 0.85).*
 3. **`aip open PERSONA claude-desktop [DIR]` and `aip verify --mode
    project`**
    - Deep link via `open` or `xdg-open`.
-   - Project-mode verify reports Pi's "hide" as a known limit.
+   - Project-mode verify checks the same thing as launch mode: every persona
+     skill and every global skill loaded.
 
 *Checkpoint 3 (manual, on the Mac):*
 - *SC2: the Claude desktop Code tab lists the persona's skills after
