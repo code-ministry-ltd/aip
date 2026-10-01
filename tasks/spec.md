@@ -99,11 +99,21 @@ OSS). Reasons for deferring:
 
 ## Objective
 
-Let a person keep one library of skills (plus MCP servers, instructions and
-harness extras), group it into personas, see exactly what each persona loads
-and what it costs in context, and start Claude Code or Pi (terminal or GUI)
-with that persona in one action. It should work the same on every machine they
-sync to, on Linux and macOS. Windows follows in a later 2.x release.
+Make skills easy to manage and easy to use. The two things that matter most:
+
+1. **Managing.** A beautiful app shows every skill on the machine: global for
+   each harness, in each project, in the library, inside plugins. It shows
+   visually where each one applies, so nobody has to reason about folder
+   paths. From there the user can delete, move, copy, or collect skills into
+   one place.
+2. **Invoking.** From the app, or by right-clicking a folder in the OS file
+   manager, the user starts Claude Code or Pi (in a terminal) or a desktop app
+   in that folder, with whichever persona they pick, in either order.
+
+Underneath sit one library of skills (plus MCP servers, instructions and
+harness extras) and additive personas over it. Everything works the same on
+every machine the user syncs to, on Linux and macOS. Windows follows in a
+later 2.x release.
 
 ## Concepts
 
@@ -125,9 +135,101 @@ sync to, on Linux and macOS. Windows follows in a later 2.x release.
   `~/.claude/skills`, `~/.agents/skills`, Claude's synced account skills and
   bundled skills.
   - They are on in every persona: the user's "always" set.
-  - aip shows them, with their cost, in every persona's catalog, but never
-    hides, moves or deletes them.
+  - aip shows them, with their cost, in every persona's catalog, and never
+    hides them.
+  - The user can move, copy or delete them from the skill manager.
   - A user who wants personas to be the whole picture keeps no global skills.
+- **Scope:** where a skill applies.
+  - *Everywhere* (global, for one or more harnesses).
+  - *A folder and everything below it* (project skills; a harness also reads
+    some parent folders, so a project inherits from its parents).
+  - *Only when a persona is chosen* (library skills).
+
+  Plugin, package, synced-account and bundled skills belong to whatever
+  installed them and are read-only.
+
+## The skill manager
+
+The heart of the app. It is not a file browser: the user sees *where a skill
+applies*, never paths to work out.
+
+- **Scope map.** A visual hierarchy with each harness as a lane, so it is
+  obvious which harness sees what (for example, `~/.agents/skills` is seen by
+  Pi but not by Claude):
+  - **Everywhere** at the root;
+  - **projects** nested under the folders they live in;
+  - **the library and personas** beside them, applied only when chosen.
+- **Folder view.** Selecting any folder shows the stack each harness will load
+  there, layer by layer: everywhere, then inherited parent folders, then the
+  folder itself, then a persona if one is picked. Each layer shows its skills,
+  sources and always-on token cost, with a total per harness.
+- **Every skill on the machine.** The inventory covers:
+  - global roots for each harness;
+  - project folders;
+  - the library;
+  - plugins and Pi packages;
+  - Claude's synced account skills and bundled skills.
+
+  Each skill appears once per location, with its name, description, scope,
+  harnesses, cost and source. Identical copies (same content hash) and
+  same-name variants are flagged.
+- **Finding projects without scanning the disk.** Three sources:
+  - workspace roots the user adds (for example `~/src`), scanned to a limited
+    depth;
+  - folders aip has launched in;
+  - folders the harnesses themselves have recorded, such as Pi's per-folder
+    sessions and Claude Code's per-project state. The exact Claude Code
+    location is to be verified on a real machine.
+- **Operations.** Each one is available by drag and drop between scopes and
+  from a right-click menu:
+  - **Delete:** moves to the system Trash.
+  - **Move** or **copy** to another scope: everywhere, a project, or the
+    library.
+  - **Collect into library:** gather any selection into the library. Identical
+    copies merge automatically. Differing versions open a side-by-side diff to
+    pick one, or keep both under new names.
+  - **Add to persona.**
+  - **Reveal in file manager.**
+- **Safety for every operation:**
+  - it shows exactly what will change before applying;
+  - it applies only on confirmation;
+  - it is undoable from an operation journal (Undo, and a history list);
+  - it refuses read-only sources with the reason ("managed by plugin X"),
+    offering *copy to library* instead.
+- **CLI parity.** `aip skills ls|mv|cp|rm|collect|undo` do the same through
+  the same core.
+
+## Launching from anywhere
+
+One launch action, reachable everywhere, always as a choice of *folder ×
+harness × persona*:
+
+- **Targets:**
+  - Claude Code or Pi in the user's terminal (launch mode);
+  - Claude desktop on the folder (project mode, then its deep link).
+  - More desktop targets (for example Paseo) can be added once they have a way
+    to open a folder.
+- **In the app:** right-click any folder or project in the scope map, then
+  Launch ▸ harness ▸ persona, or persona ▸ harness. Recent combinations for
+  that folder come first.
+- **Picker window:** a small, keyboard-driven window. Pick harness and persona
+  in either order; it remembers the last choice for each folder.
+  `aip pick DIR` and the `aip://pick?dir=…` URL open it.
+  `aip://launch?dir=…&harness=…&persona=…` launches directly.
+- **OS file manager.** Every integration calls the picker or the launch URL, so
+  personas never need hard-coding into the OS:
+
+  | File manager | 2.0 | Later |
+  |---|---|---|
+  | macOS Finder | One "Open with aip…" item, as an NSServices entry in the app's Info.plist (or a generated Quick Action), opening the picker. Finder puts it under Services or Quick Actions, not at the top level. | Once signed: a Finder Sync extension with a top-level "aip ▸ persona ▸ target" menu built live |
+  | KDE Dolphin | A generated service menu in `~/.local/share/kio/servicemenus/` (executable bit set; `X-KDE-Submenu`) with the full persona × target tree, plus "Choose…", rewritten whenever personas change | |
+  | GNOME Nautilus | A nautilus-python extension that builds the menu live, if nautilus-python is installed; otherwise generated scripts under Scripts ▸ aip | |
+  | Nemo | Generated `~/.local/share/nemo/actions` entries | |
+  | Thunar | | Custom actions, after testing around the 4.20.6 regression |
+  | Windows Explorer | | Registry cascading verbs; once signed, the Windows 11 top-level menu (IExplorerCommand plus a sparse package) |
+
+  The integrations are installed only when the user turns them on in
+  settings. They are removed when turned off or when aip is uninstalled.
 
 ## Success criteria
 
@@ -187,18 +289,38 @@ sync to, on Linux and macOS. Windows follows in a later 2.x release.
   On a user's machine, a harness version newer than the last verified one
   triggers a re-check of the user's personas, with a warning if anything no
   longer loads.
+- **SC12 — Every skill is visible, with where it applies.** On a fixture
+  machine with skills in every source and scope, the inventory lists each
+  location exactly once with scope, harnesses, source, cost and duplicate
+  flags. For any folder, the folder view's per-harness stack matches what
+  `aip verify` reports from the real harness.
+- **SC13 — Managing skills is safe.**
+  - Delete, move, copy and collect show a preview and apply only on
+    confirmation.
+  - Deletes go to the system Trash.
+  - Undo restores the previous state byte for byte.
+  - Identical copies merge without asking; differing ones always ask.
+  - Read-only sources are refused with the reason and an offer to copy.
+- **SC14 — Launch from anywhere.** From the app's right-click menu, the
+  picker, `aip://` URLs, Finder's "Open with aip…", and the Dolphin, Nautilus
+  and Nemo menus, the user starts the chosen harness or desktop app in the
+  chosen folder with the chosen persona. Changing personas updates the
+  generated Linux menus without a restart where the file manager allows it.
 
 ## Scope for the first release
 
 - CLI: `init`, `list`, `show`, `launch [--terminal]`,
-  `project [--clear] [--trust-pi]`, `open [--trust-pi]`, `verify`, `sync`,
-  `skills add|update|remove`, `import-v0`.
-- App screens:
-  - **Library:** skills with cost, source and update state.
+  `project [--clear] [--trust-pi]`, `open [--trust-pi]`, `pick`, `verify`,
+  `sync`, `skills add|update|remove|ls|mv|cp|rm|collect|undo`,
+  `integrations enable|disable`, `import-v0`.
+- App:
+  - **Skill manager** (the home screen): scope map, folder view, inventory and
+    operations (see "The skill manager").
   - **Personas:** checkbox editor with a live context budget per harness.
-  - **Launch:** persona × harness × folder picker, recent folders, terminal
-    vs GUI.
-  - **Machine:** detected harness versions, global skills, drift.
+  - **Launch:** a right-click menu everywhere, plus the picker window (see
+    "Launching from anywhere").
+  - **Machine:** detected harness versions, drift, workspace roots and
+    file-manager integrations.
 - MCP servers for Claude (via `--mcp-config` / `.mcp.json`). Pi has no
   built-in MCP; a persona's `mcp_servers` are skipped for Pi with a note.
 - Pi extensions and packages through `[pi] args` (`-e`) only.
@@ -334,6 +456,8 @@ this repository, its name, URL, issues and history.
   Windows signing). The maintainer has already decided to pay for macOS
   signing before 2.0 is shared publicly (decision 13); ask only about timing.
 - Adding a beta or nightly update channel.
+- Installing file-manager integrations. They are installed only when the user
+  turns them on, and removed cleanly when turned off.
 
 **Never**
 
@@ -346,7 +470,11 @@ this repository, its name, URL, issues and history.
   without the user agreeing to the restart.
 - Publish 2.0 to npm under `@code-ministry/aip`: 0.x's `aip update` fetches
   from that name, and releases before 0.10.0 fetch `@latest`.
-- Delete or overwrite a file or link aip did not create.
+- Delete, move or overwrite a skill or file aip did not create, unless the
+  user explicitly chose that operation for that skill in the skill manager or
+  the CLI and confirmed the preview. Even then, deletes go to the Trash and
+  the operation is journalled for undo.
+- Change plugin-, package-, account- or bundled-skill files in place.
 
 ## Resolved decisions
 
@@ -423,9 +551,31 @@ this repository, its name, URL, issues and history.
     Anyway". Pay for signing and notarization before 2.0 is shared publicly.
     Signing then enables a Homebrew cask and removes the first-open steps.
 
+14. **The skill manager is the app's home screen and covers every skill on
+    the machine (2026-10-01).**
+    - It manages skills wherever they are, not only aip's own, because tidying
+      skills scattered across harnesses and projects is the main job.
+    - Safety comes from explicit choice, a preview, the Trash, and an
+      undo journal, not from refusing to touch files.
+    - Plugin, package, account and bundled skills stay read-only.
+15. **Every launch goes through one picker and one URL scheme (2026-10-01).**
+    - The app's right-click menu, `aip pick`, `aip://` and every file-manager
+      integration open the same picker or call the same launch.
+    - So personas are never hard-coded into OS menus that can't be rebuilt.
+    - The Linux menus that can be rebuilt list personas directly.
+    - The macOS 2.0 menu is a single "Open with aip…" item until a signed
+      Finder Sync extension allows a live tree.
+
 ## Open questions
 
-None. Decisions 10–13 closed the last five on 2026-09-29.
+1. **A default persona per folder.** Should a folder be able to remember a
+   persona that applies even when plain `claude` or `pi` is started there
+   (project mode as the default, like 0.x's `aip local`)? Or is "the picker
+   remembers my last choice per folder" enough?
+2. **Where Claude Code records projects.** Confirm on a real machine which
+   per-project record (for example in `~/.claude.json` or `~/.claude/projects/`)
+   lists the folders it has been used in, and read only the folder paths from
+   it.
 
 ## Later: Codex (after 2.0)
 

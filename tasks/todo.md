@@ -6,7 +6,7 @@ Spec: `tasks/spec.md` ("persona overlays and a desktop app (aip 2.0)") · Plan:
 - Every task leaves its affected suite green; run the full affected suite
   before committing.
 - Commit one completed task at a time.
-- Phase 0 runs on `main`; Phases 1–6 run on `next`; Phase 7 needs explicit
+- Phase 0 runs on `main`; Phases 1–7 run on `next`; Phase 8 needs explicit
   approval.
 - Verify commands run from the repository root.
 
@@ -106,12 +106,45 @@ is `~/agent-personas` (D6).
 - Verify: `cargo test -p aip-cli && cargo run -p aip-cli -- list --root "$(mktemp -d)/r"`
 - Deps: T37 · Files: `crates/aip-cli/src/` · Size: M
 
+## T39 — `aip skills ls` sees every skill on the machine, and where it applies
+
+Build the `Inventory` (plan D9) from these locations:
+- global roots per harness, including `~/.claude/skills/synced/…` as
+  "account";
+- bundled skills (reported by the probes but not on disk);
+- Claude plugin skills and Pi package skills, all read-only;
+- the library;
+- project folders.
+
+Project discovery uses three sources:
+- workspace roots set in aip's settings, scanned to depth 4;
+- folders aip has launched in;
+- harness per-folder records: Pi's per-folder sessions, and Claude Code's
+  record once spec open question 2 is confirmed.
+
+`aip skills ls [--folder DIR] [--harness H] [--json]` prints the inventory,
+or one folder's per-harness stack.
+
+- [ ] A fixture HOME with a skill in every source, and two workspace projects
+  (one nested under a parent folder with its own skills), lists every location
+  exactly once, with scope, harnesses, source, read-only flag and cost.
+- [ ] Identical copies share a content hash and are flagged as duplicates;
+  same-name skills with different content are flagged as variants.
+- [ ] `--folder` on the nested project prints each harness's stack: everywhere,
+  inherited parent layers (Pi: `.agents/skills` up to the Git root), and the
+  folder itself.
+- [ ] Scanning never descends past the depth limit or outside workspace roots
+  and harness homes.
+- Verify: `cargo test -p aip-core inventory && cargo test -p aip-cli skills_ls`
+- Deps: T38 · Files: `crates/aip-core/src/inventory.rs`, `crates/aip-cli/src/skills.rs` · Size: L
+
 *Checkpoint 1: on the maintainer's Mac, `aip list` and `aip show` agree with
-the spike.*
+the spike. `aip skills ls` finds every skill the maintainer knows about, including
+ones in project folders.*
 
 ## Phase 2 — launch mode
 
-## T39 — Claude launch plans match the spike's verified mechanisms
+## T40 — Claude launch plans match the spike's verified mechanisms
 
 Define the `Harness` trait (D3), and implement Claude's `plan_launch` and the
 `apply` safety rules (D2):
@@ -133,7 +166,7 @@ Define the `Harness` trait (D3), and implement Claude's `plan_launch` and the
 - Deps: T38 · Files: `crates/aip-core/src/{harness,plan,apply}.rs`,
   `crates/aip-core/src/harness/claude.rs` · Size: L
 
-## T40 — Pi launch plans add skills as verified
+## T41 — Pi launch plans add skills as verified
 
 Implement Pi's `plan_launch` (additive only): `--skill` per persona skill,
 `--append-system-prompt <file>`, and `[pi] args`. `mcp_servers` produce a
@@ -142,9 +175,9 @@ note, not an error.
 - [ ] Golden plans match the spike's for both example personas, and global
   skills stay discoverable (no `--no-skills`).
 - Verify: `cargo test -p aip-core plan::pi`
-- Deps: T39 · Files: `crates/aip-core/src/harness/pi.rs` · Size: S
+- Deps: T40 · Files: `crates/aip-core/src/harness/pi.rs` · Size: S
 
-## T41 — `aip launch` starts Claude or Pi, inline or in a terminal
+## T42 — `aip launch` starts Claude or Pi, inline or in a terminal
 
 Add `aip launch PERSONA claude|pi [--dir] [--terminal] [--dry-run] [-- ARGS]`.
 Terminal launch uses `xdg-terminal-exec`, then the Linux fallback list, then
@@ -156,9 +189,9 @@ Terminal launch uses `xdg-terminal-exec`, then the Linux fallback list, then
   only `kitty`, and `AIP_TERMINAL`.
 - [ ] Arguments after `--` reach the harness unchanged and after aip's own.
 - Verify: `cargo test -p aip-cli launch terminal`
-- Deps: T40 · Files: `crates/aip-cli/src/launch.rs`, `crates/aip-core/src/terminal.rs` · Size: M
+- Deps: T41 · Files: `crates/aip-cli/src/launch.rs`, `crates/aip-core/src/terminal.rs` · Size: M
 
-## T42 — `aip verify` asks the harness what it loaded
+## T43 — `aip verify` asks the harness what it loaded
 
 First find out whether Claude emits `system/init` before authentication fails
 when it has no credentials, and record the answer in
@@ -174,27 +207,27 @@ with the result table and exit status. Record the harness version on success
 - [ ] `verify` warns before a Claude probe that it may use a few tokens, unless
   the finding above shows it needs none.
 - Verify: `AIP_E2E=1 cargo test -p aip-cli --test verify -- --nocapture`
-- Deps: T41 · Files: `crates/aip-core/src/probe.rs`, `crates/aip-cli/src/verify.rs`,
+- Deps: T42 · Files: `crates/aip-core/src/probe.rs`, `crates/aip-cli/src/verify.rs`,
   `docs/harness-findings.md` · Size: L
 
-## T43 — Nightly CI catches harness releases that break aip (SC11, CI half)
+## T44 — Nightly CI catches harness releases that break aip (SC11, CI half)
 
 Add a scheduled workflow that installs the latest `@anthropic-ai/claude-code`
-and `@earendil-works/pi-coding-agent` and runs T42's end-to-end tests. On
+and `@earendil-works/pi-coding-agent` and runs T43's end-to-end tests. On
 failure it opens or updates one issue naming both harness versions. A Claude
-API key secret with a spending cap is used only if T42 found it necessary.
+API key secret with a spending cap is used only if T43 found it necessary.
 
 - [ ] A manual `workflow_dispatch` run is green against the current releases.
 - [ ] Forcing a failing expectation opens exactly one issue with the versions.
 - Verify: manual `workflow_dispatch` run
-- Deps: T42 · Files: `.github/workflows/harness-drift.yml` · Size: M
+- Deps: T43 · Files: `.github/workflows/harness-drift.yml` · Size: M
 
 *Checkpoint 2: the maintainer uses `aip launch` daily; the nightly drift job is
 green against Pi 0.99.x and the current Claude Code.*
 
 ## Phase 3 — project mode
 
-## T44 — `aip project` writes and clears a persona exactly (SC5)
+## T45 — `aip project` writes and clears a persona exactly (SC5)
 
 Implement `plan_project` for Claude (`.claude/skills` links and owned
 `[claude.settings]` passthrough keys in `.claude/settings.local.json`) and for
@@ -209,10 +242,10 @@ the D6 cache keyed by folder, and `aip project PERSONA|--clear`.
 - [ ] `aip show` and `aip list` report "this folder has persona X applied" for
   the current folder.
 - Verify: `cargo test -p aip-core plan::project apply::project && cargo test -p aip-cli project`
-- Deps: T42 · Files: `crates/aip-core/src/harness/{claude,pi}.rs`,
+- Deps: T43 · Files: `crates/aip-core/src/harness/{claude,pi}.rs`,
   `crates/aip-core/src/{apply,state}.rs`, `crates/aip-cli/src/project.rs` · Size: L
 
-## T45 — Pi trust is detected, explained and offered (decision 10)
+## T46 — Pi trust is detected, explained and offered (decision 10)
 
 Resolve trust as Pi does: flags, then `trust.json`, then
 `defaultProjectTrust`. When project mode is applied for Pi in an untrusted
@@ -225,9 +258,9 @@ folder, warn that Pi GUIs will not load the skills, and offer to record trust
 - [ ] Recording trust writes exactly one `trust.json` entry for the folder,
   and only after confirmation. Declining writes nothing.
 - Verify: `cargo test -p aip-core trust && cargo test -p aip-cli project_trust`
-- Deps: T44 · Files: `crates/aip-core/src/harness/pi.rs`, `crates/aip-cli/src/project.rs` · Size: M
+- Deps: T45 · Files: `crates/aip-core/src/harness/pi.rs`, `crates/aip-cli/src/project.rs` · Size: M
 
-## T46 — `aip open` and project-mode `verify`
+## T47 — `aip open` and project-mode `verify`
 
 Add `aip open PERSONA claude-desktop [DIR] [--trust-pi]` (project mode, then
 `claude://code/new?folder=` via `open` or `xdg-open`) and
@@ -238,9 +271,9 @@ global skill loaded, as in launch mode.
 - [ ] Project-mode `verify` passes for Claude, and for Pi with `-a` standing in
   for trust.
 - Verify: `AIP_E2E=1 cargo test -p aip-cli --test verify project`
-- Deps: T45 · Files: `crates/aip-cli/src/{open,verify}.rs` · Size: S
+- Deps: T46 · Files: `crates/aip-cli/src/{open,verify}.rs` · Size: S
 
-## T47 — GUI behaviour is confirmed on real apps (SC2, SC3)
+## T48 — GUI behaviour is confirmed on real apps (SC2, SC3)
 
 Manual, on the maintainer's Mac:
 - `aip open writer claude-desktop` in a Git project: the Code tab lists
@@ -253,13 +286,37 @@ Record versions and results in `docs/harness-findings.md`.
 
 - [ ] Both checks are recorded with app and harness versions and the date.
 - Verify: manual
-- Deps: T46 · Files: `docs/harness-findings.md` · Size: S
+- Deps: T47 · Files: `docs/harness-findings.md` · Size: S
 
 *Checkpoint 3: SC2 and SC3 hold on the maintainer's Mac.*
 
-## Phase 4 — library management, sync and import
+## Phase 4 — skill operations, library management, sync and import
 
-## T48 — `aip skills add|update|remove` manage the library from Git
+## T49 — `aip skills mv|cp|rm|collect|undo` manage skills anywhere, safely (SC13)
+
+Implement plan D10 for every operation: plan, preview, confirm, journal,
+apply, undo.
+- **Deletes** go to the system Trash (`trash` crate; a Trash directory
+  override for tests).
+- **Overwrites** are copied into the journal first.
+- **`collect`** gathers a selection into the library: identical copies merge,
+  and differing copies show a diff and ask (keep one, or keep both renamed).
+- **Read-only sources** refuse with their reason and offer `cp` to the
+  library.
+
+- [ ] Each operation prints its plan and changes nothing until confirmed (or
+  `--yes`).
+- [ ] `mv` and `cp` work between every pair of scopes: everywhere, a project,
+  the library.
+- [ ] `rm` puts the skill in the Trash, and `undo` brings it back.
+- [ ] After every operation in a scripted sequence, `undo` restores the
+  fixture tree byte for byte.
+- [ ] Plugin, package, account and bundled skills refuse `mv` and `rm`, giving
+  the owner as the reason.
+- Verify: `cargo test -p aip-core ops journal && cargo test -p aip-cli skills_ops`
+- Deps: T39 · Files: `crates/aip-core/src/{ops,journal}.rs`, `crates/aip-cli/src/skills.rs` · Size: L
+
+## T50 — `aip skills add|update|remove` manage the library from Git
 
 Port 0.x's source forms (GitHub shorthand, Git URLs with `#path`) and the
 `.aip-source` sidecar. `update` shows the upstream diff and asks before
@@ -273,7 +330,7 @@ replacing anything. Skills without a sidecar are never touched.
 - Verify: `cargo test -p aip-core skills && cargo test -p aip-cli skills`
 - Deps: T38 · Files: `crates/aip-core/src/skills.rs`, `crates/aip-cli/src/skills.rs` · Size: M
 
-## T49 — `aip sync` and `aip clone` keep machines in step (SC7)
+## T51 — `aip sync` and `aip clone` keep machines in step (SC7)
 
 Pull, commit and push through `git` (D5). Refuse a newer `format`. Report
 conflicts per file with both sides, and never leave a rebase in progress. Add
@@ -285,9 +342,9 @@ an opt-in timer setting (consumed by the app) and `aip clone URL [DIR]`.
   versions, leaves the repository clean and unchanged, and exits non-zero.
 - [ ] No command other than `sync` and `clone` contacts the remote.
 - Verify: `cargo test -p aip-core sync && cargo test -p aip-cli sync`
-- Deps: T48 · Files: `crates/aip-core/src/sync.rs`, `crates/aip-cli/src/sync.rs` · Size: L
+- Deps: T50 · Files: `crates/aip-core/src/sync.rs`, `crates/aip-cli/src/sync.rs` · Size: L
 
-## T50 — `aip import-v0` brings 0.x profiles across (SC9)
+## T52 — `aip import-v0` brings 0.x profiles across (SC9)
 
 Import each 0.x profile as a persona:
 - `skills/` goes into the library, deduplicated by content hash;
@@ -303,7 +360,7 @@ if the user confirms.
 - [ ] The shell hook is removed only after confirmation, and other lines in
   the profile are untouched.
 - Verify: `cargo test -p aip-core import_v0 && cargo test -p aip-cli import_v0`
-- Deps: T49 · Files: `crates/aip-core/src/import_v0.rs`, `crates/aip-cli/src/import_v0.rs`,
+- Deps: T51 · Files: `crates/aip-core/src/import_v0.rs`, `crates/aip-cli/src/import_v0.rs`,
   `crates/aip-core/tests/fixtures/v0/` · Size: L
 
 *Checkpoint 4: the maintainer's real 0.x profiles import and sync to a second
@@ -311,7 +368,7 @@ machine that then launches a persona.*
 
 ## Phase 5 — the desktop app
 
-## T51 — The app opens, and the same binary answers CLI subcommands
+## T53 — The app opens, and the same binary answers CLI subcommands
 
 Add `crates/aip-app` (Tauri 2, Svelte 5 + Vite; D1, D7). Its binary calls
 `aip-cli` when given a subcommand and opens the window otherwise. Tauri
@@ -321,22 +378,46 @@ smoke test on Linux, and document `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
 - [ ] `aip-app list` prints the same output as `aip list`.
 - [ ] The Linux smoke test opens the window, calls one command and exits 0.
 - Verify: `cargo test -p aip-app && xvfb-run cargo run -p aip-app -- --smoke-test`
-- Deps: T50 · Files: `crates/aip-app/`, `ui/` · Size: L
+- Deps: T52 · Files: `crates/aip-app/`, `ui/` · Size: L
 
-## T52 — Library and Machine screens show everything and its cost (SC6)
+## T54 — The skill manager shows every skill and where it applies (SC6, SC12)
 
-- **Library screen:** every skill with its source (library, global, account,
-  plugin/package), its always-on tokens and its update state.
-- **Machine screen:** harness versions, the last-verified version and drift
-  from the probes. Account skills carry a read-only note linking to the
-  claude.ai settings.
+Before building, design the scope map and folder view as clickable mock-ups
+fed with real `aip skills ls --json` output from the maintainer's machine, and
+review them with the maintainer. Then build:
+- **Scope map:** everywhere → folders → projects, with a lane per harness and
+  the library and personas alongside.
+- **Folder view:** each harness's stack, layer by layer, with token totals.
+- **Inventory search and filters:** by harness, source, scope, duplicates and
+  cost.
+- **Account skills:** a read-only "claude.ai / desktop chat" note with the
+  settings link.
 
-- [ ] Component tests render fixture data for each source type and a drift
-  case.
+- [ ] The mock-ups are approved by the maintainer and kept in `docs/design/`.
+- [ ] Component tests render a fixture inventory with one lane per harness and
+  every source type.
+- [ ] Folder-view totals equal `aip skills ls --folder` for the same fixture.
 - Verify: `npm --prefix ui test && cargo test -p aip-app`
-- Deps: T51 · Files: `ui/src/routes/{library,machine}/` · Size: M
+- Deps: T53, T39 · Files: `ui/src/routes/manager/`, `docs/design/` · Size: L
 
-## T53 — Personas screen edits with a live context budget
+## T55 — Managing skills in the skill manager (SC13)
+
+- Drag and drop between scopes.
+- Right-click actions: delete, move, copy, collect into library, add to
+  persona, reveal in file manager.
+- Each action shows the D10 preview and applies on confirmation.
+- Undo, and a history panel.
+
+- [ ] Every action calls the same core operation as its CLI command (asserted
+  with a fake core).
+- [ ] Cancelling a preview changes nothing. Confirming shows exactly the
+  previewed changes.
+- [ ] End to end in a temporary HOME: move a project skill into the library,
+  then undo restores both places.
+- Verify: `npm --prefix ui test && cargo test -p aip-app manage`
+- Deps: T54, T49 · Files: `ui/src/routes/manager/`, `crates/aip-app/src/commands.rs` · Size: L
+
+## T56 — Personas screen edits with a live context budget
 
 A checkbox editor per harness, with the always-on token total updating live.
 Writes go through `aip-core` using `toml_edit`, so comments and key order
@@ -346,27 +427,85 @@ survive.
   fixture persona.
 - [ ] The budget total equals `aip show` for the same persona.
 - Verify: `cargo test -p aip-core persona_edit && npm --prefix ui test`
-- Deps: T52 · Files: `crates/aip-core/src/persona_edit.rs`, `ui/src/routes/personas/` · Size: M
+- Deps: T55 · Files: `crates/aip-core/src/persona_edit.rs`, `ui/src/routes/personas/` · Size: M
 
-## T54 — Launch screen, trust prompt and sync view
+## T57 — Launch from anywhere in the app, plus the picker and `aip://` (D11, SC14)
 
-- **Launch screen:** persona × harness × folder, recent folders, terminal
-  launch, and `open` for Claude desktop.
-- **Pi trust prompt:** shown when T45 reports an untrusted folder.
-- **Sync view:** status, the opt-in timer, and a conflict view with both
-  sides.
+- **Right-click any folder or project:** Launch ▸ harness ▸ persona, or
+  persona ▸ harness, with recent combinations first.
+- **Picker window (`aip pick DIR`):** keyboard-driven, accepts either order,
+  and remembers the last choice per folder.
+- **URL handlers:** `aip://pick?dir=…` and `aip://launch?dir=…&harness=…&persona=…`,
+  registered on macOS (Info.plist) and Linux (`x-scheme-handler/aip` in the
+  `.desktop` file).
+- **Pi trust prompt:** shown when T46 reports an untrusted folder.
+- **Machine screen:**
+  - harness versions and drift;
+  - workspace roots;
+  - sync status, the opt-in timer, and a conflict view with both sides;
+  - the integration toggles used in Phase 6.
 
-- [ ] Each action calls the same core function as its CLI command
-  (asserted with a fake core in UI tests).
-- Verify: `npm --prefix ui test && cargo test -p aip-app`
-- Deps: T53 · Files: `ui/src/routes/{launch,sync}/`, `crates/aip-app/src/commands.rs` · Size: L
+- [ ] Every launch path calls the core `launch` (asserted with a fake core),
+  and `--dry-run` URLs print the planned command.
+- [ ] `xdg-open 'aip://pick?dir=…'` opens the picker on that folder, on Linux
+  CI under Xvfb.
+- [ ] The picker can be driven with the keyboard alone, in either order.
+- Verify: `npm --prefix ui test && cargo test -p aip-app launch`
+- Deps: T56 · Files: `ui/src/routes/{launch,machine}/`, `crates/aip-app/src/{commands,urls}.rs` · Size: L
 
-*Checkpoint 5: the maintainer manages personas only through the app for a
-week.*
+*Checkpoint 5: the maintainer uses the app instead of the CLI for a week,
+tidying their real skills with it and launching from its right-click menu or
+the picker.*
 
-## Phase 6 — distribution and updates
+## Phase 6 — launch from the OS file manager
 
-## T55 — Release CI builds every channel from a tag (SC8)
+## T58 — Finder: "Open with aip…" (decision 15)
+
+Declare an NSServices entry for folders (`public.folder`) in the app's
+Info.plist that opens the picker on the selected folder. If the service does
+not register for the unsigned app, `aip integrations enable finder` installs
+a generated Quick Action in `~/Library/Services` that opens
+`aip://pick?dir=…`.
+
+- [ ] Manual, on the maintainer's Mac: right-clicking a folder in Finder shows
+  "Open with aip…" (under Services or Quick Actions) and opens the picker on
+  that folder.
+- [ ] The generated Quick Action matches its golden file, and `disable`
+  removes it.
+- Verify: `cargo test -p aip-core integrations::finder` plus the manual check
+- Deps: T57 · Files: `crates/aip-app/Info.plist`, `crates/aip-core/src/integrations/finder.rs` · Size: M
+
+## T59 — Dolphin, Nautilus and Nemo menus list personas directly
+
+Add `aip integrations enable|disable dolphin|nautilus|nemo`:
+- **Dolphin:** a service menu in `~/.local/share/kio/servicemenus/aip.desktop`
+  (made executable), with `X-KDE-Submenu` listing persona ▸ target plus
+  "Choose…".
+- **Nautilus:** a nautilus-python extension that builds the menu live, if
+  nautilus-python is installed; otherwise generated scripts under
+  `~/.local/share/nautilus/scripts/aip/`.
+- **Nemo:** actions in `~/.local/share/nemo/actions/`.
+
+The menus are regenerated whenever personas change, and removed by `disable`
+and on uninstall.
+
+- [ ] Golden-file tests for each template, including folder paths with spaces
+  and quotes.
+- [ ] Adding or removing a persona regenerates the Dolphin and Nemo files and
+  the Nautilus scripts. The Nautilus extension reads personas live.
+- [ ] `disable` removes every file aip installed, and nothing else.
+- [ ] Manual, in KDE Plasma 6, GNOME and Cinnamon VMs: right-click a folder,
+  and launch Claude and Pi with a chosen persona.
+- Verify: `cargo test -p aip-core integrations` plus the manual checks
+- Deps: T57 · Files: `crates/aip-core/src/integrations/{dolphin,nautilus,nemo}.rs` · Size: L
+
+*Checkpoint 6: right-clicking a folder in Finder, Dolphin, Nautilus and Nemo
+launches Claude and Pi there with a chosen persona. A new persona appears in
+the Linux menus without editing anything.*
+
+## Phase 7 — distribution and updates
+
+## T60 — Release CI builds every channel from a tag (SC8)
 
 On a `v*` tag, build:
 - the unsigned macOS `.dmg` (Apple silicon and Intel);
@@ -378,9 +517,9 @@ Publish checksums, and write the install-method marker per channel.
 - [ ] A `v0.0.0-test` tag on a fork produces every artefact and a checksum
   file.
 - Verify: tag run on a fork
-- Deps: T54 · Files: `.github/workflows/release.yml`, `crates/aip-app/tauri.conf.json` · Size: L
+- Deps: T58, T59 · Files: `.github/workflows/release.yml`, `crates/aip-app/tauri.conf.json` · Size: L
 
-## T56 — `install.sh` and "Install command-line tool"
+## T61 — `install.sh` and "Install command-line tool"
 
 The script detects OS and CPU, downloads the CLI-only tarball, verifies the
 checksum, installs into `~/.local/bin` and warns if that is not on PATH. The
@@ -389,9 +528,9 @@ app's button links its own binary into `~/.local/bin`.
 - [ ] `install.sh` works in fresh Ubuntu and macOS CI runners and refuses a
   checksum mismatch.
 - Verify: `bash -n install.sh && shellcheck install.sh` plus the CI job
-- Deps: T55 · Files: `install.sh`, `crates/aip-app/src/cli_link.rs` · Size: M
+- Deps: T60 · Files: `install.sh`, `crates/aip-app/src/cli_link.rs` · Size: M
 
-## T57 — Updates never fight the installer (SC10)
+## T62 — Updates never fight the installer (SC10)
 
 - **`.dmg` app and AppImage:** the Tauri updater (signing key in CI secrets;
   checks on by default, with a setting to turn them off).
@@ -408,9 +547,9 @@ and record the result.
 - [ ] The unsigned macOS update result is recorded in
   `docs/harness-findings.md`.
 - Verify: `cargo test -p aip-core update && cargo test -p aip-cli self_update`
-- Deps: T55 · Files: `crates/aip-core/src/update.rs`, `crates/aip-app/src/updater.rs` · Size: L
+- Deps: T60 · Files: `crates/aip-core/src/update.rs`, `crates/aip-app/src/updater.rs` · Size: L
 
-## T58 — First run, and re-verify on harness updates (SC11, local half)
+## T63 — First run, and re-verify on harness updates (SC11, local half)
 
 On first run: detect the harnesses, create or clone the personas repository,
 and offer `import-v0` when 0.x is present. On every start: when a harness
@@ -420,9 +559,9 @@ personas and warn about anything that no longer loads.
 - [ ] Fixtures for "no personas", "0.x present" and "harness upgraded" drive
   the expected prompts and warnings.
 - Verify: `cargo test -p aip-core first_run reverify`
-- Deps: T56, T57 · Files: `crates/aip-core/src/{first_run,reverify}.rs` · Size: M
+- Deps: T61, T62 · Files: `crates/aip-core/src/{first_run,reverify}.rs` · Size: M
 
-## T59 — macOS first-open instructions are where users meet them (decision 13)
+## T64 — macOS first-open instructions are where users meet them (decision 13)
 
 Put the spec's first-open steps on the download page, in the release-notes
 template and on the `.dmg` background. Check them on the oldest and newest
@@ -430,15 +569,15 @@ supported macOS.
 
 - [ ] Both checks are recorded with macOS versions.
 - Verify: manual
-- Deps: T55 · Files: `docs/install-macos.md`, `.github/release-template.md`,
+- Deps: T60 · Files: `docs/install-macos.md`, `.github/release-template.md`,
   `crates/aip-app/icons/dmg-background.png` · Size: S
 
-*Checkpoint 6: a clean Mac and a clean Linux VM each install, run first-run,
+*Checkpoint 7: a clean Mac and a clean Linux VM each install, run first-run,
 launch a persona and take one update through their own channel.*
 
-## Phase 7 — switch `main` to 2.0 (explicit approval required)
+## Phase 8 — switch `main` to 2.0 (explicit approval required)
 
-## T60 — 2.0.0 ships and 0.x is retired gracefully
+## T65 — 2.0.0 ships and 0.x is retired gracefully
 
 Tag the last 0.x release and create `v0` from it. Merge `next` into `main`,
 rewrite README and CHANGELOG, and tag `v2.0.0`.
@@ -448,10 +587,10 @@ The maintainer does three things by hand:
 - pays for macOS signing before sharing 2.0 publicly;
 - then adds the Homebrew cask.
 
-- [ ] Checkpoint 7 holds: a 0.x user follows the banner, installs 2.0, runs
+- [ ] Checkpoint 8 holds: a 0.x user follows the banner, installs 2.0, runs
   `aip import-v0` and launches their old profile as a persona.
 - Verify: manual
-- Deps: T58, T59 · Files: `README.md`, `CHANGELOG.md` · Size: M
+- Deps: T63, T64 · Files: `README.md`, `CHANGELOG.md` · Size: M
 
 ---
 

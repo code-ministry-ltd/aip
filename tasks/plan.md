@@ -13,6 +13,11 @@ They take effect in one of two modes:
 - **launch mode:** per-invocation flags;
 - **project mode:** links plus owned keys in one folder, for GUI apps.
 
+What matters most (spec "Objective") is **managing** skills, through a skill
+manager that sees every skill on the machine and where it applies, and
+**invoking** them: launching a harness or desktop app in any folder with any
+persona, from the app or the OS file manager.
+
 The spike proved the mechanisms against Claude Code 2.1.285 and Pi 0.85.0. What
 is left is to:
 
@@ -25,11 +30,13 @@ The work is ordered so every phase ends with something the maintainer can use
 daily, CLI first:
 
 1. A small 0.x bridge release goes out on `main` straight away.
-2. On `next`, the CLI reaches launch mode, then project mode, then library
-   management and sync.
+2. On `next`, the CLI first sees every skill on the machine (the inventory).
+   It then reaches launch mode, then project mode, then skill operations,
+   library management and sync.
 3. Only then does the app arrive. It is a view over the same core, so it adds
    screens, not behaviour.
-4. Distribution and the switch to `main` come last.
+4. File-manager integrations follow the app, because they open its picker.
+5. Distribution and the switch to `main` come last.
 
 ## Architecture decisions
 
@@ -96,6 +103,40 @@ daily, CLI first:
   - Svelte was chosen for a small bundle and simple components; switching to
     React before Phase 5 costs nothing.
 
+- **D9 — one inventory model for every skill on the machine.**
+  - `aip-core` builds an `Inventory` of *locations*. Each location has a
+    scope (everywhere, a folder, the library), the harnesses that read it, a
+    source kind (user, project, library, plugin, package, account, bundled)
+    and whether it is read-only.
+  - Skills are keyed by content hash, so duplicates and variants fall out of
+    the model.
+  - The *folder stack* for a folder and harness applies that harness's own
+    ancestor rules (Pi: `.agents/skills` up to the Git root; Claude: its
+    project rules, to be confirmed by probes). It is checked against
+    `verify` (SC12).
+  - The app's scope map and folder view are drawings of this model, nothing
+    more.
+
+- **D10 — every skill operation is plan, preview, apply, journal.** Delete,
+  move, copy, collect and add-to-persona each produce a plan that the CLI
+  prints and the app draws. Applying a plan writes a journal entry first:
+  - the operation;
+  - a copy of anything it will overwrite, kept in the D6 state directory;
+  - the Trash location of anything it deletes.
+
+  Undo replays the journal backwards (SC13). Read-only locations make a plan
+  fail with its reason before anything is shown as applicable.
+
+- **D11 — one launch entry point.**
+  - `launch(folder, target, persona)` in `aip-core` is the only way anything
+    starts a harness or desktop app.
+  - The CLI, the app's right-click menu, the picker window (`aip pick`), the
+    `aip://launch` and `aip://pick` URL handlers, and every file-manager
+    integration all call it.
+  - Integrations are generated from templates by `aip integrations
+    enable|disable`. Rebuildable ones (Linux) are regenerated whenever
+    personas change.
+
 - **D8 — the spike is the executable reference until Phase 3 closes.** Its
   fixtures and expected plans are ported as golden tests. `spike/` stays on
   `main` for reference and is deleted with the rest of 0.x on `next`. Its
@@ -118,7 +159,7 @@ daily, CLI first:
 *Checkpoint 0: both suites pass. A version bump to 0.10.0 needs the
 maintainer's explicit approval, as for every 0.x release.*
 
-### Phase 1 — walking skeleton: see your personas (CLI, `next`)
+### Phase 1 — walking skeleton: see every skill (CLI, `next`)
 
 1. **The 2.0 tree exists, builds and tests on macOS and Linux**
    - Create `next` from `main`. Its first commit removes the 0.x
@@ -126,18 +167,32 @@ maintainer's explicit approval, as for every 0.x release.*
    - Add the workspace (D1) and CI: `cargo fmt`, `clippy -D warnings`, and
      `cargo test` on `ubuntu-latest` and `macos-latest`.
 
-2. **`aip init`, `aip list` and `aip show` read a real machine**
+2. **`aip init`, `aip list` and `aip show` read personas and the library**
    - Persona manifests: `format = 1`; unknown keys are an error, but unknown
      harness tables only warn.
    - Library loading with name/directory checks.
-   - Global discovery for Claude, including `~/.claude/skills/synced/…`
-     labelled "account", and for Pi.
    - Token estimates.
    - Port the spike's frontmatter and validation tests.
 
+3. **`aip skills ls` sees every skill on the machine, and where it applies
+   (D9, SC12)**
+   - Locations and sources:
+     - global roots per harness, including `~/.claude/skills/synced/…` as
+       "account";
+     - bundled skills;
+     - plugin and Pi package skills (read-only);
+     - the library;
+     - project folders.
+   - Project discovery: workspace roots (limited depth), aip's launch
+     history, and harness per-folder records (Pi's sessions; Claude Code's
+     record, once confirmed on a real machine, per spec open question 2).
+   - `aip skills ls --folder DIR` prints the per-harness folder stack.
+   - Duplicates (same hash) and variants (same name) are flagged.
+
 *Checkpoint 1: on the maintainer's Mac, `aip list` and `aip show` agree with
 `spike/bin/aipx.mjs`, run from a `main` checkout, for the same root and
-machine.*
+machine. `aip skills ls` finds every skill the maintainer knows about,
+including ones in project folders.*
 
 ### Phase 2 — launch mode: use a persona from the terminal
 
@@ -200,14 +255,25 @@ now, not the spike's 0.85).*
 
 *Record both results in `docs/harness-findings.md`.*
 
-### Phase 4 — library management, sync and migration from 0.x
+### Phase 4 — skill operations, library management, sync and migration from 0.x
 
-1. **`aip skills add|update|remove` manage the library from Git**
+1. **`aip skills mv|cp|rm|collect|undo` manage skills anywhere, safely (D10,
+   SC13)**
+   - Every operation prints its plan and asks; `--yes` is for scripts.
+   - Deletes go to the system Trash (`trash` crate), and overwrites are copied
+     into the journal first.
+   - `collect` gathers a selection into the library: identical copies merge,
+     and differing ones show a diff and ask.
+   - Read-only sources refuse with their reason and offer `cp` to the library.
+   - `undo` restores the previous state byte for byte, and is tested for every
+     operation.
+
+2. **`aip skills add|update|remove` manage the library from Git**
    - Source sidecar as in 0.x.
    - `update` shows the upstream diff before replacing anything.
    - Locally written skills are never touched.
 
-2. **`aip sync` keeps personas on every machine without surprises (SC7)**
+3. **`aip sync` keeps personas on every machine without surprises (SC7)**
    - Pull, commit and push through `git`.
    - Conflicts are reported per file with both sides and never left
      mid-rebase.
@@ -215,7 +281,7 @@ now, not the spike's 0.85).*
    - A newer `format` is refused with "update aip".
    - `aip clone URL` sets up a second machine.
 
-3. **`aip import-v0` brings 0.x profiles across (SC9)**
+4. **`aip import-v0` brings 0.x profiles across (SC9)**
    - Profiles become personas, `skills/` goes into the library deduplicated
      by content hash, and `AGENTS.md` becomes persona instructions.
    - Everything not carried over is reported.
@@ -235,26 +301,70 @@ on a second machine, which then runs a synced persona.*
    - Document `WEBKIT_DISABLE_DMABUF_RENDERER=1` for the known WebKitGTK
      blank-window bug.
 
-2. **Library and Machine screens: see everything and what it costs (SC6)**
-   - Every skill with its source (library, global, account, plugin/package),
-     always-on tokens, and update state.
-   - Detected harness versions and drift from the probes.
-   - For account skills, a read-only "claude.ai / desktop chat" note with the
+2. **The skill manager: see every skill and where it applies (spec "The skill
+   manager", SC6, SC12)**
+   - **Scope map:** everywhere → folders → projects, with a lane per harness
+     and the library and personas alongside.
+   - **Folder view:** the per-harness stack, layer by layer, with token totals.
+   - **Inventory search and filters:** by harness, source, scope, duplicates
+     and cost.
+   - **Account skills:** a read-only "claude.ai / desktop chat" note with the
      settings link.
+   - **Design:** the visual design is done before the build. It is reviewed
+     with the maintainer as clickable mock-ups on real inventory data from
+     Phase 1.
 
-3. **Personas screen: edit with a live context budget**
+3. **Managing in the skill manager (SC13)**
+   - Drag and drop between scopes, and right-click actions: delete, move,
+     copy, collect into library, add to persona, reveal in file manager.
+   - Each one shows the D10 preview and applies on confirmation.
+   - Undo, plus a history panel.
+
+4. **Personas screen: edit with a live context budget**
    - Checkbox editor per harness, writing the same TOML the CLI reads; the
      round trip keeps comments and ordering (`toml_edit`).
 
-4. **Launch screen: persona × harness × folder, terminal or GUI**
-   - Recent folders; launch in a terminal; `open` for Claude desktop.
-   - A Pi trust prompt when needed.
-   - Sync status and a conflict view showing both sides.
+5. **Launch from anywhere in the app, plus the picker (D11, SC14)**
+   - Right-click any folder or project: Launch ▸ harness ▸ persona, or
+     persona ▸ harness, with recent combinations first.
+   - The picker window (`aip pick DIR`) is keyboard-driven, accepts either
+     order, and remembers the last choice per folder.
+   - `aip://pick` and `aip://launch` are registered as URL handlers.
+   - A Pi trust prompt appears when needed.
+   - The Machine screen holds harness versions and drift, workspace roots,
+     sync status with a conflict view, and the integration toggles used in
+     Phase 6.
 
-*Checkpoint 5: the maintainer uses the app instead of the CLI for a week
-without needing the terminal to manage personas.*
+*Checkpoint 5: the maintainer uses the app instead of the CLI for a week. They
+tidy their real skills with it and launch everything from its right-click
+menu or the picker.*
 
-### Phase 6 — distribution and updates
+### Phase 6 — launch from the OS file manager (D11, SC14)
+
+1. **macOS Finder: "Open with aip…"**
+   - An NSServices entry for folders in the app's Info.plist opens the picker
+     for the selected folder. A generated Quick Action is the fallback if the
+     service does not register for an unsigned app.
+   - The top-level Finder Sync menu waits for signing (spec decision 15).
+
+2. **Linux: Dolphin, Nautilus and Nemo menus**
+   - **Dolphin:** a service menu in `~/.local/share/kio/servicemenus/`, made
+     executable, with `X-KDE-Submenu` listing persona ▸ target plus
+     "Choose…".
+   - **Nautilus:** a nautilus-python extension that builds the menu live, if
+     nautilus-python is present; otherwise generated scripts under
+     Scripts ▸ aip.
+   - **Nemo:** actions in `~/.local/share/nemo/actions`.
+   - All are regenerated when personas change, and removed by
+     `aip integrations disable` and on uninstall.
+   - Golden-file tests for each template, with paths that contain spaces and
+     quotes.
+
+*Checkpoint 6 (manual): right-click a folder in Finder, Dolphin, Nautilus and
+Nemo, and launch Claude and Pi there with a chosen persona. Adding a persona
+shows up in the Linux menus without editing anything.*
+
+### Phase 7 — distribution and updates
 
 1. **Release CI builds every channel from a tag (SC8)**
    - macOS: unsigned `.dmg`, Apple silicon and Intel.
@@ -288,10 +398,10 @@ without needing the terminal to manage personas.*
    - Download page, release notes, and the `.dmg` background.
    - Checked on the oldest and newest supported macOS.
 
-*Checkpoint 6: a clean Mac and a clean Linux VM each install, first-run,
+*Checkpoint 7: a clean Mac and a clean Linux VM each install, first-run,
 launch a persona and take one update through their own channel.*
 
-### Phase 7 — switch `main` to 2.0 (requires explicit approval)
+### Phase 8 — switch `main` to 2.0 (requires explicit approval)
 
 1. **2.0.0 ships and 0.x is retired gracefully**
    - Tag the last 0.x release and create `v0` from it; merge `next` into
@@ -302,7 +412,7 @@ launch a persona and take one update through their own channel.*
    - The maintainer pays for macOS signing before 2.0 is shared publicly
      (decision 13); signing then adds a Homebrew cask.
 
-*Checkpoint 7: a 0.x user follows the banner, installs 2.0, runs
+*Checkpoint 8: a 0.x user follows the banner, installs 2.0, runs
 `aip import-v0`, and launches their old profile as a persona.*
 
 ## Risks and mitigations
@@ -332,10 +442,27 @@ launch a persona and take one update through their own channel.*
   - Setting it automatically is considered only if a reliable detection turns
     up during Phase 5.
 - **Unsigned macOS builds frustrate the first testers.** The first-open steps
-  are verified on real macOS versions (Phase 6.5). Signing is already decided
+  are verified on real macOS versions (Phase 7.5). Signing is already decided
   before any public sharing.
+- **Managing skills outside aip damages someone's setup.** Mitigations:
+  - nothing happens without an explicit choice and a confirmed preview;
+  - deletes go to the Trash and overwrites into the journal;
+  - undo is tested byte for byte;
+  - plugin, package, account and bundled skills are read-only (D10).
+- **The scope map disagrees with what a harness really loads.** The folder
+  stack is computed from each harness's discovery rules and checked against
+  `verify` (SC12). Any mismatch is a test failure, not a display quirk.
+- **File-manager integrations are fragile and differ per desktop.**
+  Mitigations:
+  - they are opt-in;
+  - they are generated from tested templates;
+  - they all call one entry point (D11).
+
+  A broken integration only loses a shortcut; the app's own right-click menu
+  and the picker still work.
 - **Scope creep in the app.** The app adds no behaviour beyond `aip-core`
-  (D7). Phase 5 lists exactly four screens. Everything else waits for 2.x.
+  (D7). Phase 5 has exactly four areas: skill manager, personas, launch, and
+  machine. Everything else waits for 2.x.
 - **Rust is new to this repository.** Mitigations:
   - keep the core small and synchronous (no async runtime outside Tauri);
   - enforce `clippy -D warnings` and golden tests;
