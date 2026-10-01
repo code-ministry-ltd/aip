@@ -66,6 +66,21 @@ stream-json `system/init` event, Codex app-server `skills/list`, Pi RPC
 | P3 | Project `.pi/settings.json` can exclude a global skill | ❌ (`!`, `-path` tried); global settings can |
 | P4 | `--append-system-prompt` accepts a file path | ✅ (reads the file if it exists) |
 
+Duplicate names across layers (2026-10-01). The same skill name `x` was
+placed globally, in the project, and in the profile:
+
+| # | Setup | Result |
+|---|---|---|
+| D1 | Pi: global `~/.agents/skills/x` + project `.agents/skills/x` (trusted) + `--skill lib/x` | One `x` loads: the **project** copy |
+| D2 | Pi: global + `--skill lib/x`, project untrusted | One `x` loads: the **global** copy; the profile's `--skill` copy is ignored |
+| D3 | Claude: global `~/.claude/skills/x` + project `.claude/skills/x` | One `x` loads; the docs say **personal (global) beats project** |
+| D4 | Claude: D3 + `--plugin-dir` with `skills/x` | **Both** `x` and `aip-coder:x` load (plugin skills are namespaced) |
+
+So Pi's order is project > global > profile, and Claude's is global > project,
+with a profile's plugin copy loading alongside. Claude also loads
+`.claude/skills` from every parent folder up to the repository root
+(code.claude.com/docs/en/skills).
+
 Also observed:
 
 - A headless Claude run with a fresh HOME syncs claude.ai skills into
