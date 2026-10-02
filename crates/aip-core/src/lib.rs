@@ -11,6 +11,7 @@ pub mod integrations;
 pub mod inventory;
 pub mod launch;
 pub mod library;
+pub mod migrate_v0;
 pub mod ops;
 pub mod paths;
 pub mod plan;

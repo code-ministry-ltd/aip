@@ -38,7 +38,7 @@ pub enum Side {
     Theirs,
 }
 
-fn git_raw(root: &Path, args: &[&str]) -> Result<Output> {
+pub(crate) fn git_raw(root: &Path, args: &[&str]) -> Result<Output> {
     Command::new("git")
         .arg("-C")
         .arg(root)
@@ -48,7 +48,7 @@ fn git_raw(root: &Path, args: &[&str]) -> Result<Output> {
         .context("running git")
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn git(root: &Path, args: &[&str]) -> Result<String> {
     let out = git_raw(root, args)?;
     if !out.status.success() {
         bail!(
@@ -60,13 +60,13 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn ok(root: &Path, args: &[&str]) -> bool {
+pub(crate) fn ok(root: &Path, args: &[&str]) -> bool {
     git_raw(root, args)
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
-const GITIGNORE: &str = ".DS_Store\n";
+pub(crate) const GITIGNORE: &str = ".DS_Store\n";
 
 /// Make `root` a Git repository if it is not one yet.
 pub fn ensure_repo(root: &Path) -> Result<bool> {

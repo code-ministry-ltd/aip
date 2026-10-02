@@ -1,6 +1,7 @@
 <script>
   // First run (spec "Install"): which harnesses are here, then create a
-  // personas repository or clone one, and offer to import aip 0.x.
+  // personas repository or clone one. aip 0.x (a cloned 0.x repository, local
+  // profiles, or an install) is converted and removed in one previewed step.
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
   import { change } from '../lib/actions.js';
@@ -34,10 +35,30 @@
   }
 
   const create = () => run(() => api.createRoot(), 'Created your personas repository');
-  const clone = () => run(() => api.cloneRoot(url), 'Cloned your personas repository');
+
+  async function clone() {
+    busy = true;
+    try {
+      await api.cloneRoot(url);
+      fr = await api.firstRun();
+    } catch (e) {
+      notify(String(e), 'bad');
+      return;
+    } finally {
+      busy = false;
+    }
+    // An aip 0.x repository: offer to convert it straight away.
+    if (fr.v0_repo) return importV0();
+    notify('Cloned your personas repository', 'good');
+    ondone?.();
+  }
+
+  const removing = $derived(fr?.v0_install ? ' and remove aip 0.x from this machine' : '');
+  const step = (n) => (fr?.v0_profiles || fr?.v0_install ? n + 1 : n);
 
   async function importV0() {
-    const r = await change((c) => api.importV0(c), { notify, onchange: ondone, confirmLabel: 'Import' });
+    const r = await change((c) => api.importV0(c), { notify, onchange: ondone, confirmLabel: fr.v0_repo || fr.v0_remote ? 'Convert' : fr.v0_profiles ? 'Import' : 'Remove',
+    });
     if (r?.kind === 'done') ondone?.();
   }
 </script>
@@ -65,20 +86,43 @@
       {/if}
     </section>
 
-    {#if fr.v0_profiles}
+    {#if fr.v0_repo}
+      <section class="card accent" data-testid="v0">
+        <h2>2. Convert your repository</h2>
+        <p>
+          <span class="mono">{tilde(fr.root)}</span> holds aip 0.x profiles. aip can convert them into personas, commit the
+          result and push it back{removing}. The old files stay in Git history. You will see exactly what changes first.
+        </p>
+        <button class="primary" disabled={busy} onclick={importV0}>Convert to personas…</button>
+      </section>
+    {:else if fr.v0_profiles}
       <section class="card accent" data-testid="v0">
         <h2>2. Bring over aip 0.x</h2>
         <p>
-          You have aip 0.x profiles in <span class="mono">{tilde(fr.v0_profiles)}</span>. aip can turn them into personas{fr.v0_hook
-            ? ' and remove the 0.x shell hook'
-            : ''}. You will see exactly what changes first.
+          You have aip 0.x profiles in <span class="mono">{tilde(fr.v0_profiles)}</span>.
+          {#if fr.v0_remote}
+            aip can convert them into personas and push them to <span class="mono">{fr.v0_remote}</span>, so your other
+            machines get them too{removing}.
+          {:else}
+            aip can turn them into personas{removing}.
+          {/if}
+          You will see exactly what changes first.
         </p>
-        <button class="primary" disabled={busy} onclick={importV0}>Import aip 0.x profiles…</button>
+        <button class="primary" disabled={busy} onclick={importV0}
+          >{fr.v0_remote ? 'Convert and push…' : 'Import aip 0.x profiles…'}</button
+        >
+      </section>
+    {:else if fr.v0_install}
+      <section class="card accent" data-testid="v0">
+        <h2>2. Remove aip 0.x</h2>
+        <p>aip 0.x is still installed on this machine. Its shell hook would get in the way of 2.0.</p>
+        <button class="primary" disabled={busy} onclick={importV0}>Remove aip 0.x…</button>
       </section>
     {/if}
 
+    {#if !fr.v0_repo}
     <section class="card">
-      <h2>{fr.v0_profiles ? '3' : '2'}. Your personas repository</h2>
+      <h2>{step(2)}. Your personas repository</h2>
       <p class="muted">It is a Git repository at <span class="mono">{tilde(fr.root)}</span>, so it can sync between machines.</p>
       <div class="choices">
         <div>
@@ -101,6 +145,7 @@
         </div>
       </div>
     </section>
+    {/if}
   {/if}
 </div>
 

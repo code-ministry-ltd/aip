@@ -50,6 +50,8 @@ impl Home {
             .env("AIP_CACHE_DIR", self.dir.path().join("cache"))
             .env("AIP_TEMP_PREFIXES", "")
             .env("AIP_TRASH_DIR", self.dir.path().join("trash"))
+            // npm -g (removing 0.x's package) acts on a throwaway prefix.
+            .env("npm_config_prefix", self.dir.path().join("npm"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_AUTHOR_NAME", "Aip Tests")
             .env("GIT_AUTHOR_EMAIL", "aip@example.test")
