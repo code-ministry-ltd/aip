@@ -17,18 +17,20 @@ fn err(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn first_run() -> FirstRun {
-    first_run::state(&paths::default_root())
+    crate::commands::timed("first run", || first_run::state(&paths::default_root()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_root() -> Res<bool> {
+    let _g = crate::commands::changing();
     aip_cli::create_root(&paths::default_root()).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clone_root(url: String) -> Res<()> {
+    let _g = crate::commands::changing();
     let url = url.trim();
     if url.is_empty() {
         return Err("enter the URL of your personas repository".into());
@@ -39,8 +41,9 @@ pub fn clone_root(url: String) -> Res<()> {
 }
 
 /// Move off aip 0.x as one previewed change (see `migrate_v0::plan`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_v0(confirm: bool) -> Res<Change> {
+    let _g = crate::commands::changing();
     let root = paths::default_root();
     let home = paths::home();
     let m =
@@ -77,7 +80,7 @@ fn cli_dir() -> PathBuf {
     paths::home().join(".local/bin")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cli_status() -> Res<CliStatus> {
     let path = cli_dir().join("aip");
     let me = exe()?;
@@ -96,8 +99,9 @@ pub fn cli_status() -> Res<CliStatus> {
 }
 
 /// Link this app's binary into `~/.local/bin/aip` (spec "Install").
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_cli() -> Res<String> {
+    let _g = crate::commands::changing();
     let me = exe()?;
     let dir = cli_dir();
     let link = dir.join("aip");
