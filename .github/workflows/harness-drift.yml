@@ -1,0 +1,56 @@
+name: aip 2 harness drift
+
+# Nightly: install the latest Claude Code and Pi and check that aip's
+# mechanisms still work against them (plan D4, spec SC11). On failure, open
+# or update one issue naming the versions.
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Install the latest harnesses
+        run: |
+          npm install -g @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
+          echo "CLAUDE_VERSION=$(claude --version | head -n1)" >> "$GITHUB_ENV"
+          echo "PI_VERSION=$(pi --version | head -n1)" >> "$GITHUB_ENV"
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Pi checks (no model call)
+        env:
+          AIP_E2E: '1'
+        run: cargo test -p aip-cli --test e2e -- --nocapture pi_
+      - name: Claude checks (a few tokens; needs the ANTHROPIC_API_KEY secret)
+        if: env.HAS_ANTHROPIC_KEY == 'true'
+        env:
+          AIP_E2E: '1'
+          AIP_E2E_CLAUDE: '1'
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: cargo test -p aip-cli --test e2e -- --nocapture claude_
+      - name: Report drift
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Harness drift: aip checks fail against the latest harnesses"
+          body="Nightly run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} failed with ${CLAUDE_VERSION} and Pi ${PI_VERSION}. Update docs/harness-findings.md once fixed."
+          number=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -n "$number" ]; then gh issue comment "$number" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
