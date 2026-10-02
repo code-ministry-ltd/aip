@@ -539,11 +539,14 @@ On a `v*` tag, build:
 
 Publish checksums, and write the install-method marker per channel.
 
-- [ ] A `v0.0.0-test` tag on a fork produces every artefact and a checksum
+- [x] A `v0.0.0-test` tag on a fork produces every artefact and a checksum
   file. (Workflow in `ci/workflows/release.yml`, to install by hand; needs
   the signing key set up per `ci/README.md`. Locally checked: the `.deb`
   and `.rpm` build with their markers and `aip://` handler, and the CLI
-  builds as a static musl binary.)
+  builds as a static musl binary. Done 2026-10-02 with tag
+  `v2.0.0-test.3` on the main repository, run 37006155701: every artefact,
+  `latest.json` with all 8 platforms, and a `SHA256SUMS.sig` that verifies
+  against `AIP_UPDATE_PUBKEY`. Draft and test tags deleted afterwards.)
 - Verify: tag run on a fork
 - Deps: T58, T59 · Files: `.github/workflows/release.yml`, `crates/aip-app/tauri.conf.json` · Size: L
 
