@@ -1,13 +1,17 @@
-# aip 2 CI workflows (to install by hand)
+# aip 2 CI workflows
 
-The session that builds aip 2 cannot push to `.github/workflows/` (GitHub
-requires the `workflow` scope for that), so the 2.0 workflows live here. To
-enable one, copy it into place in a commit of your own:
+These workflows are installed in `.github/workflows/`; the copies here are
+the reviewed sources. The session that built aip 2 could not push to
+`.github/workflows/` (GitHub requires the `workflow` scope), so a change to a
+workflow is made here and then copied into place by someone who can:
 
 ```sh
 cp ci/workflows/rust.yml .github/workflows/
-git add .github/workflows/rust.yml && git commit -m "ci: enable aip 2 workflow"
+git add .github/workflows/rust.yml && git commit -m "ci: update aip 2 workflow"
 ```
+
+The 0.x `publish.yml` only fires on `v0.*` tags, so a `v2.*` tag builds the
+2.x release and never publishes to npm.
 
 | Workflow | Purpose | Secrets |
 |---|---|---|
