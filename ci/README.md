@@ -16,7 +16,7 @@ The 0.x `publish.yml` only fires on `v0.*` tags, so a `v2.*` tag builds the
 | Workflow | Purpose | Secrets |
 |---|---|---|
 | `rust.yml` | UI tests and build; fmt, clippy and tests for the Rust workspace on Ubuntu and macOS; on Linux, the app smoke test, CLI passthrough and `aip://` hand-over under Xvfb (`ci/scripts/app-smoke.sh`) | none |
-| `release.yml` | on a `v2.*` tag (or by hand with a tag, e.g. `v0.0.0-test` on a fork): a draft release with the `.dmg`s, AppImage, `.deb`, `.rpm`, CLI tarballs, `latest.json`, `install.sh`, `SHA256SUMS` and its signature. Publish the draft by hand | `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; variable `AIP_UPDATE_PUBKEY` |
+| `release.yml` | on a `v2.*` tag (or by hand with a tag, e.g. `v0.0.0-test` on a fork): a draft release with the `.dmg`s, AppImage, `.deb`, `.rpm`, CLI tarballs, `latest.json`, `install.sh`, `SHA256SUMS` and its signature. Publish the draft by hand | environment `release` (tags `v2.*`) with `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; repository variable `AIP_UPDATE_PUBKEY` |
 | `harness-drift.yml` | nightly: latest Claude Code and Pi against aip's checks; opens an issue on failure | `ANTHROPIC_API_KEY` (optional, with a spending cap; without it only the Pi checks run) |
 
 ## The release signing key (once)
@@ -29,12 +29,18 @@ code signing.
 npx @tauri-apps/cli@2 signer generate -w ~/.tauri/aip.key
 ```
 
-- Put the private key file's contents in the repository secret
-  `TAURI_SIGNING_PRIVATE_KEY`, and its password in
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- Create an **environment** called `release` (Settings → Environments → New
+  environment). Under "Deployment branches and tags", choose "Selected
+  branches and tags" and add the tag rule `v2.*`. Optionally add yourself as
+  a required reviewer, so every release waits for your click.
+- In that environment, add the secrets `TAURI_SIGNING_PRIVATE_KEY` (the
+  private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+  Only the release workflow's signing jobs, run from a `v2.*` tag, can read
+  them; a branch push or pull request cannot.
 - Put the public key (`~/.tauri/aip.key.pub`, one base64 line) in the
-  repository **variable** `AIP_UPDATE_PUBKEY`. Release builds compile it in;
-  builds without it never try to update themselves.
+  **repository variable** `AIP_UPDATE_PUBKEY` (Settings → Secrets and
+  variables → Actions → Variables). It is not secret. Release builds compile
+  it in; builds without it never try to update themselves.
 - Keep a backup of the private key somewhere safe: without it, installed
   copies can no longer be updated automatically.
 
