@@ -55,6 +55,18 @@ Also observed:
   engines as C4/C5/X4, but run `aipx verify --mode project` and then open the
   app on a real Mac to confirm.
 
+## Claude desktop Code tab (2026-10-02, macOS 26.5, Claude Code 2.1.273)
+
+- A persona's `.claude/skills/<symlink>` links load when aip creates them
+  just before opening `claude://code/new?folder=…`, but **not** when the
+  same links were already there from an earlier launch: the second session
+  in that folder had none of the persona's skills. Removing the links and
+  launching again worked. The cause is unknown (the CLI loads existing links,
+  C5). aip now clears its own files and writes them again on every Claude
+  desktop launch (`launch::write_for_claude_desktop`).
+- The session ran in the folder itself, not a worktree (no
+  `…-claude-worktrees-…` entry in `~/.claude/projects`).
+
 ## aip's own packaging (2026-10-02, Linux)
 
 - `tauri build --bundles deb,rpm` puts the app at `/usr/bin/aip` and the
