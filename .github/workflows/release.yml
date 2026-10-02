@@ -7,9 +7,10 @@ name: Release
 # releases.
 #
 # Needs (see ci/README.md):
-#   secrets.TAURI_SIGNING_PRIVATE_KEY           updater/release signing key
-#   secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (may be empty)
-#   vars.AIP_UPDATE_PUBKEY                      the public key (not secret)
+#   environment "release", limited to v2.* tags, holding the secrets
+#     TAURI_SIGNING_PRIVATE_KEY           updater/release signing key
+#     TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (may be empty)
+#   repository variable AIP_UPDATE_PUBKEY  the public key (not secret)
 
 on:
   push:
@@ -52,6 +53,8 @@ jobs:
     name: App (${{ matrix.name }})
     needs: draft
     runs-on: ${{ matrix.os }}
+    # The signing key is an environment secret: only v2.* tags can use it.
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -132,6 +135,7 @@ jobs:
     name: Checksums, signature and install.sh
     needs: [app, cli]
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
