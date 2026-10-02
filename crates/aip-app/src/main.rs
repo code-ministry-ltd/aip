@@ -145,6 +145,11 @@ fn main() {
         }
         Mode::App(start) => start,
     };
+    // Opened from Finder or a desktop menu, the app lacks the shell's PATH
+    // and wouldn't find `claude` or `pi`. Before any threads start.
+    #[cfg(unix)]
+    aip_core::shell_path::import();
+    debug(format_args!("PATH={:?}", std::env::var_os("PATH")));
     let smoke = start == Start::Smoke;
     let first = start.clone();
     tauri::Builder::default()
