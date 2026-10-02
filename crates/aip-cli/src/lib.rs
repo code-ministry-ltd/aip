@@ -131,6 +131,12 @@ pub enum PersonaCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Delete a persona (to the Trash; 'aip skills undo' brings it back)
+    Delete {
+        persona: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Args, Debug)]
