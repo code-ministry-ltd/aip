@@ -406,8 +406,8 @@ review them with the maintainer. Then build:
 - **Account skills:** a read-only "claude.ai / desktop chat" note with the
   settings link.
 
-- [ ] The mock-ups are approved by the maintainer and kept in `docs/design/`.
-  (Screens are in `docs/design/README.md`; approval pending.)
+- [x] The mock-ups are approved by the maintainer and kept in `docs/design/`.
+  (Approved 2026-10-02.)
 - [x] Component tests render a fixture inventory with one lane per harness and
   every source type.
 - [x] Folder-view totals equal `aip skills ls --folder` for the same fixture.
