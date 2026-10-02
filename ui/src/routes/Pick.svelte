@@ -3,6 +3,7 @@
   // persona with the keyboard alone, in either order, then launch.
   //   c / p / d   Claude Code, Pi, Claude desktop
   //   0           no persona;  1–9  a persona
+  //   F1–F9       a favourite saved for this folder
   //   ← →         switch column;  ↑ ↓  move;  Enter  launch;  Esc  close
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
@@ -34,11 +35,13 @@
 
   const personaOptions = $derived(ctx ? [['', 'No persona'], ...ctx.personas] : []);
 
-  async function launch() {
+  async function launch(fav = null) {
     if (busy || !ctx) return;
     busy = true;
     try {
-      const r = await api.launch(ctx.dir, target, persona || null);
+      const r = fav
+        ? await api.launch(fav.dir, fav.target, fav.persona || null, fav.args)
+        : await api.launch(ctx.dir, target, persona || null);
       if (r.notes?.length) notify(r.notes.join('\n'));
       await api.closeWindow();
     } catch (e) {
@@ -69,6 +72,11 @@
   function key(e) {
     if (!ctx) return;
     if (e.key === 'Escape') return api.closeWindow();
+    const fk = /^F([1-9])$/.exec(e.key);
+    if (fk) {
+      const fav = ctx.favourites?.[Number(fk[1]) - 1];
+      if (fav) return (e.preventDefault(), launch(fav));
+    }
     if (e.key === 'Enter') return (e.preventDefault(), launch());
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
       e.preventDefault();
@@ -96,6 +104,15 @@
       <h1>{last(ctx.dir)}</h1>
       <div class="muted mono small">{tilde(ctx.dir)}</div>
     </header>
+    {#if ctx.favourites?.length}
+      <section class="favs" aria-label="Favourites">
+        {#each ctx.favourites.slice(0, 9) as f, i (f.name)}
+          <button class="opt" onclick={() => launch(f)} data-testid="fav-{i + 1}">
+            <kbd>F{i + 1}</kbd>★ {f.name}
+          </button>
+        {/each}
+      </section>
+    {/if}
     <div class="cols">
       <section class:focus={column === 'target'} aria-label="Open in">
         <h3>Open in</h3>
@@ -115,7 +132,7 @@
       </section>
     </div>
     <footer class="row">
-      <span class="muted small">Press a key in each column, in either order. Enter launches, Esc closes.</span>
+      <span class="muted small">Press a key in each column, in either order{ctx.favourites?.length ? ', or F1–F9 for a favourite' : ''}. Enter launches, Esc closes.</span>
       <span class="spacer"></span>
       <button class="primary" onclick={launch} disabled={busy}>Launch {targetLabel[target]}{persona ? ` · ${persona}` : ''}</button>
     </footer>
@@ -134,6 +151,11 @@
   }
   .small {
     font-size: 12px;
+  }
+  .favs {
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex: none;
   }
   .cols {
     display: grid;

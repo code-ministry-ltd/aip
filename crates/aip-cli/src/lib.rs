@@ -63,6 +63,11 @@ pub enum Command {
     /// Turn aip 0.x profiles into personas
     #[command(name = "import-v0")]
     ImportV0(ImportArgs),
+    /// Saved launches: list them, add one, or remove one
+    Favourites {
+        #[command(subcommand)]
+        action: Option<FavouritesCommand>,
+    },
     /// Update aip itself (installs made with install.sh)
     #[command(name = "self-update")]
     SelfUpdate {
@@ -75,6 +80,26 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<IntegrationsCommand>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum FavouritesCommand {
+    /// Save a launch under a name
+    Add {
+        name: String,
+        /// Persona name, or "none"
+        persona: String,
+        /// claude, pi or claude-desktop
+        target: String,
+        /// Folder (default: current directory)
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Extra arguments for the harness
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Delete a favourite
+    Remove { name: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -131,9 +156,14 @@ pub struct ImportArgs {
 #[derive(Args, Debug)]
 pub struct LaunchArgs {
     /// Persona name, or "none" for the plain harness
-    pub persona: String,
+    #[arg(required_unless_present = "favourite")]
+    pub persona: Option<String>,
     /// claude, pi or claude-desktop
-    pub target: String,
+    #[arg(required_unless_present = "favourite")]
+    pub target: Option<String>,
+    /// Launch a saved favourite (see `aip favourites`)
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["persona", "target", "dir"])]
+    pub favourite: Option<String>,
     /// Folder to start in (default: current directory)
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,

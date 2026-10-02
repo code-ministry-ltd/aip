@@ -1,9 +1,11 @@
 <script>
   // Launch: choose a folder, a harness and (optionally) a persona, see what
   // will load, and start it (T57). Right-click a folder to launch directly.
+  // Favourites save a launch under a name for one click later.
   import { onMount, untrack } from 'svelte';
   import { api, chooseFolder } from '../lib/api.js';
-  import { tilde, last, targetLabel } from '../lib/format.js';
+  import { ask } from '../lib/dialog.svelte.js';
+  import { tilde, last, targetLabel, splitArgs, joinArgs } from '../lib/format.js';
   import FolderView from '../components/FolderView.svelte';
   import Menu from '../components/Menu.svelte';
 
@@ -22,6 +24,20 @@
   let projects = $state([]);
   let menu = $state(null);
   let busy = $state(false);
+  let argText = $state('');
+  let favs = $state([]);
+  /** The save form: { name, replacing } while open. */
+  let saving = $state(null);
+
+  async function loadFavs() {
+    try {
+      favs = (await api.favourites()) ?? [];
+    } catch {
+      favs = [];
+    }
+  }
+
+  onMount(loadFavs);
 
   onMount(async () => {
     try {
@@ -40,11 +56,11 @@
     return out;
   });
 
-  export async function go(dir = folder, t = target, p = persona) {
+  export async function go(dir = folder, t = target, p = persona, args = t === 'claude-desktop' ? [] : splitArgs(argText)) {
     if (!dir) return notify('Choose a folder first', 'bad');
     busy = true;
     try {
-      const r = await api.launch(dir, t, p || null);
+      const r = await api.launch(dir, t, p || null, args);
       const text = [r.started ? `Started ${targetLabel[t]}${p ? ` with ${p}` : ''} in ${last(dir)}` : '', ...r.notes]
         .filter(Boolean)
         .join('\n');
@@ -56,11 +72,80 @@
     }
   }
 
-  /** Launch ▸ recent combinations first, then harness ▸ persona. */
+  const launchFav = (f) => go(f.dir, f.target, f.persona || '', f.args);
+
+  function favLabel(f) {
+    return `${targetLabel[f.target]}${f.persona ? ` · ${f.persona}` : ''} · ${last(f.dir)}${f.args.length ? ` · ${joinArgs(f.args)}` : ''}`;
+  }
+
+  /** Put a favourite into the form, to tweak and launch or save over it. */
+  function loadFav(f, edit = false) {
+    folder = f.dir;
+    target = f.target;
+    persona = f.persona || '';
+    argText = joinArgs(f.args);
+    saving = edit ? { name: f.name, replacing: f.name } : null;
+  }
+
+  function startSave() {
+    const p = persona ? ` · ${persona}` : '';
+    saving = { name: `${last(folder)} · ${targetLabel[target]}${p}`, replacing: null };
+  }
+
+  async function saveFav() {
+    const name = saving.name.trim();
+    const fav = {
+      name,
+      dir: folder,
+      target,
+      persona: persona || null,
+      args: target === 'claude-desktop' ? [] : splitArgs(argText),
+    };
+    try {
+      await api.favouriteSave(fav, saving.replacing);
+      notify(saving.replacing ? `Saved changes to ${name}` : `Saved favourite ${name}`, 'good');
+      saving = null;
+      loadFavs();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  async function removeFav(f) {
+    if (!(await ask({ title: `Delete the favourite “${f.name}”?`, lines: [favLabel(f)], confirmLabel: 'Delete', danger: true, note: '' }))) return;
+    try {
+      await api.favouriteRemove(f.name);
+      loadFavs();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  function favMenu(e, f) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { heading: f.name },
+        { label: 'Launch', run: () => launchFav(f) },
+        { label: 'Open in the form', run: () => loadFav(f) },
+        { label: 'Edit or rename…', run: () => loadFav(f, true) },
+        { sep: true },
+        { label: 'Delete', danger: true, run: () => removeFav(f) },
+      ],
+    };
+  }
+
+  /** Launch ▸ favourites and recent combinations first, then harness ▸ persona. */
   function launchMenu(e, dir) {
     e.preventDefault();
     e.stopPropagation();
     const items = [{ heading: last(dir) }];
+    const here = favs.filter((f) => f.dir === dir);
+    for (const f of here) items.push({ label: `★ ${f.name}`, run: () => launchFav(f) });
+    if (here.length) items.push({ sep: true });
     const recent = overview.recent.filter((r) => r.dir === dir);
     for (const r of recent) {
       items.push({ label: `${targetLabel[r.target]}${r.persona ? ` · ${r.persona}` : ''} (recent)`, run: () => go(dir, r.target, r.persona) });
@@ -83,6 +168,17 @@
 </script>
 
 <header class="page"><h1>Launch</h1></header>
+
+{#if favs.length}
+  <section class="favs" aria-label="Favourites">
+    {#each favs as f (f.name)}
+      <button class="fav card" onclick={() => launchFav(f)} oncontextmenu={(e) => favMenu(e, f)} title="{f.dir} — right-click to edit or delete" disabled={busy}>
+        <strong>★ {f.name}</strong>
+        <span class="muted small">{favLabel(f)}</span>
+      </button>
+    {/each}
+  </section>
+{/if}
 
 <div class="layout">
   <aside class="folders">
@@ -125,14 +221,35 @@
           {#each overview.personas as p}<option value={p.name} disabled={!!p.error}>{p.name} — {p.description}</option>{/each}
         </select>
       </div>
+      {#if target !== 'claude-desktop'}
+        <div class="field">
+          <span class="label">Arguments</span>
+          <input class="mono" placeholder="optional, e.g. --model opus" bind:value={argText} aria-label="Arguments" />
+        </div>
+      {/if}
       {#if target === 'claude-desktop'}
         <p class="muted small">
           Claude desktop reads skills from the project folder, so aip links the persona's skills into it (and hides them from
           Git) before opening the app. Remove them later from the preview below.
         </p>
       {/if}
+      {#if saving}
+        <form
+          class="row save"
+          onsubmit={(e) => {
+            e.preventDefault();
+            saveFav();
+          }}
+        >
+          <span class="label">Name</span>
+          <input bind:value={saving.name} aria-label="Favourite name" required />
+          <button type="button" onclick={() => (saving = null)}>Cancel</button>
+          <button class="primary" type="submit" disabled={!saving.name.trim()}>{saving.replacing ? 'Save changes' : 'Save favourite'}</button>
+        </form>
+      {/if}
       <div class="row">
         <span class="spacer"></span>
+        {#if !saving}<button class="ghost" disabled={!folder} onclick={startSave}>☆ Save as favourite</button>{/if}
         <button class="primary launch" disabled={!folder || busy} onclick={() => go()}>Launch {targetLabel[target]}</button>
       </div>
     </div>
@@ -146,6 +263,37 @@
 <Menu bind:menu />
 
 <style>
+  .favs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .fav {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    padding: 8px 12px;
+    max-width: 320px;
+  }
+  .fav:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .fav .small {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .save {
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .save input {
+    flex: 1;
+  }
   .page {
     margin-bottom: 14px;
   }

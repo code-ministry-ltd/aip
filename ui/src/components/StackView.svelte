@@ -40,7 +40,7 @@
               class="chip"
               class:off={!c.loads}
               class:twice={row.loads_twice && c.loads}
-              title="{c.location.skill.description}\n{c.location.skill.dir}\n{sourceLabel(c.location.source)}"
+              title="{c.location.skill.description} — {c.location.skill.dir} ({sourceLabel(c.location.source)})"
               >{c.loads ? '●' : '○'} {sourceLabel(c.location.source)}</span
             >
           {/each}

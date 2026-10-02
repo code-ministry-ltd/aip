@@ -58,3 +58,38 @@ export function layerLabel(l) {
 export function tokens(n) {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
 }
+
+/** Split a typed argument string the way a shell would (quotes, backslashes). */
+export function splitArgs(s) {
+  const out = [];
+  let cur = '';
+  let quote = null;
+  let any = false;
+  for (let i = 0; i < (s || '').length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (c === '\\' && quote === '"' && i + 1 < s.length) cur += s[++i];
+      else cur += c;
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      any = true;
+    } else if (c === '\\' && i + 1 < s.length) {
+      cur += s[++i];
+      any = true;
+    } else if (/\s/.test(c)) {
+      if (any || cur) out.push(cur);
+      cur = '';
+      any = false;
+    } else {
+      cur += c;
+    }
+  }
+  if (any || cur) out.push(cur);
+  return out;
+}
+
+/** The reverse of splitArgs, for showing saved arguments. */
+export function joinArgs(args) {
+  return (args || []).map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
+}

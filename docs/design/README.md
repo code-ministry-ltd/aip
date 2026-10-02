@@ -68,6 +68,12 @@ where to open it (Claude Code, Pi, or the Claude desktop app) and a persona,
 see the preview, and launch. Right-click a folder to launch straight away:
 recent combinations first, then harness ▸ persona.
 
+**Favourites** (added after approval): "☆ Save as favourite" keeps the
+folder, target, persona and any extra arguments under a name. They sit above
+the form as one-click buttons (right-click to edit, rename or delete), come
+first in a folder's right-click menu, take F1–F9 in the picker, and run from
+a terminal with `aip launch --favourite NAME`. They are stored per machine.
+
 ## This machine
 
 ![This machine](machine.png)

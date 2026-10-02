@@ -21,7 +21,7 @@ describe('picker', () => {
     expect(core.named('launch')).toEqual([]);
     await press('2');
     await tick();
-    expect(core.named('launch')).toEqual([{ folder: dir, target: 'pi', persona: 'writer' }]);
+    expect(core.named('launch')).toEqual([{ folder: dir, target: 'pi', persona: 'writer', args: null }]);
     expect(core.named('close_window')).toHaveLength(1);
   });
 
@@ -30,7 +30,7 @@ describe('picker', () => {
     await press('0');
     await press('d');
     await tick();
-    expect(core.named('launch')).toEqual([{ folder: dir, target: 'claude-desktop', persona: null }]);
+    expect(core.named('launch')).toEqual([{ folder: dir, target: 'claude-desktop', persona: null, args: null }]);
   });
 
   it('Enter launches the remembered choice; arrows change it', async () => {
@@ -41,7 +41,7 @@ describe('picker', () => {
     await press('ArrowUp'); // persona column: coder -> none
     await press('Enter');
     await tick();
-    expect(core.named('launch')).toEqual([{ folder: dir, target: 'pi', persona: null }]);
+    expect(core.named('launch')).toEqual([{ folder: dir, target: 'pi', persona: null, args: null }]);
   });
 
   it('Escape closes without launching', async () => {
@@ -49,5 +49,16 @@ describe('picker', () => {
     await press('Escape');
     expect(core.named('launch')).toEqual([]);
     expect(core.named('close_window')).toHaveLength(1);
+  });
+});
+
+describe('picker favourites', () => {
+  it('F1 launches the folder’s first favourite', async () => {
+    const core = await open();
+    await press('F1');
+    await tick();
+    expect(core.named('launch')).toEqual([
+      { folder: dir, target: 'claude', persona: 'coder', args: ['--model', 'opus'] },
+    ]);
   });
 });

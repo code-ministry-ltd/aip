@@ -69,6 +69,11 @@ export const fixtures = {
   },
 };
 
+fixtures.favourites = [
+  { name: 'Shop review', dir: shop, target: 'claude', persona: 'coder', args: ['--model', 'opus'] },
+  { name: 'Career notes', dir: `${H}/Documents/obsidian-md/research/career`, target: 'pi', persona: 'writer', args: [] },
+];
+
 const g = {
   reviewClaude: loc(
     skill('review', `${H}/.claude/skills/review`, 'Review code changes.', 9, 'review-a'),
@@ -259,8 +264,14 @@ export function mock(cmd, args) {
       return Promise.resolve([{ id: '1', summary: 'add review to persona coder', at: 1790000000, actions: [] }]);
     case 'launch':
       return Promise.resolve({ log: [], notes: [], started: `${args.target} …` });
+    case 'favourites_list':
+      return Promise.resolve(structuredClone(fixtures.favourites));
+    case 'favourite_save':
+    case 'favourite_remove':
+      return Promise.resolve(null);
     case 'pick_context':
       return Promise.resolve({
+        favourites: fixtures.favourites.filter((f) => f.dir === args.dir),
         dir: args.dir,
         personas: fixtures.overview.personas.map((p) => [p.name, p.description]),
         targets: ['claude', 'pi', 'claude-desktop'],
