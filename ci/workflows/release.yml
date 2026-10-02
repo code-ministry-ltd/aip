@@ -81,7 +81,12 @@ jobs:
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
       - name: Release config (updater artifacts)
-        run: echo '{"bundle":{"createUpdaterArtifacts":true}}' >crates/aip-app/tauri.release.conf.json
+        # The bundler decodes plugins.updater.pubkey when it signs, so the
+        # committed empty key must be filled in here.
+        run: |
+          jq -n --arg pk "$AIP_UPDATE_PUBKEY" \
+            '{bundle:{createUpdaterArtifacts:true},plugins:{updater:{pubkey:$pk}}}' \
+            >crates/aip-app/tauri.release.conf.json
       - name: Build and upload
         uses: tauri-apps/tauri-action@v0
         env:
@@ -95,7 +100,8 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: false
           # The updater's public key reaches the app through AIP_UPDATE_PUBKEY
-          # (compiled in); the bundler signs with the private key.
+          # (compiled in) and the release config (checked by the bundler);
+          # the bundler signs with the private key.
           args: --target ${{ matrix.target }} --config tauri.release.conf.json
 
   cli:
