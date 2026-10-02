@@ -71,7 +71,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf rpm
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
           cache: npm
@@ -80,8 +80,13 @@ jobs:
         run: npm ci --prefix ui && npm --prefix ui run build
       - name: Set up Rust
         run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
-      - name: Release config (updater artifacts)
-        run: echo '{"bundle":{"createUpdaterArtifacts":true}}' >crates/aip-app/tauri.release.conf.json
+      - name: Release config (updater artifacts and key)
+        # The bundler checks each update signature against this public key.
+        run: |
+          jq -n --arg pk "$AIP_UPDATE_PUBKEY" \
+            '{bundle: {createUpdaterArtifacts: true}, plugins: {updater: {pubkey: $pk}}}' \
+            >crates/aip-app/tauri.release.conf.json
+          jq -e '.plugins.updater.pubkey | length > 0' crates/aip-app/tauri.release.conf.json
       - name: Build and upload
         uses: tauri-apps/tauri-action@v0
         env:
@@ -94,8 +99,8 @@ jobs:
           releaseId: ${{ needs.draft.outputs.release_id }}
           includeUpdaterJson: true
           updaterJsonPreferNsis: false
-          # The updater's public key reaches the app through AIP_UPDATE_PUBKEY
-          # (compiled in); the bundler signs with the private key.
+          # The app gets the updater's public key from AIP_UPDATE_PUBKEY (compiled
+          # in); the bundler signs with the private key and checks with the public.
           args: --target ${{ matrix.target }} --config tauri.release.conf.json
 
   cli:
@@ -140,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Sign and upload
