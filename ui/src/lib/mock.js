@@ -287,8 +287,10 @@ export function mock(cmd, args) {
         ],
         root: `${H}/agent-personas`,
         root_exists: false,
+        v0_repo: false,
         v0_profiles: `${H}/agent-profiles`,
-        v0_hook: true,
+        v0_remote: 'git@github.com:you/agent-profiles.git',
+        v0_install: true,
       });
     case 'create_root':
       return Promise.resolve(true);

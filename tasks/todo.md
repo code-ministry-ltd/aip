@@ -632,6 +632,30 @@ The maintainer does three things by hand:
 - Verify: manual
 - Deps: T63, T64 · Files: `README.md`, `CHANGELOG.md` · Size: M
 
+## T66 — Move a machine off 0.x in one step (added 2026-10-02)
+
+One previewed change, in first run and in `aip import-v0`, picks the case:
+- the personas root is a cloned 0.x repository (connected by URL): convert
+  it in place, remove the 0.x files (they stay in Git history), commit, push;
+- `~/agent-profiles` has a remote: commit changes to tracked files only
+  (untracked ones include sessions and credentials), stop if the remote is
+  ahead, clone it to the personas root, convert, push to the same remote;
+- local profiles without a remote: import into a new repository (as before);
+- in every case, remove 0.x: shell hook, install folder, and the npm
+  package (or say how, if npm is missing).
+
+- [x] Converting a cloned 0.x repository leaves only `personas/`, `library/`
+  and `.gitignore`, committed, with the old layout in history.
+  (`migrate_v0` tests; CLI `a_cloned_0x_repository_converts_in_place_and_pushes`.)
+- [x] A local checkout converts and pushes; an untracked credentials file
+  never reaches the remote; a checkout behind its remote stops first.
+- [x] First run reloads after cloning and opens the conversion preview for
+  a 0.x repository; offers removal alone when there is nothing to convert.
+- [ ] On a Mac with 0.x installed by npm: the package is removed.
+- Verify: `cargo test -p aip-core migrate_v0`, `npm --prefix ui test`
+- Files: `crates/aip-core/src/migrate_v0.rs`, `crates/aip-app/src/setup.rs`,
+  `crates/aip-cli/src/manage_cmds.rs`, `ui/src/components/FirstRun.svelte`
+
 ---
 
 # Todo: adopt an existing profiles repository on a fresh install (vNext)
