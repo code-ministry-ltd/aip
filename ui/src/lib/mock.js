@@ -303,6 +303,11 @@ export function mock(cmd, args) {
           ? { kind: 'done', summary: 'import 2 aip 0.x profiles' }
           : { kind: 'preview', plan: { summary: 'import 2 aip 0.x profiles', preview: ['create personas/work.toml'], steps: [] } },
       );
+    case 'terminal_status':
+      return Promise.resolve({ choices: [{ id: 'Terminal', label: 'Terminal' }, { id: 'iTerm', label: 'iTerm2' }], chosen: null, env_override: false, macos: true });
+    case 'set_terminal':
+    case 'terminal_test':
+      return Promise.resolve(null);
     case 'cli_status':
       return Promise.resolve({ path: `${H}/.local/bin/aip`, linked: false, other: false, on_path: true, packaged: false });
     case 'install_cli':
