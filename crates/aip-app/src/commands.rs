@@ -375,6 +375,45 @@ pub fn set_update_checks(enabled: bool) -> Res<()> {
     s.save(&dir).map_err(err)
 }
 
+#[derive(Serialize)]
+pub struct TerminalStatus {
+    /// Terminals installed here.
+    pub choices: Vec<aip_core::terminal::Choice>,
+    /// The setting (an id from `choices`, or a command); none: the default.
+    pub chosen: Option<String>,
+    /// `AIP_TERMINAL` is set and wins over the setting.
+    pub env_override: bool,
+    pub macos: bool,
+}
+
+#[tauri::command]
+pub fn terminal_status() -> TerminalStatus {
+    TerminalStatus {
+        choices: aip_core::terminal::installed_choices(),
+        chosen: Settings::load(&paths::state_dir()).terminal,
+        env_override: std::env::var("AIP_TERMINAL").is_ok_and(|v| !v.trim().is_empty()),
+        macos: cfg!(target_os = "macos"),
+    }
+}
+
+#[tauri::command]
+pub fn set_terminal(terminal: Option<String>) -> Res<()> {
+    let dir = paths::state_dir();
+    let mut s = Settings::load(&dir);
+    s.terminal = terminal.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    s.save(&dir).map_err(err)
+}
+
+/// Open the chosen terminal with a short message, to check it works.
+#[tauri::command]
+pub fn terminal_test() -> Res<()> {
+    let args = vec![
+        "-c".to_string(),
+        "echo 'aip opened this terminal. Claude Code and Pi will start here.'; echo; echo 'Press Return to close.'; read _".to_string(),
+    ];
+    aip_core::terminal::run_in_terminal("sh", &args, &paths::home()).map_err(err)
+}
+
 #[tauri::command]
 pub fn sync_now() -> Res<sync::Outcome> {
     sync::sync(&root()).map_err(err)
