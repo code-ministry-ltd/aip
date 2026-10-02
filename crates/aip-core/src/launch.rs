@@ -91,7 +91,13 @@ pub fn launch(
     match target {
         Target::ClaudeDesktop => {
             if persona.is_some() {
-                let out = write_for_claude_desktop(root, folder, persona, dry_run)?;
+                let out = crate::project::apply_project(
+                    root,
+                    folder,
+                    &[Harness::Claude],
+                    persona,
+                    dry_run,
+                )?;
                 r.log = out.applied.log;
                 r.notes = out.plan.notes;
                 r.notes.push(format!(
@@ -125,24 +131,6 @@ pub fn launch(
             Ok((r, Some((plan.command, args))))
         }
     }
-}
-
-/// Write `persona` into `folder` for Claude desktop, fresh every time.
-///
-/// Claude desktop (seen on macOS, 2026-10-02) loads project skills whose
-/// links appear just before it opens the folder, but not links that were
-/// already there from an earlier launch; the Claude Code CLI loads both. So
-/// aip clears its own files first and writes them again.
-pub fn write_for_claude_desktop(
-    root: &Path,
-    folder: &Path,
-    persona: Option<&Persona>,
-    dry_run: bool,
-) -> Result<crate::project::Outcome> {
-    if !dry_run {
-        crate::project::apply_project(root, folder, &[Harness::Claude], None, false)?;
-    }
-    crate::project::apply_project(root, folder, &[Harness::Claude], persona, dry_run)
 }
 
 /// Remember a launch folder (feeds project discovery and recent folders).
@@ -263,51 +251,6 @@ mod tests {
             claude_desktop_url(Path::new("/a b")),
             "claude://code/new?folder=%2Fa%20b"
         );
-    }
-
-    #[test]
-    fn claude_desktop_gets_fresh_links_on_every_launch() {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let root = crate::library::tests::fixture_root();
-        let t = tempfile::tempdir().unwrap();
-        std::env::set_var("AIP_STATE_DIR", t.path().join("state"));
-        let folder = t.path().join("project");
-        // The folder's own skill is never touched.
-        crate::library::tests::write(
-            &folder.join(".claude/skills/mine/SKILL.md"),
-            &crate::library::tests::skill_md("mine", "Mine."),
-        );
-        let lib = library::load_library(root.path()).unwrap();
-        let p = library::load_persona(root.path(), "writer", &lib).unwrap();
-
-        for _ in 0..2 {
-            let out = write_for_claude_desktop(root.path(), &folder, Some(&p), false).unwrap();
-            let linked: Vec<_> = out
-                .applied
-                .log
-                .iter()
-                .filter(|l| l.starts_with("link "))
-                .collect();
-            assert_eq!(linked.len(), 2, "both skills linked again: {linked:?}");
-        }
-        let skills = folder.join(".claude/skills");
-        for s in ["prose", "citations"] {
-            assert!(fs::symlink_metadata(skills.join(s))
-                .unwrap()
-                .file_type()
-                .is_symlink());
-        }
-        assert!(skills.join("mine/SKILL.md").is_file());
-        let settings = fs::read_to_string(folder.join(".claude/settings.local.json")).unwrap();
-        assert!(settings.contains("opus"));
-        assert_eq!(
-            crate::project::applied_persona(&folder)
-                .unwrap()
-                .persona
-                .as_deref(),
-            Some("writer")
-        );
-        std::env::remove_var("AIP_STATE_DIR");
     }
 
     #[test]
