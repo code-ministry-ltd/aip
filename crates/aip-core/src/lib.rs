@@ -17,6 +17,8 @@ pub mod plan;
 pub mod probe;
 pub mod project;
 pub mod reverify;
+#[cfg(unix)]
+pub mod shell_path;
 pub mod skill;
 pub mod sync;
 pub mod terminal;
