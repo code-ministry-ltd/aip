@@ -3,6 +3,16 @@
   // or null; picking an item closes it.
   let { menu = $bindable(null) } = $props();
 
+  // Keep the menu inside the window; a taller one scrolls (see max-height).
+  let el = $state(null);
+  let height = $state(0);
+  $effect(() => {
+    if (menu && el) height = el.offsetHeight;
+  });
+  const margin = 8;
+  const left = $derived(menu ? Math.max(margin, Math.min(menu.x, window.innerWidth - 260)) : 0);
+  const top = $derived(menu ? Math.max(margin, Math.min(menu.y, window.innerHeight - height - margin)) : 0);
+
   function pick(item) {
     menu = null;
     item.run?.();
@@ -20,7 +30,8 @@
     class="menu card"
     role="menu"
     tabindex="-1"
-    style="left: {Math.min(menu.x, window.innerWidth - 260)}px; top: {Math.min(menu.y, window.innerHeight - 40 * menu.items.length)}px"
+    style="left: {left}px; top: {top}px"
+    bind:this={el}
     onclick={(e) => e.stopPropagation()}
     onkeydown={key}
   >
@@ -43,6 +54,8 @@
     position: fixed;
     z-index: 45;
     min-width: 220px;
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
     padding: 4px;
     display: flex;
     flex-direction: column;
