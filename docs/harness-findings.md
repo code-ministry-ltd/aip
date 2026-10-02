@@ -54,3 +54,21 @@ Also observed:
   Codex app reading the project files after `aipx open`. They use the same
   engines as C4/C5/X4, but run `aipx verify --mode project` and then open the
   app on a real Mac to confirm.
+
+## aip's own packaging (2026-10-02, Linux)
+
+- `tauri build --bundles deb,rpm` puts the app at `/usr/bin/aip` and the
+  install-method marker at `/usr/lib/aip/install-method`; the packaged
+  binary's `aip self-update` correctly answers "download the new package".
+- Tauri's default `.desktop` file registers `x-scheme-handler/aip` but runs
+  `Exec=aip` without `%u`, so a clicked `aip://` link would arrive without
+  the URL. aip's own template (`crates/aip-app/packaging/aip.desktop`) adds
+  it; `desktop-file-validate` passes.
+- `tauri signer sign` writes base64 minisign signatures whose trusted comment
+  carries the file name and version; aip's `verify_signature` accepts them
+  (fixture in `crates/aip-core/src/update_fixtures/`).
+- **Still to check on a Mac (T62):** that an update the Tauri updater
+  applies to the unsigned app opens without a second Gatekeeper override.
+  The updater downloads the archive itself, so no quarantine flag should be
+  set, but this needs a real install of two consecutive releases. Record the
+  macOS version and result here.

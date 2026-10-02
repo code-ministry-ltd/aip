@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod setup;
 mod urls;
 
 use std::ffi::OsString;
@@ -158,6 +159,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::Smoke(smoke))
         .invoke_handler(tauri::generate_handler![
             commands::ready,
@@ -185,6 +187,14 @@ fn main() {
             commands::integrations,
             commands::set_integration,
             commands::close_window,
+            setup::first_run,
+            setup::create_root,
+            setup::clone_root,
+            setup::import_v0,
+            setup::cli_status,
+            setup::install_cli,
+            setup::update_status,
+            setup::update_install,
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -228,6 +238,9 @@ fn main() {
                     debug(format_args!("refreshing file-manager menus: {e:#}"));
                 }
             });
+            if !smoke {
+                setup::reverify_in_background(app.handle());
+            }
             if smoke {
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_secs(45));

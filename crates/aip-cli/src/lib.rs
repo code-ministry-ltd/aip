@@ -2,6 +2,7 @@
 //! subcommands to the same code (plan D1).
 
 mod commands;
+pub use commands::create_root;
 mod launch_cmds;
 mod manage_cmds;
 mod output;
@@ -62,6 +63,13 @@ pub enum Command {
     /// Turn aip 0.x profiles into personas
     #[command(name = "import-v0")]
     ImportV0(ImportArgs),
+    /// Update aip itself (installs made with install.sh)
+    #[command(name = "self-update")]
+    SelfUpdate {
+        /// Only say whether an update is available
+        #[arg(long)]
+        check: bool,
+    },
     /// File-manager menus (Finder, Dolphin, Nautilus, Nemo): list, enable, disable
     Integrations {
         #[command(subcommand)]

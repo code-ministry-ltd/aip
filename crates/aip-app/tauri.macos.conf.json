@@ -1,0 +1,15 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": { "packaging/install-method.dmg": "install-method" },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "dmg": {
+        "background": "packaging/dmg-background.png",
+        "windowSize": { "width": 660, "height": 420 },
+        "appPosition": { "x": 165, "y": 150 },
+        "applicationFolderPosition": { "x": 495, "y": 150 }
+      }
+    }
+  }
+}

@@ -1,0 +1,157 @@
+name: Release
+
+# On a v2.* tag: build every channel into a draft GitHub release, then add
+# SHA256SUMS (signed with the updater key), install.sh and latest.json. A
+# maintainer reviews the draft and publishes it; `releases/latest` (what the
+# updater, install.sh and self-update use) only sees published, non-pre-release
+# releases.
+#
+# Needs (see ci/README.md):
+#   secrets.TAURI_SIGNING_PRIVATE_KEY           updater/release signing key
+#   secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password (may be empty)
+#   vars.AIP_UPDATE_PUBKEY                      the public key (not secret)
+
+on:
+  push:
+    tags: ['v2.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build (e.g. v0.0.0-test on a fork)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  AIP_UPDATE_PUBKEY: ${{ vars.AIP_UPDATE_PUBKEY }}
+
+jobs:
+  draft:
+    name: Create the draft release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check the signing key is configured
+        run: |
+          test -n "$AIP_UPDATE_PUBKEY" || { echo "::error::set the AIP_UPDATE_PUBKEY repository variable"; exit 1; }
+      - id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --draft --verify-tag --title "aip ${TAG#v}" \
+            --notes-file .github/release-template.md
+          echo "id=$(gh release view "$TAG" --json databaseId -q .databaseId)" >>"$GITHUB_OUTPUT"
+
+  app:
+    name: App (${{ matrix.name }})
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS Apple silicon, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: macOS Intel, os: macos-latest, target: x86_64-apple-darwin }
+          - { name: Linux x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf rpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Build the UI
+        run: npm ci --prefix ui && npm --prefix ui run build
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
+      - name: Release config (updater artifacts)
+        run: echo '{"bundle":{"createUpdaterArtifacts":true}}' >crates/aip-app/tauri.release.conf.json
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: crates/aip-app
+          tauriScript: ../../ui/node_modules/.bin/tauri
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: false
+          # The updater's public key reaches the app through AIP_UPDATE_PUBKEY
+          # (compiled in); the bundler signs with the private key.
+          args: --target ${{ matrix.target }} --config tauri.release.conf.json
+
+  cli:
+    name: CLI (${{ matrix.asset }})
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-musl, asset: aip-cli-linux-x86_64.tar.gz }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: aip-cli-linux-aarch64.tar.gz }
+          - { os: macos-latest, target: aarch64-apple-darwin, asset: aip-cli-macos-aarch64.tar.gz }
+          - { os: macos-latest, target: x86_64-apple-darwin, asset: aip-cli-macos-x86_64.tar.gz }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
+      - name: Build
+        run: cargo build --release --locked -p aip-cli --target ${{ matrix.target }}
+      - name: Package and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stage=$(mktemp -d)
+          cp target/${{ matrix.target }}/release/aip "$stage/aip"
+          if [ "${{ matrix.target }}" != x86_64-apple-darwin ] || [ "$(uname -m)" = x86_64 ]; then "$stage/aip" --version; fi
+          tar -czf "${{ matrix.asset }}" -C "$stage" aip
+          gh release upload "$TAG" "${{ matrix.asset }}" --clobber
+
+  finish:
+    name: Checksums, signature and install.sh
+    needs: [app, cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sign and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$TAG" --pattern '*'
+          rm -f SHA256SUMS SHA256SUMS.sig
+          cp ../dist/install.sh .
+          sha256sum -- * | grep -v ' latest.json$' >SHA256SUMS
+          cat SHA256SUMS
+          npx --yes @tauri-apps/cli@2 signer sign SHA256SUMS
+          test -s SHA256SUMS.sig
+          gh release upload "$TAG" SHA256SUMS SHA256SUMS.sig install.sh --clobber
+          echo "Draft ready: review it, then publish."

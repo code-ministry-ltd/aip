@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/lib/aip/install-method": "packaging/install-method.deb"
+        },
+        "desktopTemplate": "packaging/aip.desktop"
+      },
+      "rpm": {
+        "files": {
+          "/usr/lib/aip/install-method": "packaging/install-method.rpm"
+        },
+        "desktopTemplate": "packaging/aip.desktop"
+      }
+    }
+  }
+}
