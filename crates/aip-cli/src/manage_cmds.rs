@@ -361,3 +361,18 @@ pub fn integrations(root: &Path, action: Option<IntegrationsCommand>) -> Result<
     }
     Ok(0)
 }
+
+pub fn self_update(check: bool) -> Result<i32> {
+    use aip_core::update::{self, SelfUpdate};
+    match update::self_update(check)? {
+        SelfUpdate::UpToDate(v) => println!("aip {v} is the latest version"),
+        SelfUpdate::Available(v) => {
+            println!(
+                "aip {v} is available (this is {}); run `aip self-update`",
+                aip_core::VERSION
+            )
+        }
+        SelfUpdate::Updated(v) => println!("updated to aip {v}"),
+    }
+    Ok(0)
+}

@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod decode;
+pub mod first_run;
 pub mod gitsrc;
 pub mod import_v0;
 pub mod integrations;
@@ -14,10 +15,12 @@ pub mod paths;
 pub mod plan;
 pub mod probe;
 pub mod project;
+pub mod reverify;
 pub mod skill;
 pub mod sync;
 pub mod terminal;
 pub mod trust;
+pub mod update;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

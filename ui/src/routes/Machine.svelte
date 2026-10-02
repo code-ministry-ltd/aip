@@ -13,6 +13,9 @@
   let sync = $state(null);
   let syncing = $state(false);
   let choices = $state({});
+  let cli = $state(null);
+  let upd = $state(null);
+  let checking = $state(false);
 
   const settings = $derived(overview.settings);
   const updateChecks = $derived(settings.update_checks !== false);
@@ -27,6 +30,39 @@
       integrations = (await api.integrations()) ?? [];
     } catch {
       integrations = [];
+    }
+    try {
+      cli = await api.cliStatus();
+    } catch {
+      cli = null;
+    }
+  }
+
+  async function linkCli() {
+    try {
+      notify(await api.installCli(), 'good');
+      load();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  async function checkUpdates() {
+    checking = true;
+    try {
+      upd = await api.updateStatus();
+    } catch (e) {
+      notify(String(e), 'bad');
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function installUpdate() {
+    try {
+      await api.updateInstall();
+    } catch (e) {
+      notify(String(e), 'bad');
     }
   }
 
@@ -148,7 +184,37 @@
       <input type="checkbox" checked={updateChecks} onchange={toggleUpdates} />
       Check for aip updates when the app starts
     </label>
+    <div class="row updates">
+      <button onclick={checkUpdates} disabled={checking}>{checking ? 'Checking…' : 'Check for updates'}</button>
+      {#if upd}
+        <span class="small" data-testid="update-result">
+          {#if upd.error}
+            <span class="warn">Could not check: {upd.error}</span>
+          {:else if upd.available}
+            aip {upd.latest} is available.
+            {#if upd.can_install}<button class="primary" onclick={installUpdate}>Update and restart</button>{:else}To update, {upd.advice}.{/if}
+          {:else}
+            aip {upd.current} is up to date.
+          {/if}
+        </span>
+      {/if}
+    </div>
   </section>
+
+  {#if cli && !cli.packaged}
+    <section class="card">
+      <h2>Command-line tool</h2>
+      <p class="muted small">The same aip, as the <code>aip</code> command in a terminal.</p>
+      {#if cli.linked}
+        <p data-testid="cli-linked"><code>{tilde(cli.path)}</code> runs this app's command-line tool{cli.on_path ? '.' : ', but its folder is not on your PATH.'}</p>
+      {:else if cli.other}
+        <p class="warn small">{tilde(cli.path)} is another aip (perhaps from install.sh). Remove it to use the app's instead.</p>
+      {:else}
+        <button class="primary" onclick={linkCli}>Install command-line tool</button>
+        <p class="muted small">Links <code>aip</code> into {tilde(cli.path.replace(/\/aip$/, ''))}.</p>
+      {/if}
+    </section>
+  {/if}
 
   <section class="card">
     <h2>Workspace folders</h2>
@@ -309,6 +375,10 @@
     overflow: auto;
     white-space: pre-wrap;
     font-size: 12px;
+  }
+.updates {
+    margin-top: 10px;
+    flex-wrap: wrap;
   }
   .history {
     max-height: 320px;

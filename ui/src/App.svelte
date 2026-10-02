@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { api } from './lib/api.js';
+  import { api, onEvent } from './lib/api.js';
   import { setHome, tilde } from './lib/format.js';
   import Skills from './routes/Skills.svelte';
   import Personas from './routes/Personas.svelte';
@@ -9,12 +9,16 @@
   import Pick from './routes/Pick.svelte';
   import Toast from './components/Toast.svelte';
   import Dialog from './components/Dialog.svelte';
+  import FirstRun from './components/FirstRun.svelte';
   import { ask } from './lib/dialog.svelte.js';
 
   let route = $state(parseHash());
   let overview = $state(null);
   let error = $state('');
   let toast = $state(null);
+  let update = $state(null);
+  let broken = $state([]);
+  let updating = $state(false);
 
   function parseHash() {
     const h = (typeof location !== 'undefined' ? location.hash : '') || '#/';
@@ -52,9 +56,38 @@
   onMount(() => {
     const onHash = () => (route = parseHash());
     window.addEventListener('hashchange', onHash);
-    refresh().then(() => api.ready());
-    return () => window.removeEventListener('hashchange', onHash);
+    refresh().then(() => {
+      api.ready();
+      checkForUpdate();
+    });
+    let unlisten = () => {};
+    onEvent('reverify', (problems) => (broken = problems)).then((u) => (unlisten = u));
+    return () => {
+      window.removeEventListener('hashchange', onHash);
+      unlisten();
+    };
   });
+
+  /** Update checks are on by default and can be turned off (spec decision 7). */
+  async function checkForUpdate() {
+    if (route.path === '/pick' || !overview || overview.settings.update_checks === false) return;
+    try {
+      const s = await api.updateStatus();
+      if (s.available) update = s;
+    } catch {
+      // Offline or rate-limited: try again next start.
+    }
+  }
+
+  async function installUpdate() {
+    updating = true;
+    try {
+      await api.updateInstall(); // restarts the app
+    } catch (e) {
+      notify(String(e), 'bad');
+      updating = false;
+    }
+  }
 
   // The opt-in sync timer (spec SC7). Conflicts wait for the Machine screen.
   $effect(() => {
@@ -116,12 +149,36 @@
           <button onclick={refresh}>Try again</button>
         </div>
       {:else if overview && !overview.root_exists}
-        <div class="card problem">
-          <h2>No personas repository yet</h2>
-          <p>Create one with <code>aip init</code>, or set one up from another machine with <code>aip clone URL</code>.</p>
-          <p class="muted">Expected at {tilde(overview.root)}</p>
-        </div>
+        <FirstRun {notify} ondone={refresh} />
       {:else if overview}
+        {#if update}
+          <div class="card banner" data-testid="update">
+            <span>aip {update.latest} is available (you have {update.current}).</span>
+            <span class="spacer"></span>
+            {#if update.can_install}
+              <button class="primary" disabled={updating} onclick={installUpdate}>{updating ? 'Updating…' : 'Update and restart'}</button>
+            {:else}
+              <span class="muted">To update, {update.advice}.</span>
+            {/if}
+            <button class="ghost" onclick={() => (update = null)} aria-label="Dismiss">✕</button>
+          </div>
+        {/if}
+        {#if broken.length}
+          <div class="card banner warn" data-testid="reverify">
+            <div>
+              <strong>After a harness update, some personas no longer load as expected:</strong>
+              <ul>
+                {#each broken as p}
+                  <li>
+                    {p.persona} in {p.harness} {p.version}: {p.error ?? `missing ${p.missing.join(', ')}`}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+            <span class="spacer"></span>
+            <button class="ghost" onclick={() => (broken = [])} aria-label="Dismiss">✕</button>
+          </div>
+        {/if}
         {#if route.path === '/'}
           <Skills {overview} {notify} onchange={refresh} />
         {:else if route.path === '/personas'}
@@ -200,6 +257,22 @@
   main {
     overflow: auto;
     padding: 24px 28px 40px;
+  }
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--accent-soft);
+  }
+  .banner.warn {
+    background: var(--amber-soft);
+    align-items: flex-start;
+  }
+  .banner ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
   }
   .problem {
     max-width: 560px;

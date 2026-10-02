@@ -268,6 +268,42 @@ export function mock(cmd, args) {
       });
     case 'sync_now':
       return Promise.resolve({ outcome: 'up_to_date', committed: false });
+    case 'first_run':
+      return Promise.resolve({
+        harnesses: [
+          { harness: 'claude', version: '2.1.285 (Claude Code)' },
+          { harness: 'pi', version: null },
+        ],
+        root: `${H}/agent-personas`,
+        root_exists: false,
+        v0_profiles: `${H}/agent-profiles`,
+        v0_hook: true,
+      });
+    case 'create_root':
+      return Promise.resolve(true);
+    case 'clone_root':
+      return Promise.resolve(null);
+    case 'import_v0':
+      return Promise.resolve(
+        args.confirm
+          ? { kind: 'done', summary: 'import 2 aip 0.x profiles' }
+          : { kind: 'preview', plan: { summary: 'import 2 aip 0.x profiles', preview: ['create personas/work.toml'], steps: [] } },
+      );
+    case 'cli_status':
+      return Promise.resolve({ path: `${H}/.local/bin/aip`, linked: false, other: false, on_path: true, packaged: false });
+    case 'install_cli':
+      return Promise.resolve('`aip` now runs this app’s command-line tool');
+    case 'update_status':
+      return Promise.resolve({
+        current: '2.0.0',
+        channel: { kind: 'dmg' },
+        path: { kind: 'updater' },
+        advice: 'the app offers the update when it starts',
+        latest: '2.0.1',
+        available: true,
+        can_install: true,
+        error: null,
+      });
     case 'integrations':
       return Promise.resolve([
         { name: 'dolphin', label: 'Dolphin (KDE)', available: false, enabled: false, note: 'Right-click a folder ▸ aip ▸ persona · target' },

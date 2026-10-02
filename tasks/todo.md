@@ -540,7 +540,10 @@ On a `v*` tag, build:
 Publish checksums, and write the install-method marker per channel.
 
 - [ ] A `v0.0.0-test` tag on a fork produces every artefact and a checksum
-  file.
+  file. (Workflow in `ci/workflows/release.yml`, to install by hand; needs
+  the signing key set up per `ci/README.md`. Locally checked: the `.deb`
+  and `.rpm` build with their markers and `aip://` handler, and the CLI
+  builds as a static musl binary.)
 - Verify: tag run on a fork
 - Deps: T58, T59 · Files: `.github/workflows/release.yml`, `crates/aip-app/tauri.conf.json` · Size: L
 
@@ -550,8 +553,10 @@ The script detects OS and CPU, downloads the CLI-only tarball, verifies the
 checksum, installs into `~/.local/bin` and warns if that is not on PATH. The
 app's button links its own binary into `~/.local/bin`.
 
-- [ ] `install.sh` works in fresh Ubuntu and macOS CI runners and refuses a
-  checksum mismatch.
+- [x] `install.sh` works in fresh Ubuntu and macOS CI runners and refuses a
+  checksum mismatch. (`dist/install.sh`, published as a release asset since
+  the root `install.sh` is still 0.x's; `ci/scripts/test-install.sh` runs it
+  under sh, dash and bash. The CI job is in `rust.yml`.)
 - Verify: `bash -n install.sh && shellcheck install.sh` plus the CI job
 - Deps: T60 · Files: `install.sh`, `crates/aip-app/src/cli_link.rs` · Size: M
 
@@ -568,9 +573,10 @@ The channel is chosen from the marker. Test early whether an updater-applied
 update to the unsigned macOS app opens without a second Gatekeeper override,
 and record the result.
 
-- [ ] A test for each channel asserts which path is taken.
+- [x] A test for each channel asserts which path is taken.
 - [ ] The unsigned macOS update result is recorded in
-  `docs/harness-findings.md`.
+  `docs/harness-findings.md`. (Placeholder there; needs two releases on a
+  real Mac.)
 - Verify: `cargo test -p aip-core update && cargo test -p aip-cli self_update`
 - Deps: T60 · Files: `crates/aip-core/src/update.rs`, `crates/aip-app/src/updater.rs` · Size: L
 
@@ -581,7 +587,7 @@ and offer `import-v0` when 0.x is present. On every start: when a harness
 version is newer than the last verified one, re-run `verify` for the user's
 personas and warn about anything that no longer loads.
 
-- [ ] Fixtures for "no personas", "0.x present" and "harness upgraded" drive
+- [x] Fixtures for "no personas", "0.x present" and "harness upgraded" drive
   the expected prompts and warnings.
 - Verify: `cargo test -p aip-core first_run reverify`
 - Deps: T61, T62 · Files: `crates/aip-core/src/{first_run,reverify}.rs` · Size: M
@@ -592,7 +598,10 @@ Put the spec's first-open steps on the download page, in the release-notes
 template and on the `.dmg` background. Check them on the oldest and newest
 supported macOS.
 
-- [ ] Both checks are recorded with macOS versions.
+- [ ] Both checks are recorded with macOS versions. (The steps are in
+  `docs/install-macos.md`, `.github/release-template.md` and
+  `crates/aip-app/packaging/dmg-background.png`; the table for the checks
+  is in `docs/install-macos.md`.)
 - Verify: manual
 - Deps: T60 · Files: `docs/install-macos.md`, `.github/release-template.md`,
   `crates/aip-app/icons/dmg-background.png` · Size: S

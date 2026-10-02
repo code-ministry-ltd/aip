@@ -49,6 +49,14 @@ export const api = {
   setIntegration: (name, enabled) => call('set_integration', { name, enabled }),
   reveal: (path) => call('reveal', { path }),
   closeWindow: () => call('close_window'),
+  firstRun: () => call('first_run'),
+  createRoot: () => call('create_root'),
+  cloneRoot: (url) => call('clone_root', { url }),
+  importV0: (confirm) => call('import_v0', { confirm }),
+  cliStatus: () => call('cli_status'),
+  installCli: () => call('install_cli'),
+  updateStatus: () => call('update_status'),
+  updateInstall: () => call('update_install'),
 };
 
 /** Ask the user for a folder (Tauri dialog; a prompt elsewhere). */
@@ -58,4 +66,11 @@ export async function chooseFolder(title = 'Choose a folder') {
     return open({ directory: true, multiple: false, title });
   }
   return window.prompt(title, '/Users/jim/code/shop');
+}
+
+/** Listen for an app event (no-op outside Tauri). Returns an unlisten function. */
+export async function onEvent(name, fn) {
+  if (!inTauri) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen(name, (e) => fn(e.payload));
 }

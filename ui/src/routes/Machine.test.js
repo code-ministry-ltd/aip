@@ -41,3 +41,42 @@ describe('This machine', () => {
     expect(core.named('sync_resolve')).toEqual([{ choices: [['personas/coder.toml', 'theirs']] }]);
   });
 });
+
+describe('This machine: updates and the command-line tool', () => {
+  it('checks for updates and offers the updater when it can install', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    await fireEvent.click(screen.getByText('Check for updates'));
+    await tick();
+    expect(screen.getByTestId('update-result').textContent).toContain('2.0.1 is available');
+    await fireEvent.click(screen.getByText('Update and restart'));
+    await tick();
+    expect(core.named('update_install')).toHaveLength(1);
+  });
+
+  it('a package install gets advice, not a button', async () => {
+    fakeCore({
+      update_status: () => ({
+        current: '2.0.0', latest: '2.0.1', available: true, can_install: false,
+        advice: 'update it with aur; aip never replaces a package manager’s files', error: null,
+        channel: { kind: 'package', name: 'aur' }, path: { kind: 'package_manager', name: 'aur' },
+      }),
+    });
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    await fireEvent.click(screen.getByText('Check for updates'));
+    await tick();
+    expect(screen.getByTestId('update-result').textContent).toContain('never replaces');
+    expect(screen.queryByText('Update and restart')).toBeNull();
+  });
+
+  it('links the command-line tool', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    await fireEvent.click(screen.getByText('Install command-line tool'));
+    await tick();
+    expect(core.named('install_cli')).toHaveLength(1);
+  });
+});

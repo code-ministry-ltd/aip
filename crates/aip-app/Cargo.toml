@@ -24,6 +24,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 
 [features]
 # Serve the built UI (ui/dist) from the binary instead of the Vite dev server.

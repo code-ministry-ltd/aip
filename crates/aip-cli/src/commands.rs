@@ -4,7 +4,7 @@ use aip_core::inventory::{self, Discovery, Harness, LayerKind, Scope, Stack};
 use aip_core::library;
 use anyhow::{bail, Context, Result};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct Ctx {
     root: PathBuf,
@@ -43,6 +43,7 @@ pub fn dispatch(cli: Cli) -> Result<i32> {
         Command::Sync(a) => manage_cmds::sync_cmd(&ctx.root, a),
         Command::Clone { url, dir } => manage_cmds::clone_cmd(&ctx.root, &url, dir),
         Command::ImportV0(a) => manage_cmds::import(&ctx.root, a),
+        Command::SelfUpdate { check } => manage_cmds::self_update(check),
         Command::Integrations { action } => manage_cmds::integrations(&ctx.root, action),
         Command::Launch(a) => launch_cmds::launch(&ctx.root, a),
         Command::Verify(a) => launch_cmds::verify(&ctx.root, a),
@@ -79,17 +80,23 @@ const EXAMPLE: &[(&str, &str)] = &[
     ),
 ];
 
-fn init(ctx: &Ctx) -> Result<i32> {
-    if ctx.root.exists() && fs::read_dir(&ctx.root)?.next().is_some() {
-        bail!("{} is not empty", tilde(&ctx.root));
+/// Create a personas repository with the example skills and personas.
+/// Returns whether the first commit was made (Git needs an identity).
+pub fn create_root(root: &Path) -> Result<bool> {
+    if root.exists() && fs::read_dir(root)?.next().is_some() {
+        bail!("{} is not empty", tilde(root));
     }
     for (rel, text) in EXAMPLE {
-        let p = ctx.root.join(rel);
+        let p = root.join(rel);
         fs::create_dir_all(p.parent().unwrap())?;
         fs::write(&p, text).with_context(|| format!("writing {}", p.display()))?;
     }
-    aip_core::sync::ensure_repo(&ctx.root)?;
-    let committed = aip_core::sync::commit_local(&ctx.root, "aip init").unwrap_or(false);
+    aip_core::sync::ensure_repo(root)?;
+    Ok(aip_core::sync::commit_local(root, "aip init").unwrap_or(false))
+}
+
+fn init(ctx: &Ctx) -> Result<i32> {
+    let committed = create_root(&ctx.root)?;
     println!("Created {}", tilde(&ctx.root));
     if !committed {
         println!(
@@ -100,6 +107,12 @@ fn init(ctx: &Ctx) -> Result<i32> {
         "  library/skills/  your skill library (no harness loads it until you pick a persona)"
     );
     println!("  personas/        one TOML file per persona");
+    if let Some(v0) = aip_core::first_run::state(&ctx.root).v0_profiles {
+        println!(
+            "\naip 0.x profiles are in {}; 'aip import-v0' turns them into personas.",
+            tilde(&v0)
+        );
+    }
     Ok(0)
 }
 
