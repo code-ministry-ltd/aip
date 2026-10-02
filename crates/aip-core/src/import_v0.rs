@@ -111,6 +111,27 @@ fn not_carried(profile_dir: &Path) -> Vec<String> {
     out
 }
 
+/// The 0.x profiles under `v0_root`: folders with an `AGENTS.md`, sorted,
+/// hidden ones (`.default`) left out.
+pub fn profiles(v0_root: &Path) -> Vec<PathBuf> {
+    let Ok(rd) = fs::read_dir(v0_root) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir() && p.join("AGENTS.md").is_file())
+        .filter(|p| {
+            !p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .starts_with('.')
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 /// Plan importing every 0.x profile under `v0_root` into the repository at `root`.
 pub fn plan_import(v0_root: &Path, root: &Path) -> Result<(OpPlan, Report)> {
     if !v0_root.is_dir() {
@@ -126,20 +147,7 @@ pub fn plan_import(v0_root: &Path, root: &Path) -> Result<(OpPlan, Report)> {
         .map(|(n, s)| (n, s.hash))
         .collect();
 
-    let mut profiles: Vec<PathBuf> = fs::read_dir(v0_root)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_dir() && p.join("AGENTS.md").is_file())
-        .filter(|p| {
-            !p.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .starts_with('.')
-        })
-        .collect();
-    profiles.sort();
-
-    for dir in profiles {
+    for dir in profiles(v0_root) {
         let profile = dir
             .file_name()
             .unwrap_or_default()

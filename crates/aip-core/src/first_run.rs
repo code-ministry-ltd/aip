@@ -45,7 +45,7 @@ pub fn state(root: &Path) -> FirstRun {
             .collect(),
         root: root.to_path_buf(),
         root_exists: root.join("personas").is_dir(),
-        v0_profiles: v0.join("profiles").is_dir().then_some(v0),
+        v0_profiles: (!import_v0::profiles(&v0).is_empty()).then_some(v0),
         v0_hook: !import_v0::find_shell_hooks(&home).is_empty(),
     }
 }
@@ -71,8 +71,14 @@ mod tests {
         assert!(s.v0_profiles.is_none() && !s.v0_hook);
         assert_eq!(s.harnesses.len(), 2);
 
-        // 0.x present: offer import-v0.
-        fs::create_dir_all(home.join("agent-profiles/profiles/work")).unwrap();
+        // A folder without profiles in it is not 0.x.
+        fs::create_dir_all(home.join("agent-profiles/.default")).unwrap();
+        fs::write(home.join("agent-profiles/.default/AGENTS.md"), "").unwrap();
+        assert!(state(&root).v0_profiles.is_none());
+
+        // 0.x present (profiles directly in ~/agent-profiles): offer import-v0.
+        fs::create_dir_all(home.join("agent-profiles/work")).unwrap();
+        fs::write(home.join("agent-profiles/work/AGENTS.md"), "# Work\n").unwrap();
         fs::write(
             home.join(".zshrc"),
             "# >>> aip >>>\nsource x\n# <<< aip <<<\n",
