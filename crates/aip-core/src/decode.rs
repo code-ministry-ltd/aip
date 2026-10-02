@@ -6,8 +6,12 @@
 //!   become `-`).
 //!
 //! A name is decoded by walking the disk: each `-` becomes one of the
-//! candidate characters, and only readings whose folders exist are kept.
+//! candidate characters, and only readings whose folders exist are kept. A
+//! reading is dropped as soon as no entry in its folder starts with it, so a
+//! long name for a folder that is gone costs a few folder reads rather than
+//! one for every combination of candidates (fourfold more with each `-`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Characters Claude Code turns into `-`.
@@ -23,59 +27,75 @@ pub fn decode(encoded: &str, candidates: &[char], fs_root: &Path) -> Vec<PathBuf
     let Some(body) = encoded.strip_prefix('-') else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    walk(
-        body,
+    let mut w = Walk {
         candidates,
         fs_root,
-        fs_root.to_path_buf(),
-        String::new(),
-        &mut out,
-    );
+        listings: HashMap::new(),
+        out: Vec::new(),
+    };
+    w.walk(body, fs_root.to_path_buf(), String::new());
+    let mut out = w.out;
     out.sort();
     out.dedup();
     out
 }
 
-fn walk(
-    rest: &str,
-    candidates: &[char],
-    fs_root: &Path,
-    dir: PathBuf,
-    component: String,
-    out: &mut Vec<PathBuf>,
-) {
-    if out.len() >= MAX_RESULTS {
-        return;
+struct Walk<'a> {
+    candidates: &'a [char],
+    fs_root: &'a Path,
+    /// The entry names of each folder read so far.
+    listings: HashMap<PathBuf, Vec<String>>,
+    out: Vec<PathBuf>,
+}
+
+impl Walk<'_> {
+    /// Does some entry of `dir` start with `prefix`?
+    fn has_prefix(&mut self, dir: &Path, prefix: &str) -> bool {
+        self.listings
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| {
+                std::fs::read_dir(dir)
+                    .map(|entries| {
+                        entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .iter()
+            .any(|n| n.starts_with(prefix))
     }
-    match rest.find('-') {
-        None => {
-            let full = dir.join(format!("{component}{rest}"));
-            if (!component.is_empty() || !rest.is_empty()) && full.is_dir() {
-                out.push(strip_root(fs_root, &full));
-            }
+
+    fn walk(&mut self, rest: &str, dir: PathBuf, component: String) {
+        if self.out.len() >= MAX_RESULTS {
+            return;
         }
-        Some(i) => {
-            let (head, tail) = (&rest[..i], &rest[i + 1..]);
-            let current = format!("{component}{head}");
-            for &c in candidates {
-                if c == '/' {
-                    if current.is_empty() {
-                        continue;
+        match rest.find('-') {
+            None => {
+                let full = dir.join(format!("{component}{rest}"));
+                if (!component.is_empty() || !rest.is_empty()) && full.is_dir() {
+                    self.out.push(strip_root(self.fs_root, &full));
+                }
+            }
+            Some(i) => {
+                let (head, tail) = (&rest[..i], &rest[i + 1..]);
+                let current = format!("{component}{head}");
+                for &c in self.candidates {
+                    if c == '/' {
+                        if current.is_empty() {
+                            continue;
+                        }
+                        let next = dir.join(&current);
+                        if next.is_dir() {
+                            self.walk(tail, next, String::new());
+                        }
+                    } else {
+                        let longer = format!("{current}{c}");
+                        if self.has_prefix(&dir, &longer) {
+                            self.walk(tail, dir.clone(), longer);
+                        }
                     }
-                    let next = dir.join(&current);
-                    if next.is_dir() {
-                        walk(tail, candidates, fs_root, next, String::new(), out);
-                    }
-                } else {
-                    walk(
-                        tail,
-                        candidates,
-                        fs_root,
-                        dir.clone(),
-                        format!("{current}{c}"),
-                        out,
-                    );
                 }
             }
         }
@@ -145,6 +165,21 @@ mod tests {
             [PathBuf::from("/Users/jim/site.io")]
         );
         assert!(decode("-Users-jim-gone", CLAUDE_CANDIDATES, r).is_empty());
+    }
+
+    #[test]
+    fn a_long_name_for_a_folder_that_is_gone_is_quick() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir_all(t.path().join("Users/jim/code")).unwrap();
+        // Unpruned, this is 4^16 readings: the app hung on start.
+        let started = std::time::Instant::now();
+        assert!(decode(
+            "-Users-jim-code-aip--claude-worktrees-a-b-c-d-e-f-g-h-i-j-k-l-m",
+            CLAUDE_CANDIDATES,
+            t.path()
+        )
+        .is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     #[test]
