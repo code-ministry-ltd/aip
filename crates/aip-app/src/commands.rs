@@ -4,6 +4,7 @@
 //! anything take `confirm: false` to return a preview and `confirm: true` to
 //! re-plan on the Rust side and apply; the UI can never hand over a plan.
 
+use aip_core::favourites::{self, Favourite};
 use aip_core::inventory::{self, Discovery, Harness, Settings};
 use aip_core::launch::{self, Target};
 use aip_core::library::{self, Persona};
@@ -302,12 +303,34 @@ pub fn history() -> Vec<ops::Entry> {
 }
 
 #[tauri::command]
-pub fn launch(folder: PathBuf, target: String, persona: Option<String>) -> Res<launch::Report> {
+pub fn launch(
+    folder: PathBuf,
+    target: String,
+    persona: Option<String>,
+    args: Option<Vec<String>>,
+) -> Res<launch::Report> {
     let target = Target::parse(&target).ok_or_else(|| format!("unknown target {target}"))?;
     let p = load_persona(&persona)?;
+    let args = args.unwrap_or_default();
     let (report, _) =
-        launch::launch(&root(), &folder, target, p.as_ref(), &[], true, false).map_err(err)?;
+        launch::launch(&root(), &folder, target, p.as_ref(), &args, true, false).map_err(err)?;
     Ok(report)
+}
+
+#[tauri::command]
+pub fn favourites_list() -> Vec<Favourite> {
+    favourites::list()
+}
+
+/// Save a favourite; `replacing` names the one being edited (or renamed).
+#[tauri::command]
+pub fn favourite_save(favourite: Favourite, replacing: Option<String>) -> Res<()> {
+    favourites::save(favourite, replacing.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn favourite_remove(name: String) -> Res<()> {
+    favourites::remove(&name).map_err(err)
 }
 
 #[tauri::command]
@@ -361,6 +384,8 @@ pub struct PickContext {
     pub targets: Vec<String>,
     /// The last (target, persona) used in this folder.
     pub last: Option<(String, Option<String>)>,
+    /// Favourites saved for this folder.
+    pub favourites: Vec<Favourite>,
 }
 
 #[tauri::command]
@@ -384,6 +409,7 @@ pub fn pick_context(dir: PathBuf) -> Res<PickContext> {
         .find(|(d, _, _)| d == &canon || d == &dir)
         .map(|(_, t, p)| (t, p));
     Ok(PickContext {
+        favourites: favourites::for_dir(&canon),
         dir: canon,
         personas,
         targets: Target::ALL.iter().map(|t| t.name().to_string()).collect(),
@@ -577,9 +603,34 @@ mod tests {
             [("coder".to_string(), "Everyday coding".to_string())]
         );
         assert_eq!(ctx.last, None);
-        assert!(launch(project.clone(), "nope".into(), None)
+        assert!(ctx.favourites.is_empty());
+        assert!(launch(project.clone(), "nope".into(), None, None)
             .unwrap_err()
             .contains("unknown target"));
-        assert!(launch(project, "claude".into(), Some("missing".into())).is_err());
+        assert!(launch(
+            project.clone(),
+            "claude".into(),
+            Some("missing".into()),
+            None
+        )
+        .is_err());
+
+        // Favourites for this folder come with the picker's context.
+        favourite_save(
+            Favourite {
+                name: "Shop".into(),
+                dir: project.clone(),
+                target: "pi".into(),
+                persona: Some("coder".into()),
+                args: vec!["--x".into()],
+            },
+            None,
+        )
+        .unwrap();
+        let ctx = pick_context(project).unwrap();
+        assert_eq!(ctx.favourites.len(), 1);
+        assert_eq!(favourites_list()[0].args, ["--x"]);
+        favourite_remove("Shop".into()).unwrap();
+        assert!(favourites_list().is_empty());
     }
 }

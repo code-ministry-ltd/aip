@@ -36,7 +36,11 @@ export const api = {
   skillDiff: (a, b) => call('skill_diff', { a, b }),
   undo: (confirm) => call('undo', { confirm }),
   history: () => call('history'),
-  launch: (folder, target, persona) => call('launch', { folder, target, persona: persona || null }),
+  launch: (folder, target, persona, args) =>
+    call('launch', { folder, target, persona: persona || null, args: args && args.length ? args : null }),
+  favourites: () => call('favourites_list'),
+  favouriteSave: (favourite, replacing) => call('favourite_save', { favourite, replacing: replacing || null }),
+  favouriteRemove: (name) => call('favourite_remove', { name }),
   trustPi: (folder) => call('trust_pi', { folder }),
   projectClear: (folder) => call('project_clear', { folder }),
   setWorkspaces: (workspaces, syncIntervalMinutes) =>

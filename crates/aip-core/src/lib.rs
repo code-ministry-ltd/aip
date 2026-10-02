@@ -3,6 +3,7 @@
 
 pub mod apply;
 pub mod decode;
+pub mod favourites;
 pub mod first_run;
 pub mod gitsrc;
 pub mod import_v0;

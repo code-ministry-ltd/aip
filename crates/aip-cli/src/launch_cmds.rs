@@ -101,20 +101,39 @@ fn project_write(
 }
 
 pub fn launch(root: &Path, a: LaunchArgs) -> Result<i32> {
-    let target = Target::parse(&a.target).with_context(|| {
-        format!(
-            "unknown target '{}' (expected claude, pi or claude-desktop)",
-            a.target
-        )
+    // A favourite supplies the folder, target, persona and its arguments;
+    // anything after `--` is added to its arguments.
+    let (persona_name, target_name, dir, args) = match &a.favourite {
+        Some(name) => {
+            let f = aip_core::favourites::get(name)
+                .with_context(|| format!("no favourite called '{name}' (see 'aip favourites')"))?;
+            let mut args = f.args;
+            args.extend(a.args.iter().cloned());
+            (
+                f.persona.unwrap_or_else(|| "none".into()),
+                f.target,
+                Some(f.dir),
+                args,
+            )
+        }
+        None => (
+            a.persona.clone().unwrap_or_default(),
+            a.target.clone().unwrap_or_default(),
+            a.dir.clone(),
+            a.args.clone(),
+        ),
+    };
+    let target = Target::parse(&target_name).with_context(|| {
+        format!("unknown target '{target_name}' (expected claude, pi or claude-desktop)")
     })?;
-    let folder = cwd_or(a.dir)?;
-    let persona = persona_arg(root, &a.persona)?;
+    let folder = cwd_or(dir)?;
+    let persona = persona_arg(root, &persona_name)?;
     let (report, inline) = launch::launch(
         root,
         &folder,
         target,
         persona.as_ref(),
-        &a.args,
+        &args,
         a.terminal,
         a.dry_run,
     )?;
@@ -146,8 +165,9 @@ pub fn open(root: &Path, a: OpenArgs) -> Result<i32> {
     launch(
         root,
         LaunchArgs {
-            persona: a.persona,
-            target: "claude-desktop".into(),
+            persona: Some(a.persona),
+            target: Some("claude-desktop".into()),
+            favourite: None,
             dir: a.dir,
             terminal: false,
             dry_run: a.dry_run,
@@ -253,4 +273,57 @@ pub fn verify(root: &Path, a: VerifyArgs) -> Result<i32> {
         println!("  note: Pi does not trust this folder, so its project skills were expected not to load");
     }
     Ok(if checks.iter().all(|c| c.ok) { 0 } else { 1 })
+}
+
+pub fn favourites(root: &Path, action: Option<crate::FavouritesCommand>) -> Result<i32> {
+    use aip_core::favourites::{self, Favourite};
+    match action {
+        None => {
+            let all = favourites::list();
+            if all.is_empty() {
+                println!("No favourites yet. Save one with: aip favourites add NAME PERSONA TARGET [--dir DIR]");
+            }
+            for f in all {
+                let args = if f.args.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -- {}", f.args.join(" "))
+                };
+                println!(
+                    "{}\n    {} {} in {}{args}",
+                    f.name,
+                    f.persona.as_deref().unwrap_or("none"),
+                    f.target,
+                    tilde(&f.dir)
+                );
+            }
+        }
+        Some(crate::FavouritesCommand::Add {
+            name,
+            persona,
+            target,
+            dir,
+            args,
+        }) => {
+            let folder = cwd_or(dir)?;
+            // Check the persona exists now, not at launch time.
+            persona_arg(root, &persona)?;
+            favourites::save(
+                Favourite {
+                    name: name.clone(),
+                    dir: folder,
+                    target,
+                    persona: (persona != "none").then_some(persona),
+                    args,
+                },
+                None,
+            )?;
+            println!("saved favourite '{name}'; launch it with: aip launch --favourite '{name}'");
+        }
+        Some(crate::FavouritesCommand::Remove { name }) => {
+            favourites::remove(&name)?;
+            println!("removed favourite '{name}'");
+        }
+    }
+    Ok(0)
 }

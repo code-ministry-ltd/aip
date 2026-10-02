@@ -184,3 +184,67 @@ echo "{\"id\":\"aip\",\"type\":\"response\",\"success\":true,\"data\":{\"command
     );
     assert!(stdout.contains("ok   prose") && stdout.contains("ok   citations"));
 }
+
+#[test]
+fn favourites_save_list_launch_and_remove() {
+    let h = setup();
+    let shop = h.path("code/shop");
+    let shop_s = shop.to_str().unwrap();
+    assert!(h.ok(&["favourites"]).contains("No favourites yet"));
+
+    h.ok(&[
+        "favourites",
+        "add",
+        "Shop writing",
+        "writer",
+        "pi",
+        "--dir",
+        shop_s,
+        "--",
+        "--model",
+        "x",
+    ]);
+    let listed = h.ok(&["favourites"]);
+    assert!(
+        listed.contains("Shop writing") && listed.contains("writer pi in ~/code/shop -- --model x"),
+        "{listed}"
+    );
+
+    // A favourite fills in everything; extra arguments are added to its own.
+    let out = h.ok(&[
+        "launch",
+        "--favourite",
+        "Shop writing",
+        "--dry-run",
+        "--",
+        "--verbose",
+    ]);
+    assert!(out.contains("would run (in ~/code/shop): pi"), "{out}");
+    assert!(out.contains("--model x --verbose"), "{out}");
+
+    // It cannot be combined with its own fields, and a duplicate name fails.
+    assert!(!h
+        .run(&["launch", "--favourite", "Shop writing", "coder", "pi"])
+        .status
+        .success());
+    assert!(!h
+        .run(&[
+            "favourites",
+            "add",
+            "Shop writing",
+            "coder",
+            "pi",
+            "--dir",
+            shop_s
+        ])
+        .status
+        .success());
+    assert!(!h
+        .run(&["favourites", "add", "Bad", "nobody", "pi", "--dir", shop_s])
+        .status
+        .success());
+
+    h.ok(&["favourites", "remove", "Shop writing"]);
+    let out = h.run(&["launch", "--favourite", "Shop writing", "--dry-run"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no favourite called"));
+}
