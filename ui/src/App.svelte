@@ -184,7 +184,7 @@
         {:else if route.path === '/personas'}
           <Personas {overview} {notify} onchange={refresh} />
         {:else if route.path === '/launch'}
-          <Launch {overview} {notify} folder={route.params.dir} />
+          <Launch {overview} {notify} onchange={refresh} folder={route.params.dir} />
         {:else if route.path === '/machine'}
           <Machine {overview} {notify} onchange={refresh} />
         {/if}
