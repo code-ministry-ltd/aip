@@ -98,6 +98,18 @@ pub fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copy a folder (as `copy_dir`) or a single file.
+fn copy_any(from: &Path, to: &Path) -> Result<()> {
+    if from.is_dir() {
+        return copy_dir(from, to);
+    }
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(from, to).with_context(|| format!("copying {}", from.display()))?;
+    Ok(())
+}
+
 fn find_location<'a>(inv: &'a Inventory, dir: &Path) -> Option<&'a Location> {
     let want = fs::canonicalize(dir).ok()?;
     inv.locations
@@ -248,6 +260,48 @@ pub fn plan_persona_edit(
 /// Plan setting a persona's whole skill list at once (the app's editor saves
 /// this way, as one undoable change). Skills already listed keep their place
 /// and formatting; new ones are appended in the order given.
+/// Plan deleting a persona: its file, and its instructions file unless
+/// another persona uses that too. Favourites that launch with it are named.
+pub fn plan_persona_delete(root: &Path, persona: &str) -> Result<OpPlan> {
+    let file = library::persona_file(root, persona);
+    if !file.is_file() {
+        bail!("no persona '{persona}'");
+    }
+    let mut preview = vec![format!("move {} to the Trash", file.display())];
+    let mut steps = vec![Step::Trash { path: file.clone() }];
+    // Read the file name directly, so a persona that no longer loads can
+    // still be deleted.
+    let instructions = |f: &Path| -> Option<String> {
+        let t: toml::Table = fs::read_to_string(f).ok()?.parse().ok()?;
+        t.get("instructions")?.as_str().map(str::to_string)
+    };
+    if let Some(name) = instructions(&file) {
+        let dir = library::personas_dir(root);
+        let path = dir.join(&name);
+        let shared = library::list_personas(root)?
+            .iter()
+            .filter(|p| p.as_str() != persona)
+            .any(|p| instructions(&library::persona_file(root, p)).as_deref() == Some(&name));
+        if path.is_file() && path.parent() == Some(dir.as_path()) && !shared {
+            preview.push(format!("move {} to the Trash", path.display()));
+            steps.push(Step::Trash { path });
+        }
+    }
+    for f in crate::favourites::list() {
+        if f.persona.as_deref() == Some(persona) {
+            preview.push(format!(
+                "the favourite '{}' launches with {persona}; it will need another persona",
+                f.name
+            ));
+        }
+    }
+    Ok(OpPlan {
+        summary: format!("delete persona {persona}"),
+        preview,
+        steps,
+    })
+}
+
 pub fn plan_persona_set(root: &Path, persona: &str, skills: &[String]) -> Result<OpPlan> {
     let file = library::persona_file(root, persona);
     let text = fs::read_to_string(&file).with_context(|| format!("no persona '{persona}'"))?;
@@ -413,7 +467,7 @@ fn execute_journalled(plan: &OpPlan) -> Result<Entry> {
         match step {
             Step::Trash { path } => {
                 let b = backups.join(i.to_string());
-                copy_dir(path, &b)?;
+                copy_any(path, &b)?;
                 actions.push(Action::Removed {
                     path: path.clone(),
                     backup: b,
@@ -588,7 +642,7 @@ fn undo_last_entry() -> Result<Option<Entry>> {
     }
     for a in &entry.actions {
         if let Action::Removed { path, backup } = a {
-            copy_dir(backup, path)?;
+            copy_any(backup, path)?;
         }
     }
     fs::remove_dir_all(journal_dir().join(&entry.id))?;
@@ -713,6 +767,38 @@ mod tests {
         assert!(undone.summary.starts_with("delete review"));
         assert_eq!(snapshot(&t.path().join("proj")), before);
         assert!(undo_last().unwrap().is_none());
+    }
+
+    #[test]
+    fn persona_delete_trashes_it_with_its_instructions_and_undo_restores() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        env(fx.path());
+        let personas = fx.path().join("personas");
+        let before = snapshot(&personas);
+        let plan = plan_persona_delete(fx.path(), "writer").unwrap();
+        assert_eq!(plan.steps.len(), 2, "{:?}", plan.preview);
+        execute(&plan).unwrap();
+        assert!(library::list_personas(fx.path()).unwrap().is_empty());
+        assert!(!personas.join("writer.md").exists());
+        undo_last().unwrap().unwrap();
+        assert_eq!(snapshot(&personas), before);
+        assert!(plan_persona_delete(fx.path(), "nobody").is_err());
+    }
+
+    #[test]
+    fn persona_delete_keeps_instructions_another_persona_uses() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        env(fx.path());
+        write(
+            &fx.path().join("personas/editor.toml"),
+            "format = 1\nskills = []\ninstructions = \"writer.md\"\n",
+        );
+        let plan = plan_persona_delete(fx.path(), "writer").unwrap();
+        assert_eq!(plan.steps.len(), 1);
+        execute(&plan).unwrap();
+        assert!(fx.path().join("personas/writer.md").is_file());
     }
 
     #[test]

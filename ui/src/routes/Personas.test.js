@@ -39,4 +39,25 @@ describe('Personas', () => {
     await tick();
     expect(core.named('persona_set').map((a) => a.confirm)).toEqual([false]);
   });
+
+  it('deletes a persona after a preview, then selects the next one', async () => {
+    const core = fakeCore();
+    const onchange = vi.fn();
+    const ov = overview();
+    render(Personas, { overview: ov, notify: vi.fn(), onchange });
+    await tick();
+    const first = ov.personas[0].name;
+    await fireEvent.click(screen.getByText('Delete persona…'));
+    await tick();
+    answer(true);
+    await tick();
+    expect(core.named('persona_delete')).toEqual([
+      { name: first, confirm: false },
+      { name: first, confirm: true },
+    ]);
+    expect(onchange).toHaveBeenCalledOnce();
+    const next = ov.personas.find((p) => p.name !== first)?.name;
+    expect(screen.getByRole('heading', { name: next })).toBeTruthy();
+  });
 });
+
