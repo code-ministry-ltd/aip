@@ -1,7 +1,7 @@
 <script>
   // Launch: choose a folder, a harness and (optionally) a persona, see what
-  // will load, and start it (T57). Right-click a folder to launch directly.
-  // Favourites save a launch under a name for one click later.
+  // will load, and start it (T57). Favourites, first in the side panel, start
+  // a saved launch in one click; right-click a folder to launch directly.
   import { onMount, untrack } from 'svelte';
   import { api, chooseFolder } from '../lib/api.js';
   import { ask } from '../lib/dialog.svelte.js';
@@ -9,7 +9,7 @@
   import FolderView from '../components/FolderView.svelte';
   import Menu from '../components/Menu.svelte';
 
-  let { overview, notify, folder: initial = '' } = $props();
+  let { overview, notify, onchange, folder: initial = '' } = $props();
 
   const targets = ['claude', 'pi', 'claude-desktop'];
   // Start from the most recent launch; a folder in the URL wins.
@@ -48,9 +48,11 @@
     }
   });
 
+  /** The chosen folder (even one from Browse…), recent launches, then known projects. */
   const folders = $derived.by(() => {
     const seen = new Set();
     const out = [];
+    if (folder) (seen.add(folder), out.push(folder));
     for (const r of overview.recent) if (!seen.has(r.dir)) (seen.add(r.dir), out.push(r.dir));
     for (const p of projects) if (!seen.has(p.path)) (seen.add(p.path), out.push(p.path));
     return out;
@@ -65,6 +67,8 @@
         .filter(Boolean)
         .join('\n');
       notify(text || 'Launched', 'good');
+      // The launch is now the most recent: refresh the folder list.
+      onchange?.();
     } catch (e) {
       notify(String(e), 'bad');
     } finally {
@@ -169,19 +173,26 @@
 
 <header class="page"><h1>Launch</h1></header>
 
-{#if favs.length}
-  <section class="favs" aria-label="Favourites">
-    {#each favs as f (f.name)}
-      <button class="fav card" onclick={() => launchFav(f)} oncontextmenu={(e) => favMenu(e, f)} title="{f.dir} — right-click to edit or delete" disabled={busy}>
-        <strong>★ {f.name}</strong>
-        <span class="muted small">{favLabel(f)}</span>
-      </button>
-    {/each}
-  </section>
-{/if}
-
 <div class="layout">
   <aside class="folders">
+    <section aria-label="Favourites">
+      <h3>Favourites</h3>
+      {#if favs.length}
+        <ul>
+          {#each favs as f (f.name)}
+            <li>
+              <button class="fav" onclick={() => launchFav(f)} oncontextmenu={(e) => favMenu(e, f)} title="Launch {f.name} — right-click to edit or delete" disabled={busy}>
+                <strong>★ {f.name}</strong>
+                <span class="muted small">{favLabel(f)}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+        <p class="muted small">Click to launch; right-click to edit or delete.</p>
+      {:else}
+        <p class="muted small">None yet. Set up a launch, then “Save as favourite” to start it here in one click.</p>
+      {/if}
+    </section>
     <div class="row">
       <h3>Folders</h3>
       <span class="spacer"></span>
@@ -197,7 +208,7 @@
         </li>
       {/each}
     </ul>
-    <p class="muted small">Right-click a folder to launch straight away.</p>
+    <p class="muted small">Your recent launches and the projects Claude Code knows. Right-click one to launch straight away.</p>
   </aside>
 
   <section>
@@ -263,28 +274,12 @@
 <Menu bind:menu />
 
 <style>
-  .favs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+  .folders section {
     margin-bottom: 18px;
   }
-  .fav {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    padding: 8px 12px;
-    max-width: 320px;
-  }
-  .fav:hover:not(:disabled) {
+  .folders li button.fav:hover:not(:disabled) {
+    background: var(--surface);
     border-color: var(--accent);
-  }
-  .fav .small {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .save {
     gap: 8px;

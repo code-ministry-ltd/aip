@@ -89,11 +89,13 @@
   {#if view.applied?.persona}
     <div class="card banner">
       <span
-        >Persona <strong>{view.applied.persona}</strong> is applied to this folder's project files (for GUI apps such as Claude
-        desktop).</span
+        >The persona <strong>{view.applied.persona}</strong> is written into this folder, because a desktop app (such as
+        Claude desktop) was opened here with it: that is the only way to give one a persona. Its skills and settings stay in the folder's
+        project files, hidden from Git, so anything opened here, including a plain <span class="mono">claude</span>, gets
+        them until you remove them.</span
       >
       <span class="spacer"></span>
-      <button onclick={clearProject}>Remove it</button>
+      <button onclick={clearProject}>Remove from this folder</button>
     </div>
   {/if}
   {#if piUntrusted}
