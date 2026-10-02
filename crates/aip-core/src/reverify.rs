@@ -14,23 +14,42 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// The version a harness prints (`claude --version`, `pi --version`).
+/// How long `--version` may take. A harness that hangs (mid-update, a
+/// wrapper waiting on the network) must not hold up whoever asked.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The version a harness prints (`claude --version`, `pi --version`), or
+/// `None` when it is missing, fails or does not answer in time.
 pub fn harness_version(h: Harness) -> Option<String> {
-    let out = Command::new(h.name()).arg("--version").output().ok()?;
-    out.status
+    let mut child = Command::new(h.name())
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stdout.read_to_string(&mut s);
+        let _ = tx.send(s);
+    });
+    let Ok(out) = rx.recv_timeout(VERSION_TIMEOUT) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    child
+        .wait()
+        .ok()?
         .success()
-        .then(|| {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        })
+        .then(|| out.lines().next().unwrap_or("").trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
@@ -314,5 +333,28 @@ sleep 2
             .unwrap()
             .is_empty());
         std::env::set_var("PATH", old_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_harness_that_hangs_on_version_is_given_up_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = tempfile::tempdir().unwrap();
+        let bin = t.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let pi = bin.join("pi");
+        fs::write(&pi, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        fs::set_permissions(&pi, fs::Permissions::from_mode(0o755)).unwrap();
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let path =
+            std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old_path)))
+                .unwrap();
+        std::env::set_var("PATH", &path);
+        let started = std::time::Instant::now();
+        let v = harness_version(Harness::Pi);
+        std::env::set_var("PATH", old_path);
+        assert_eq!(v, None);
+        assert!(started.elapsed() < VERSION_TIMEOUT + Duration::from_secs(3));
     }
 }

@@ -14,7 +14,6 @@ use aip_core::sync::{self, Side};
 use aip_core::{paths, project, trust};
 use serde::Serialize;
 use std::path::PathBuf;
-use std::process::Command;
 
 pub struct Smoke(pub bool);
 
@@ -26,6 +25,23 @@ fn err(e: anyhow::Error) -> String {
 
 fn root() -> PathBuf {
     paths::default_root()
+}
+
+/// Commands run on a thread pool, not the main thread, so a slow one (a
+/// harness that takes its time, a folder on a sleeping network drive, a sync
+/// waiting on the network) never freezes the window. Changes still happen
+/// one at a time, as they did when every command ran on the main thread.
+/// Run `f`, and with `AIP_DEBUG` set say how long it took (start-up tracing).
+pub(crate) fn timed<T>(what: &str, f: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let r = f();
+    crate::debug(format_args!("{what}: {:.1?}", started.elapsed()));
+    r
+}
+
+pub(crate) fn changing() -> std::sync::MutexGuard<'static, ()> {
+    static CHANGES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    CHANGES.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[tauri::command]
@@ -44,18 +60,10 @@ pub struct HarnessInfo {
     pub version: Option<String>,
 }
 
-fn harness_version(cmd: &str) -> HarnessInfo {
-    let out = Command::new(cmd).arg("--version").output();
-    let version = out.ok().filter(|o| o.status.success()).map(|o| {
-        String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    });
+fn harness_version(h: Harness) -> HarnessInfo {
+    let version = aip_core::reverify::harness_version(h);
     HarnessInfo {
-        name: cmd.into(),
+        name: h.name().into(),
         found: version.is_some(),
         version,
     }
@@ -91,10 +99,10 @@ pub struct Overview {
     pub settings: Settings,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn overview() -> Res<Overview> {
     let root = root();
-    let lib = library::load_library(&root).map_err(err)?;
+    let lib = timed("overview: library", || library::load_library(&root)).map_err(err)?;
     let personas = library::list_personas(&root)
         .map_err(err)?
         .into_iter()
@@ -120,7 +128,12 @@ pub fn overview() -> Res<Overview> {
     Ok(Overview {
         root_exists: root.join("personas").is_dir(),
         version: aip_core::VERSION.into(),
-        harnesses: vec![harness_version("claude"), harness_version("pi")],
+        harnesses: timed("overview: harness versions", || {
+            vec![
+                harness_version(Harness::Claude),
+                harness_version(Harness::Pi),
+            ]
+        }),
         personas,
         library: lib.into_values().collect(),
         recent: launch::recent_launches()
@@ -144,9 +157,12 @@ pub struct InventoryView {
     pub duplicates: Vec<inventory::DuplicateGroup>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inventory() -> Res<InventoryView> {
-    let inv = inventory::build(&Discovery::from_env(Some(root()))).map_err(err)?;
+    let inv = timed("inventory", || {
+        inventory::build(&Discovery::from_env(Some(root())))
+    })
+    .map_err(err)?;
     Ok(InventoryView {
         duplicates: inventory::duplicates(&inv),
         inventory: inv,
@@ -168,7 +184,7 @@ fn load_persona(name: &Option<String>) -> Res<Option<Persona>> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn folder_view(folder: PathBuf, persona: Option<String>) -> Res<FolderView> {
     let folder =
         std::fs::canonicalize(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -197,7 +213,7 @@ pub fn folder_view(folder: PathBuf, persona: Option<String>) -> Res<FolderView> 
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn persona_detail(name: String) -> Res<Persona> {
     launch::load(&root(), &name).map_err(err)
 }
@@ -218,24 +234,27 @@ fn preview_or_apply(plan: OpPlan, confirm: bool) -> Res<Change> {
     Ok(Change::Done { summary: e.summary })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn persona_edit(persona: String, skill: String, add: bool, confirm: bool) -> Res<Change> {
+    let _g = changing();
     preview_or_apply(
         ops::plan_persona_edit(&root(), &persona, &skill, add).map_err(err)?,
         confirm,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn persona_set(persona: String, skills: Vec<String>, confirm: bool) -> Res<Change> {
+    let _g = changing();
     preview_or_apply(
         ops::plan_persona_set(&root(), &persona, &skills).map_err(err)?,
         confirm,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn persona_create(name: String, description: String, confirm: bool) -> Res<Change> {
+    let _g = changing();
     let root = root();
     if !aip_core::skill::valid_name(&name) {
         return Err(format!(
@@ -263,16 +282,18 @@ pub fn persona_create(name: String, description: String, confirm: bool) -> Res<C
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn persona_delete(name: String, confirm: bool) -> Res<Change> {
+    let _g = changing();
     preview_or_apply(
         ops::plan_persona_delete(&root(), &name).map_err(err)?,
         confirm,
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skill_rm(dir: PathBuf, confirm: bool) -> Res<Change> {
+    let _g = changing();
     let d = Discovery::from_env(Some(root()));
     let mut inv = inventory::build(&d).map_err(err)?;
     let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
@@ -280,8 +301,9 @@ pub fn skill_rm(dir: PathBuf, confirm: bool) -> Res<Change> {
     preview_or_apply(ops::plan_rm(&inv, &dir).map_err(err)?, confirm)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skill_cp(dir: PathBuf, as_name: Option<String>, confirm: bool) -> Res<Change> {
+    let _g = changing();
     preview_or_apply(
         ops::plan_cp_to_library(&root(), &dir, as_name.as_deref().filter(|n| !n.is_empty()))
             .map_err(err)?,
@@ -289,13 +311,14 @@ pub fn skill_cp(dir: PathBuf, as_name: Option<String>, confirm: bool) -> Res<Cha
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skill_diff(a: PathBuf, b: PathBuf) -> Res<String> {
     ops::diff(&a, &b).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo(confirm: bool) -> Res<Option<String>> {
+    let _g = changing();
     let Some(last) = ops::history().into_iter().next() else {
         return Ok(None);
     };
@@ -305,18 +328,19 @@ pub fn undo(confirm: bool) -> Res<Option<String>> {
     ops::undo_last().map_err(err).map(|e| e.map(|e| e.summary))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn history() -> Vec<ops::Entry> {
     ops::history()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn launch(
     folder: PathBuf,
     target: String,
     persona: Option<String>,
     args: Option<Vec<String>>,
 ) -> Res<launch::Report> {
+    let _g = changing();
     let target = Target::parse(&target).ok_or_else(|| format!("unknown target {target}"))?;
     let p = load_persona(&persona)?;
     let args = args.unwrap_or_default();
@@ -325,29 +349,33 @@ pub fn launch(
     Ok(report)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn favourites_list() -> Vec<Favourite> {
     favourites::list()
 }
 
 /// Save a favourite; `replacing` names the one being edited (or renamed).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn favourite_save(favourite: Favourite, replacing: Option<String>) -> Res<()> {
+    let _g = changing();
     favourites::save(favourite, replacing.as_deref()).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn favourite_remove(name: String) -> Res<()> {
+    let _g = changing();
     favourites::remove(&name).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn trust_pi(folder: PathBuf) -> Res<()> {
+    let _g = changing();
     trust::record_pi_trust(&folder).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn project_clear(folder: PathBuf) -> Res<Vec<String>> {
+    let _g = changing();
     let st = project::state(&folder);
     let harnesses = if st.harnesses.is_empty() {
         Harness::ALL.to_vec()
@@ -358,8 +386,9 @@ pub fn project_clear(folder: PathBuf) -> Res<Vec<String>> {
     Ok(out.applied.log)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_workspaces(workspaces: Vec<PathBuf>, sync_interval_minutes: Option<u32>) -> Res<()> {
+    let _g = changing();
     let dir = paths::state_dir();
     let mut s = Settings::load(&dir);
     s.workspaces = workspaces;
@@ -367,8 +396,9 @@ pub fn set_workspaces(workspaces: Vec<PathBuf>, sync_interval_minutes: Option<u3
     s.save(&dir).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_update_checks(enabled: bool) -> Res<()> {
+    let _g = changing();
     let dir = paths::state_dir();
     let mut s = Settings::load(&dir);
     s.update_checks = enabled;
@@ -386,7 +416,7 @@ pub struct TerminalStatus {
     pub macos: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_status() -> TerminalStatus {
     TerminalStatus {
         choices: aip_core::terminal::installed_choices(),
@@ -396,16 +426,19 @@ pub fn terminal_status() -> TerminalStatus {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_terminal(terminal: Option<String>) -> Res<()> {
+    let _g = changing();
     let dir = paths::state_dir();
     let mut s = Settings::load(&dir);
-    s.terminal = terminal.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    s.terminal = terminal
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
     s.save(&dir).map_err(err)
 }
 
 /// Open the chosen terminal with a short message, to check it works.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_test() -> Res<()> {
     let args = vec![
         "-c".to_string(),
@@ -414,13 +447,15 @@ pub fn terminal_test() -> Res<()> {
     aip_core::terminal::run_in_terminal("sh", &args, &paths::home()).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_now() -> Res<sync::Outcome> {
+    let _g = changing();
     sync::sync(&root()).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_resolve(choices: Vec<(String, Side)>) -> Res<sync::Outcome> {
+    let _g = changing();
     sync::resolve(&root(), &choices).map_err(err)
 }
 
@@ -435,7 +470,7 @@ pub struct PickContext {
     pub favourites: Vec<Favourite>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pick_context(dir: PathBuf) -> Res<PickContext> {
     crate::debug(format_args!("pick_context {}", dir.display()));
     let root = root();
@@ -467,7 +502,7 @@ pub fn pick_context(dir: PathBuf) -> Res<PickContext> {
 /// Show a skill or folder in the system file manager. Only folders aip knows
 /// about can be revealed: a skill folder in the inventory or the library, or
 /// a folder that exists.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reveal(path: PathBuf) -> Res<()> {
     if !path.is_dir() {
         return Err(format!("{} is not a folder", path.display()));
@@ -475,13 +510,14 @@ pub fn reveal(path: PathBuf) -> Res<()> {
     launch::open_url(&path.to_string_lossy()).map_err(err)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn integrations() -> Vec<aip_core::integrations::Status> {
     aip_core::integrations::status()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_integration(name: String, enabled: bool) -> Res<String> {
+    let _g = changing();
     use aip_core::integrations::{self, Kind};
     let kind = Kind::parse(&name).ok_or_else(|| format!("unknown file manager {name}"))?;
     if enabled {
@@ -545,7 +581,7 @@ mod tests {
             "review",
             "Review code changes.",
         );
-        Command::new("git")
+        std::process::Command::new("git")
             .args(["init", "-q"])
             .arg(&project)
             .status()
