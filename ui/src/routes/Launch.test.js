@@ -94,4 +94,36 @@ describe('Launch favourites', () => {
     await fireEvent.contextMenu(screen.getAllByText('shop')[0]);
     expect(screen.getAllByRole('menuitem')[0].textContent).toBe('★ Shop review');
   });
+
+  it('lists favourites first in the side panel, launching in one click', async () => {
+    const core = fakeCore();
+    render(Launch, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    const panel = screen.getByRole('region', { name: 'Favourites' });
+    expect(panel.textContent).toContain('★ Shop review');
+    await fireEvent.click(screen.getByText('★ Shop review'));
+    await tick();
+    expect(core.named('launch')).toHaveLength(1);
+  });
+
+  it('says how to add a favourite when there are none', async () => {
+    fakeCore({ favourites_list: () => [] });
+    render(Launch, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    expect(screen.getByRole('region', { name: 'Favourites' }).textContent).toContain('Save as favourite');
+  });
 });
+
+describe('Launch folders', () => {
+  it('shows a folder chosen elsewhere and refreshes recent launches after launching', async () => {
+    fakeCore();
+    const onchange = vi.fn();
+    render(Launch, { overview: overview(), notify: vi.fn(), onchange, folder: '/Users/jim/elsewhere/new-thing' });
+    await tick();
+    expect(screen.getAllByTitle('/Users/jim/elsewhere/new-thing').some((el) => el.tagName === 'BUTTON')).toBe(true);
+    await fireEvent.click(screen.getByText(/^Launch /));
+    await tick();
+    expect(onchange).toHaveBeenCalledOnce();
+  });
+});
+
