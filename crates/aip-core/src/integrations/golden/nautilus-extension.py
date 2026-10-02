@@ -9,7 +9,7 @@ from gi.repository import GObject, Nautilus
 AIP = "/opt/My Apps/aip \"2\"/aip"
 PERSONAS = "/home/u/agent-personas/personas"
 PICKER = True
-TARGETS = [("claude", "Claude Code"), ("pi", "Pi"), ("claude-desktop", "Claude desktop")]
+TARGETS = [("claude", "Claude Code"), ("pi", "Pi")]
 
 
 def personas():

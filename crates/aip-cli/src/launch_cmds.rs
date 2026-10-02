@@ -123,9 +123,8 @@ pub fn launch(root: &Path, a: LaunchArgs) -> Result<i32> {
             a.args.clone(),
         ),
     };
-    let target = Target::parse(&target_name).with_context(|| {
-        format!("unknown target '{target_name}' (expected claude, pi or claude-desktop)")
-    })?;
+    let target = Target::parse(&target_name)
+        .with_context(|| format!("unknown target '{target_name}' (expected claude or pi)"))?;
     let folder = cwd_or(dir)?;
     let persona = persona_arg(root, &persona_name)?;
     let (report, inline) = launch::launch(

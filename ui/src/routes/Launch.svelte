@@ -11,7 +11,7 @@
 
   let { overview, notify, onchange, folder: initial = '' } = $props();
 
-  const targets = ['claude', 'pi', 'claude-desktop'];
+  const targets = ['claude', 'pi']; // Claude desktop is off for now (docs/harness-findings.md)
   // Start from the most recent launch; a folder in the URL wins.
   const first = untrack(() => overview.recent[0]);
   let folder = $state(untrack(() => initial) || first?.dir || '');

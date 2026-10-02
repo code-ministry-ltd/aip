@@ -36,12 +36,20 @@ impl Target {
         }
     }
 
-    pub const ALL: [Target; 3] = [
+    /// The targets aip offers. Claude desktop is left out while it is off.
+    pub const ALL: [Target; 2] = [
         Target::Harness(Harness::Claude),
         Target::Harness(Harness::Pi),
-        Target::ClaudeDesktop,
     ];
 }
+
+/// Claude desktop launches are off for now: Claude desktop opens a second
+/// session from the same `claude://code/new?folder=` link under "No folder",
+/// without the folder or its skills (docs/harness-findings.md). The code
+/// stays so it can come back.
+pub const CLAUDE_DESKTOP_ENABLED: bool = false;
+
+pub const CLAUDE_DESKTOP_OFF: &str = "Claude desktop launches are off for now: Claude desktop opens a repeat session from aip's link under \"No folder\", without the persona. Use claude or pi";
 
 /// Load a persona by name from the repository at `root`.
 pub fn load(root: &Path, name: &str) -> Result<Persona> {
@@ -90,6 +98,9 @@ pub fn launch(
     let mut r = Report::default();
     match target {
         Target::ClaudeDesktop => {
+            if !CLAUDE_DESKTOP_ENABLED {
+                bail!(CLAUDE_DESKTOP_OFF);
+            }
             if persona.is_some() {
                 let out = crate::project::apply_project(
                     root,
