@@ -144,6 +144,23 @@ pub struct Discovery {
     pub fs_root: PathBuf,
 }
 
+/// Folders whose projects are temporary: the system's temporary folders and
+/// the scratch workspaces Claude desktop makes for its chats.
+fn default_temp_prefixes(home: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = [
+        "/tmp",
+        "/private/tmp",
+        "/var/folders",
+        "/private/var/folders",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    v.push(std::env::temp_dir());
+    v.push(home.join("Library/Application Support/Claude/scratch-workspaces"));
+    v
+}
+
 impl Discovery {
     pub fn from_env(library_root: Option<PathBuf>) -> Discovery {
         let home = paths::home();
@@ -155,19 +172,7 @@ impl Discovery {
             Some(v) => std::env::split_paths(&v)
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect(),
-            None => {
-                let mut v: Vec<PathBuf> = [
-                    "/tmp",
-                    "/private/tmp",
-                    "/var/folders",
-                    "/private/var/folders",
-                ]
-                .iter()
-                .map(PathBuf::from)
-                .collect();
-                v.push(std::env::temp_dir());
-                v
-            }
+            None => default_temp_prefixes(&home),
         };
         Discovery {
             claude_home: paths::claude_home(),
@@ -1171,6 +1176,16 @@ mod tests {
         let books = find("/Volumes/books/books").unwrap();
         assert!(!books.available);
         assert!(find("/private/tmp/fixture").unwrap().other);
+    }
+
+    #[test]
+    fn claude_desktop_scratch_workspaces_are_temporary() {
+        let home = Path::new("/Users/jim");
+        let scratch =
+            home.join("Library/Application Support/Claude/scratch-workspaces/94362acb/scratch-1");
+        assert!(default_temp_prefixes(home)
+            .iter()
+            .any(|t| scratch.starts_with(t)));
     }
 
     #[test]
