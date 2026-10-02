@@ -4,9 +4,8 @@
 use crate::commands::Change;
 use aip_core::first_run::{self, FirstRun};
 use aip_core::inventory::Harness;
-use aip_core::ops;
 use aip_core::update::{self, Channel, UpdatePath};
-use aip_core::{import_v0, paths, reverify, terminal};
+use aip_core::{import_v0, migrate_v0, paths, reverify, terminal};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -39,44 +38,20 @@ pub fn clone_root(url: String) -> Res<()> {
     Ok(())
 }
 
-/// Turn aip 0.x profiles into personas and remove 0.x's shell hook, as one
-/// previewed change.
+/// Move off aip 0.x as one previewed change (see `migrate_v0::plan`).
 #[tauri::command]
 pub fn import_v0(confirm: bool) -> Res<Change> {
     let root = paths::default_root();
     let home = paths::home();
-    let from = import_v0::default_v0_root(&home);
-    std::fs::create_dir_all(root.join("personas")).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(root.join("library/skills")).map_err(|e| e.to_string())?;
-    let (mut plan, report) = import_v0::plan_import(&from, &root).map_err(err)?;
-    for (profile, reason) in &report.skipped {
-        plan.preview.push(format!("skip {profile}: {reason}"));
-    }
-    for (profile, f) in &report.not_carried {
-        plan.preview
-            .push(format!("not carried over: {profile}/{f}"));
-    }
-    let hooks = import_v0::find_shell_hooks(&home);
-    if !hooks.is_empty() {
-        let h = import_v0::plan_remove_hooks(&hooks);
-        plan.preview.extend(h.preview);
-        plan.steps.extend(h.steps);
-        plan.summary = format!("{} and {}", plan.summary, h.summary);
-    }
-    if plan.steps.is_empty() {
-        return Err(format!(
-            "no aip 0.x profiles to import from {}",
-            from.display()
-        ));
-    }
+    let m =
+        migrate_v0::plan(&root, &import_v0::default_v0_root(&home), &home, true).map_err(err)?;
     if !confirm {
-        return Ok(Change::Preview { plan });
+        return Ok(Change::Preview { plan: m.preview });
     }
-    let e = ops::execute(&plan).map_err(err)?;
-    // On first run the import is the repository's first content.
-    aip_core::sync::ensure_repo(&root).map_err(err)?;
-    let _ = aip_core::sync::commit_local(&root, "aip import-v0");
-    Ok(Change::Done { summary: e.summary })
+    let done = migrate_v0::run(&m).map_err(err)?;
+    Ok(Change::Done {
+        summary: done.join("; "),
+    })
 }
 
 #[derive(Serialize)]

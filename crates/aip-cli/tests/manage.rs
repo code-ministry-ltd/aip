@@ -142,6 +142,62 @@ fn clone_and_sync_between_two_homes() {
 }
 
 #[test]
+fn a_cloned_0x_repository_converts_in_place_and_pushes() {
+    // An old machine's 0.x repository on a remote.
+    let old = Home::new();
+    old.write(
+        "seed/work/AGENTS.md",
+        "# Common profile instructions\nBe brief.\n",
+    );
+    old.skill("seed/work/skills", "deploy", "Deploy.");
+    old.write("seed/work/claude/settings.json", "{}");
+    old.write("seed/README.md", "aip 0.x profiles\n");
+    let seed = old.path("seed");
+    let origin = old.dir.path().join("origin.git");
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let st = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?}");
+    };
+    git(&seed, &["init", "-q", "-b", "main"]);
+    git(&seed, &["add", "-A"]);
+    git(&seed, &["commit", "-qm", "0.x"]);
+    Command::new("git")
+        .args(["clone", "-q", "--bare"])
+        .arg(&seed)
+        .arg(&origin)
+        .status()
+        .unwrap();
+
+    // A new machine connects it.
+    let h = Home::new();
+    let out = h.ok(&["clone", origin.to_str().unwrap()]);
+    assert!(out.contains("aip 0.x repository"), "{out}");
+    let out = h.ok(&["import-v0", "--yes"]);
+    assert!(
+        out.contains("remove work/ (0.x; it stays in Git history)"),
+        "{out}"
+    );
+    assert!(out.contains("pushed them"), "{out}");
+    assert!(!h.path("agent-personas/work").exists());
+    assert!(!h.path("agent-personas/README.md").exists());
+    assert!(h.ok(&["show", "work"]).contains("adds: deploy"));
+
+    // Another machine gets the personas.
+    let b = Home::new();
+    b.ok(&["clone", origin.to_str().unwrap()]);
+    assert!(b.path("agent-personas/personas/work.toml").is_file());
+}
+
+#[test]
 fn rm_by_path_works_in_a_folder_aip_has_not_discovered() {
     let h = Home::new();
     h.ok(&["init"]);

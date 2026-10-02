@@ -1,9 +1,9 @@
 //! What the first run needs to know (spec "Install", first run): the
-//! harnesses, whether a personas repository exists, and whether aip 0.x is
-//! here to import from.
+//! harnesses, whether a personas repository exists, and what of aip 0.x is
+//! here to convert or remove.
 
 use crate::inventory::Harness;
-use crate::{import_v0, paths, reverify};
+use crate::{import_v0, migrate_v0, paths, reverify};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -19,10 +19,14 @@ pub struct FirstRun {
     /// The personas repository to create or clone.
     pub root: PathBuf,
     pub root_exists: bool,
+    /// The personas root is a clone of an aip 0.x repository, to convert.
+    pub v0_repo: bool,
     /// aip 0.x profiles that `import-v0` can turn into personas.
     pub v0_profiles: Option<PathBuf>,
-    /// aip 0.x's shell hook is installed (import-v0 removes it).
-    pub v0_hook: bool,
+    /// Their Git remote: converting pushes the personas there.
+    pub v0_remote: Option<String>,
+    /// Some of aip 0.x is installed (hook, install folder, npm package).
+    pub v0_install: bool,
 }
 
 impl FirstRun {
@@ -45,8 +49,10 @@ pub fn state(root: &Path) -> FirstRun {
             .collect(),
         root: root.to_path_buf(),
         root_exists: root.join("personas").is_dir(),
+        v0_repo: migrate_v0::is_v0_repo(root),
+        v0_remote: migrate_v0::origin(&v0),
         v0_profiles: (!import_v0::profiles(&v0).is_empty()).then_some(v0),
-        v0_hook: !import_v0::find_shell_hooks(&home).is_empty(),
+        v0_install: migrate_v0::find_install(&home).found(),
     }
 }
 
@@ -68,7 +74,7 @@ mod tests {
         // No personas: first run is needed, nothing to import.
         let s = state(&root);
         assert!(s.needed());
-        assert!(s.v0_profiles.is_none() && !s.v0_hook);
+        assert!(s.v0_profiles.is_none() && !s.v0_repo);
         assert_eq!(s.harnesses.len(), 2);
 
         // A folder without profiles in it is not 0.x.
@@ -89,7 +95,8 @@ mod tests {
             s.v0_profiles.as_deref(),
             Some(home.join("agent-profiles").as_path())
         );
-        assert!(s.v0_hook);
+        assert!(s.v0_install);
+        assert_eq!(s.v0_remote, None);
 
         // Once a repository exists, first run is over.
         fs::create_dir_all(root.join("personas")).unwrap();

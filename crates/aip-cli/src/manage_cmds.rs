@@ -6,7 +6,7 @@ use aip_core::integrations::{self, Kind};
 use aip_core::inventory::{self, Discovery, Inventory};
 use aip_core::ops::{self, OpPlan};
 use aip_core::sync::{self, Outcome, Side};
-use aip_core::{gitsrc, import_v0, paths};
+use aip_core::{gitsrc, import_v0, migrate_v0, paths};
 use anyhow::{bail, Context, Result};
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -275,53 +275,26 @@ pub fn clone_cmd(root: &Path, url: &str, dir: Option<PathBuf>) -> Result<i32> {
     let dest = dir.unwrap_or_else(|| root.to_path_buf());
     sync::clone(url, &dest)?;
     println!("cloned into {}", tilde(&dest));
+    if migrate_v0::is_v0_repo(&dest) {
+        println!(
+            "It is an aip 0.x repository; 'aip import-v0' converts it to personas and pushes them."
+        );
+    }
     Ok(0)
 }
 
 pub fn import(root: &Path, a: ImportArgs) -> Result<i32> {
     let home = paths::home();
     let from = a.from.unwrap_or_else(|| import_v0::default_v0_root(&home));
-    if !root.join("personas").is_dir() {
-        std::fs::create_dir_all(root.join("personas"))?;
-        std::fs::create_dir_all(root.join("library/skills"))?;
+    let m = migrate_v0::plan(root, &from, &home, !a.keep_hook)?;
+    if !confirm(&m.preview, a.yes)? {
+        println!("nothing changed");
+        return Ok(1);
     }
-    let (plan, report) = import_v0::plan_import(&from, root)?;
-    for (profile, reason) in &report.skipped {
-        println!("skip {profile}: {reason}");
+    for line in migrate_v0::run(&m)? {
+        println!("{line}");
     }
-    for (profile, skill, lib, reused) in &report.skills {
-        if *reused {
-            println!("{profile}: skill {skill} is identical to library {lib}; reusing it");
-        } else if skill != lib {
-            println!("{profile}: skill {skill} differs from the library's; importing as {lib}");
-        }
-    }
-    if !report.not_carried.is_empty() {
-        println!("not carried over (copy what you need by hand):");
-        for (profile, f) in &report.not_carried {
-            println!("  {profile}/{f}");
-        }
-    }
-    let mut code = 0;
-    if !plan.steps.is_empty() {
-        code = run_plan(&plan, a.yes)?;
-    } else {
-        println!("no profiles to import from {}", tilde(&from));
-    }
-    if !a.keep_hook {
-        let hooks = import_v0::find_shell_hooks(&home);
-        if !hooks.is_empty() {
-            println!("\naip 0.x's shell hook still wraps claude and pi with the old environment variables:");
-            for h in &hooks {
-                println!("  {}:", tilde(&h.file));
-                for l in &h.lines {
-                    println!("    {l}");
-                }
-            }
-            code = code.max(run_plan(&import_v0::plan_remove_hooks(&hooks), a.yes)?);
-        }
-    }
-    Ok(code)
+    Ok(0)
 }
 
 fn kind(name: &str) -> Result<Kind> {
