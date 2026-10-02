@@ -120,20 +120,21 @@ fn project_apply_and_clear_round_trip() {
 }
 
 #[test]
-fn open_claude_desktop_dry_run() {
+fn claude_desktop_is_off_for_now() {
     let h = setup();
     let shop = h.path("code/shop");
-    let out = h.ok(&[
+    let out = h.run(&[
         "open",
         "writer",
         "claude-desktop",
         "--dir",
         shop.to_str().unwrap(),
-        "--dry-run",
     ]);
-    assert!(out.contains("would open claude://code/new?folder=%2F"));
-    assert!(out.contains("would link"));
-    assert!(!shop.join(".claude").exists());
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Claude desktop launches are off for now")
+    );
+    assert!(!shop.join(".claude").exists(), "nothing written");
 }
 
 #[cfg(unix)]

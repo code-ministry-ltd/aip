@@ -229,8 +229,8 @@ fn integrations_follow_personas_and_disable_cleanly() {
     };
 
     h.ok(&["integrations", "enable", "nemo"]);
-    // The command-line binary has no picker: (none, coder, writer) × 3 targets.
-    assert_eq!(count(), 9);
+    // The command-line binary has no picker: (none, coder, writer) × 2 targets.
+    assert_eq!(count(), 6);
     assert!(h.ok(&["integrations"]).contains("on   nemo"));
 
     // A persona added by hand appears on refresh...
@@ -244,7 +244,7 @@ fn integrations_follow_personas_and_disable_cleanly() {
     fs::remove_file(h.path("agent-personas/personas/reviewer.toml")).unwrap();
     h.ok(&["persona", "add", "coder", "prose", "--yes"]);
     assert!(!actions.join("aip-reviewer-pi.nemo_action").exists());
-    assert_eq!(count(), 9);
+    assert_eq!(count(), 6);
 
     h.ok(&["integrations", "disable", "all"]);
     assert_eq!(count(), 0);

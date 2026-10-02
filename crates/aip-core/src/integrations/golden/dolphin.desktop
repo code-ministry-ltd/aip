@@ -5,7 +5,7 @@ Name=aip
 MimeType=inode/directory;
 X-KDE-Submenu=aip
 X-KDE-Priority=TopLevel
-Actions=aip-choose;aip-none-claude;aip-none-pi;aip-none-claude-desktop;aip-coder-claude;aip-coder-pi;aip-coder-claude-desktop;aip-writer-claude;aip-writer-pi;aip-writer-claude-desktop;
+Actions=aip-choose;aip-none-claude;aip-none-pi;aip-coder-claude;aip-coder-pi;aip-writer-claude;aip-writer-pi;
 
 [Desktop Action aip-choose]
 Name=Choose…
@@ -22,11 +22,6 @@ Name=No persona · Pi
 Icon=utilities-terminal
 Exec="/opt/My Apps/aip \\"2\\"/aip" launch none pi --terminal --dir %f
 
-[Desktop Action aip-none-claude-desktop]
-Name=No persona · Claude desktop
-Icon=utilities-terminal
-Exec="/opt/My Apps/aip \\"2\\"/aip" launch none claude-desktop --dir %f
-
 [Desktop Action aip-coder-claude]
 Name=coder · Claude Code
 Icon=utilities-terminal
@@ -37,11 +32,6 @@ Name=coder · Pi
 Icon=utilities-terminal
 Exec="/opt/My Apps/aip \\"2\\"/aip" launch coder pi --terminal --dir %f
 
-[Desktop Action aip-coder-claude-desktop]
-Name=coder · Claude desktop
-Icon=utilities-terminal
-Exec="/opt/My Apps/aip \\"2\\"/aip" launch coder claude-desktop --dir %f
-
 [Desktop Action aip-writer-claude]
 Name=writer · Claude Code
 Icon=utilities-terminal
@@ -51,8 +41,3 @@ Exec="/opt/My Apps/aip \\"2\\"/aip" launch writer claude --terminal --dir %f
 Name=writer · Pi
 Icon=utilities-terminal
 Exec="/opt/My Apps/aip \\"2\\"/aip" launch writer pi --terminal --dir %f
-
-[Desktop Action aip-writer-claude-desktop]
-Name=writer · Claude desktop
-Icon=utilities-terminal
-Exec="/opt/My Apps/aip \\"2\\"/aip" launch writer claude-desktop --dir %f

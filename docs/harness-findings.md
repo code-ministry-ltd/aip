@@ -55,6 +55,19 @@ Also observed:
   engines as C4/C5/X4, but run `aipx verify --mode project` and then open the
   app on a real Mac to confirm.
 
+## Claude desktop Code tab (2026-10-03, macOS 26.5)
+
+- `claude://code/new?folder=…` works the first time for a folder: the
+  composer shows the folder and the session opens there, with the persona's
+  project skills. The **second** time (same link, or with an extra `&n=…`
+  parameter) the composer still shows the folder, but sending the first
+  message creates the session under **"No folder"**, a scratch workspace,
+  so no project skills load. Reproduced with `open` and a brand-new empty
+  folder, so it is Claude desktop's, not aip's. Claude desktop launches are
+  off until this is fixed (`launch::CLAUDE_DESKTOP_ENABLED`); turning them
+  back on also means adding the target back to `Target::ALL`, the menus'
+  `TARGETS` and the Launch screen.
+
 ## aip's own packaging (2026-10-02, Linux)
 
 - `tauri build --bundles deb,rpm` puts the app at `/usr/bin/aip` and the

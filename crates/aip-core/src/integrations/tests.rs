@@ -49,8 +49,8 @@ fn golden_files() {
     golden("dolphin.desktop", &d[0].content);
 
     let n = linux::nemo(&c, &personas());
-    // Choose…, plus (none + 2 personas) × 3 targets.
-    assert_eq!(n.len(), 1 + 3 * 3);
+    // Choose…, plus (none + 2 personas) × 2 targets (Claude desktop is off).
+    assert_eq!(n.len(), 1 + 3 * 2);
     golden(
         "nemo-coder-claude.nemo_action",
         &one(&n, "aip-coder-claude.nemo_action").content,
@@ -61,7 +61,7 @@ fn golden_files() {
     );
 
     let s = linux::nautilus_scripts(&c, &personas());
-    assert_eq!(s.len(), 10);
+    assert_eq!(s.len(), 7);
     assert!(s.iter().all(|f| f.executable
         && f.path
             .starts_with(home.join(".local/share/nautilus/scripts/aip"))));
@@ -69,10 +69,9 @@ fn golden_files() {
         "nautilus-script-writer-pi.sh",
         &one(&s, "writer · Pi").content,
     );
-    golden(
-        "nautilus-script-desktop.sh",
-        &one(&s, "coder · Claude desktop").content,
-    );
+    assert!(!s
+        .iter()
+        .any(|f| f.path.to_string_lossy().contains("Claude desktop")));
 
     golden(
         "nautilus-extension.py",
@@ -91,7 +90,7 @@ fn golden_files() {
 fn without_the_picker_there_is_no_choose_item() {
     let mut c = ctx(Path::new("/home/u"));
     c.picker = false;
-    assert_eq!(linux::nemo(&c, &[]).len(), 3);
+    assert_eq!(linux::nemo(&c, &[]).len(), 2);
     assert!(!linux::dolphin(&c, &[])[0].content.contains("pick"));
 }
 
@@ -292,7 +291,7 @@ fn enable_refresh_disable_touch_only_aips_files() {
     enable(Kind::Nemo, &root).unwrap();
     enable(Kind::Dolphin, &root).unwrap();
     // No picker in this binary: (none + coder) × 3 targets.
-    assert_eq!(listing(&nemo_dir).len(), 6 + 1);
+    assert_eq!(listing(&nemo_dir).len(), 4 + 1);
     let dolphin = home.join(".local/share/kio/servicemenus/aip.desktop");
     assert!(!fs::read_to_string(&dolphin).unwrap().contains("writer"));
     assert!(status().iter().any(|s| s.name == "nemo" && s.enabled));
@@ -311,7 +310,7 @@ fn enable_refresh_disable_touch_only_aips_files() {
     fs::remove_file(root.join("personas/coder.toml")).unwrap();
     refresh().unwrap();
     assert!(!nemo_dir.join("aip-coder-pi.nemo_action").exists());
-    assert_eq!(listing(&nemo_dir).len(), 6 + 1);
+    assert_eq!(listing(&nemo_dir).len(), 4 + 1);
 
     // A file aip did not write is never overwritten or removed.
     fs::write(nemo_dir.join("aip-writer-claude.nemo_action"), "mine\n").unwrap();
@@ -342,7 +341,7 @@ fn nautilus_scripts_folder_is_removed_with_them() {
     let root = env(t.path());
     let dir = t.path().join("home/.local/share/nautilus/scripts/aip");
     enable(Kind::Nautilus, &root).unwrap();
-    assert_eq!(listing(&dir).len(), 6);
+    assert_eq!(listing(&dir).len(), 4);
     disable(Kind::Nautilus).unwrap();
     assert!(!dir.exists());
     assert!(t.path().join("home/.local/share/nautilus/scripts").exists());

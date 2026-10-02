@@ -24,7 +24,7 @@
   onMount(async () => {
     try {
       ctx = await api.pickContext(dir);
-      if (ctx.last) {
+      if (ctx.last && ctx.targets.includes(ctx.last[0])) {
         target = ctx.last[0];
         persona = ctx.last[1] ?? '';
       }

@@ -28,9 +28,9 @@ describe('picker', () => {
   it('persona then harness works too', async () => {
     const core = await open();
     await press('0');
-    await press('d');
+    await press('c');
     await tick();
-    expect(core.named('launch')).toEqual([{ folder: dir, target: 'claude-desktop', persona: null, args: null }]);
+    expect(core.named('launch')).toEqual([{ folder: dir, target: 'claude', persona: null, args: null }]);
   });
 
   it('Enter launches the remembered choice; arrows change it', async () => {

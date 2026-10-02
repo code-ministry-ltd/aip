@@ -58,11 +58,8 @@ impl Kind {
 }
 
 /// The launch targets a menu offers, with their labels.
-pub const TARGETS: [(&str, &str); 3] = [
-    ("claude", "Claude Code"),
-    ("pi", "Pi"),
-    ("claude-desktop", "Claude desktop"),
-];
+/// (Claude desktop is left out while it is off: `launch::CLAUDE_DESKTOP_ENABLED`.)
+pub const TARGETS: [(&str, &str); 2] = [("claude", "Claude Code"), ("pi", "Pi")];
 
 static PICKER: AtomicBool = AtomicBool::new(false);
 

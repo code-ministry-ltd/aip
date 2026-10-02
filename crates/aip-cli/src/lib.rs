@@ -47,7 +47,9 @@ pub enum Command {
     Verify(VerifyArgs),
     /// Write a persona into a folder (for GUI apps), or clear it
     Project(ProjectArgs),
-    /// Write a persona into a folder and open a desktop app there
+    /// Write a persona into a folder and open a desktop app there (off for
+    /// now: Claude desktop, the only app, is switched off)
+    #[command(hide = true)]
     Open(OpenArgs),
     /// Add a library skill to a persona, or remove it
     #[command(subcommand)]
@@ -89,7 +91,7 @@ pub enum FavouritesCommand {
         name: String,
         /// Persona name, or "none"
         persona: String,
-        /// claude, pi or claude-desktop
+        /// claude or pi
         target: String,
         /// Folder (default: current directory)
         #[arg(long, value_name = "DIR")]
@@ -164,7 +166,7 @@ pub struct LaunchArgs {
     /// Persona name, or "none" for the plain harness
     #[arg(required_unless_present = "favourite")]
     pub persona: Option<String>,
-    /// claude, pi or claude-desktop
+    /// claude or pi
     #[arg(required_unless_present = "favourite")]
     pub target: Option<String>,
     /// Launch a saved favourite (see `aip favourites`)

@@ -275,7 +275,7 @@ export function mock(cmd, args) {
         favourites: fixtures.favourites.filter((f) => f.dir === args.dir),
         dir: args.dir,
         personas: fixtures.overview.personas.map((p) => [p.name, p.description]),
-        targets: ['claude', 'pi', 'claude-desktop'],
+        targets: ['claude', 'pi'],
         last: ['claude', 'coder'],
       });
     case 'sync_now':

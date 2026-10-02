@@ -680,7 +680,7 @@ mod tests {
         let project = setup(&t);
         let ctx = pick_context(project.clone()).unwrap();
         assert_eq!(ctx.dir, project);
-        assert_eq!(ctx.targets, ["claude", "pi", "claude-desktop"]);
+        assert_eq!(ctx.targets, ["claude", "pi"]);
         assert_eq!(
             ctx.personas,
             [("coder".to_string(), "Everyday coding".to_string())]

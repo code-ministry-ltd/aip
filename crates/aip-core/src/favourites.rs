@@ -83,10 +83,10 @@ fn check(f: &Favourite) -> Result<()> {
         bail!("a favourite's name cannot start or end with spaces");
     }
     if Target::parse(&f.target).is_none() {
-        bail!(
-            "unknown target '{}' (expected claude, pi or claude-desktop)",
-            f.target
-        );
+        bail!("unknown target '{}' (expected claude or pi)", f.target);
+    }
+    if f.target == "claude-desktop" && !crate::launch::CLAUDE_DESKTOP_ENABLED {
+        bail!(crate::launch::CLAUDE_DESKTOP_OFF);
     }
     if f.target == "claude-desktop" && !f.args.is_empty() {
         bail!("Claude desktop takes no extra arguments");
@@ -189,9 +189,10 @@ mod tests {
         assert!(save(fav("", "pi"), None).is_err());
         assert!(save(fav(" x", "pi"), None).is_err());
         assert!(save(fav("x", "codex"), None).is_err());
-        let mut d = fav("x", "claude-desktop");
-        d.args = vec!["--x".into()];
-        assert!(save(d, None).is_err());
+        assert!(
+            save(fav("x", "claude-desktop"), None).is_err(),
+            "off for now"
+        );
         let mut rel = fav("x", "pi");
         rel.dir = PathBuf::from("shop");
         assert!(save(rel, None).is_err());
