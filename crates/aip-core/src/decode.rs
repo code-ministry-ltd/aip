@@ -183,6 +183,23 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_desktop_scratch_workspace_decodes_quickly() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = "Users/jim/Library/Application Support/Claude/scratch-workspaces/94362acb-7713-431a-a57d-a8cff4643a01-fbf2a64b-9272-462f-9eec-ff9246cc2b71/scratch-2026-10-02-fc6b5d";
+        fs::create_dir_all(t.path().join(dir)).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            decode(
+                "-Users-jim-Library-Application-Support-Claude-scratch-workspaces-94362acb-7713-431a-a57d-a8cff4643a01-fbf2a64b-9272-462f-9eec-ff9246cc2b71-scratch-2026-10-02-fc6b5d",
+                CLAUDE_CANDIDATES,
+                t.path()
+            ),
+            [Path::new("/").join(dir)]
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
     fn pi_keeps_dots_and_wraps_in_dashes() {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir_all(t.path().join("home/me/my-app.v2")).unwrap();
