@@ -3,8 +3,7 @@
 These are the app's screens as built, rendered from the fixture backend in
 `ui/src/lib/mock.js` (`npm --prefix ui run dev` shows the same thing in a
 browser). Task T54 asks for the maintainer to approve them before the design
-is considered settled: **approval pending**. Comment on anything here, or try
-the real thing with your own skills (see [Running the app](#running-the-app)).
+is considered settled: **approved by the maintainer, 2026-10-02**.
 
 The fixture is a small machine: a global `review` skill in both harnesses, a
 claude.ai account skill, a Claude plugin skill, a Pi package skill, a project
