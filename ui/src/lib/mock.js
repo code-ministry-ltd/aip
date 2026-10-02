@@ -249,6 +249,7 @@ export function mock(cmd, args) {
             },
       );
     case 'persona_create':
+    case 'persona_delete':
     case 'skill_rm':
     case 'skill_cp':
       return Promise.resolve(

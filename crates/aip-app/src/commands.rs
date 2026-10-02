@@ -264,6 +264,14 @@ pub fn persona_create(name: String, description: String, confirm: bool) -> Res<C
 }
 
 #[tauri::command]
+pub fn persona_delete(name: String, confirm: bool) -> Res<Change> {
+    preview_or_apply(
+        ops::plan_persona_delete(&root(), &name).map_err(err)?,
+        confirm,
+    )
+}
+
+#[tauri::command]
 pub fn skill_rm(dir: PathBuf, confirm: bool) -> Res<Change> {
     let d = Discovery::from_env(Some(root()));
     let mut inv = inventory::build(&d).map_err(err)?;

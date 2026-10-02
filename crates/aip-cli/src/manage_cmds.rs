@@ -198,6 +198,9 @@ pub fn persona(root: &Path, cmd: PersonaCommand) -> Result<i32> {
             skill,
             yes,
         } => (persona, skill, false, yes),
+        PersonaCommand::Delete { persona, yes } => {
+            return run_plan(&ops::plan_persona_delete(root, &persona)?, yes);
+        }
     };
     run_plan(&ops::plan_persona_edit(root, &persona, &skill, add)?, yes)
 }

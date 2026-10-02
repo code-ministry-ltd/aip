@@ -31,6 +31,7 @@ export const api = {
   personaEdit: (persona, skill, add, confirm) => call('persona_edit', { persona, skill, add, confirm }),
   personaSet: (persona, skills, confirm) => call('persona_set', { persona, skills, confirm }),
   personaCreate: (name, description, confirm) => call('persona_create', { name, description, confirm }),
+  personaDelete: (name, confirm) => call('persona_delete', { name, confirm }),
   skillRm: (dir, confirm) => call('skill_rm', { dir, confirm }),
   skillCp: (dir, asName, confirm) => call('skill_cp', { dir, asName: asName || null, confirm }),
   skillDiff: (a, b) => call('skill_diff', { a, b }),
