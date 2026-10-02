@@ -1,0 +1,76 @@
+name: aip 2
+
+on:
+  push:
+    branches: [main]
+    paths: ['Cargo.*', 'crates/**', 'ui/**', 'ci/scripts/**', 'dist/**', '.github/workflows/rust.yml']
+  pull_request:
+    paths: ['Cargo.*', 'crates/**', 'ui/**', 'ci/scripts/**', 'dist/**', '.github/workflows/rust.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust and UI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Linux app dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev \
+            xvfb dbus-x11 xdg-utils libglib2.0-bin
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI tests and build
+        run: |
+          npm ci --prefix ui
+          npm --prefix ui test
+          npm --prefix ui run build
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: App smoke test, CLI passthrough and aip:// (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p aip-cli -p aip-app --features aip-app/custom-protocol
+          ci/scripts/app-smoke.sh
+
+  install-script:
+    name: install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: shellcheck dist/install.sh ci/scripts/*.sh
+      - name: Test against a local release
+        run: cargo build -p aip-cli && ci/scripts/test-install.sh
