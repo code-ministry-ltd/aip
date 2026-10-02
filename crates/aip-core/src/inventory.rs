@@ -227,6 +227,10 @@ pub struct Settings {
     /// Check for app updates on start (direct-download builds; spec decision 7).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub update_checks: bool,
+    /// The terminal for Claude Code and Pi (`terminal::choices` id, or a
+    /// command); `None` uses the system's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
 }
 
 fn yes() -> bool {

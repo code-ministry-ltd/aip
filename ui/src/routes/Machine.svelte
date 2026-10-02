@@ -1,6 +1,6 @@
 <script>
-  // This machine: harness versions, workspace folders, sync, change history
-  // and file-manager integrations (T57).
+  // This machine: harness versions, workspace folders, the terminal, sync,
+  // change history and file-manager integrations (T57).
   import { onMount } from 'svelte';
   import { api, chooseFolder } from '../lib/api.js';
   import { ask } from '../lib/dialog.svelte.js';
@@ -16,6 +16,10 @@
   let cli = $state(null);
   let upd = $state(null);
   let checking = $state(false);
+  let term = $state(null);
+  /** The select's value: '' (default), a terminal's id, or 'custom'. */
+  let termPick = $state('');
+  let termCommand = $state('');
 
   const settings = $derived(overview.settings);
   const updateChecks = $derived(settings.update_checks !== false);
@@ -35,6 +39,38 @@
       cli = await api.cliStatus();
     } catch {
       cli = null;
+    }
+    try {
+      term = await api.terminalStatus();
+      const c = term.chosen ?? '';
+      const known = !c || term.choices.some((t) => t.id === c);
+      termPick = known ? c : 'custom';
+      termCommand = known ? '' : c;
+    } catch {
+      term = null;
+    }
+  }
+
+  async function saveTerminal(value) {
+    try {
+      await api.setTerminal(value);
+      notify(value ? `Claude Code and Pi will open in ${term.choices.find((t) => t.id === value)?.label ?? value}` : 'Using the default terminal', 'good');
+      term = await api.terminalStatus();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  function pickTerminal(v) {
+    termPick = v;
+    if (v !== 'custom') saveTerminal(v);
+  }
+
+  async function testTerminal() {
+    try {
+      await api.terminalTest();
+    } catch (e) {
+      notify(String(e), 'bad');
     }
   }
 
@@ -231,6 +267,40 @@
     </ul>
     <button onclick={addWorkspace}>Add folder…</button>
   </section>
+
+  {#if term}
+    <section class="card" data-testid="terminal">
+      <h2>Terminal</h2>
+      <p class="muted small">Where Claude Code and Pi open when you launch them.</p>
+      <div class="row">
+        <select value={termPick} onchange={(e) => pickTerminal(e.currentTarget.value)} aria-label="Terminal">
+          <option value="">{term.macos ? 'System default (usually Terminal)' : 'Automatic (the first one installed)'}</option>
+          {#each term.choices as t}<option value={t.id}>{t.label}</option>{/each}
+          <option value="custom">Another, by command…</option>
+        </select>
+        <button onclick={testTerminal}>Test</button>
+      </div>
+      {#if termPick === 'custom'}
+        <form
+          class="row"
+          onsubmit={(e) => {
+            e.preventDefault();
+            saveTerminal(termCommand);
+          }}
+        >
+          <input
+            class="mono"
+            bind:value={termCommand}
+            aria-label="Terminal command"
+            placeholder={term.macos ? '/Applications/WezTerm.app/Contents/MacOS/wezterm start --' : 'foot'}
+          />
+          <button class="primary" type="submit" disabled={!termCommand.trim()}>Save</button>
+        </form>
+        <p class="muted small">aip runs this followed by <span class="mono">sh -c '…'</span>, the way most terminals take a command to run.</p>
+      {/if}
+      {#if term.env_override}<p class="warn small">AIP_TERMINAL is set in aip's environment and wins over this setting.</p>{/if}
+    </section>
+  {/if}
 
   <section class="card wide">
     <div class="row">

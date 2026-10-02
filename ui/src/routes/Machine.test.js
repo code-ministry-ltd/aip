@@ -79,4 +79,23 @@ describe('This machine: updates and the command-line tool', () => {
     await tick();
     expect(core.named('install_cli')).toHaveLength(1);
   });
+
+  it('chooses the terminal: an installed one, or another by command, and tests it', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    const select = screen.getByLabelText('Terminal');
+    await fireEvent.change(select, { target: { value: 'iTerm' } });
+    await tick();
+    await fireEvent.change(select, { target: { value: 'custom' } });
+    await tick();
+    await fireEvent.input(screen.getByLabelText('Terminal command'), { target: { value: 'wezterm start --' } });
+    await fireEvent.click(screen.getByText('Save', { selector: '[data-testid="terminal"] button' }));
+    await tick();
+    expect(core.named('set_terminal')).toEqual([{ terminal: 'iTerm' }, { terminal: 'wezterm start --' }]);
+    await fireEvent.click(screen.getByText('Test'));
+    await tick();
+    expect(core.named('terminal_test')).toHaveLength(1);
+  });
 });
+
