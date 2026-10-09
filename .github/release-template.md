@@ -10,7 +10,7 @@ aip is not signed yet, so macOS blocks it until you allow it once:
 3. If macOS says aip "is damaged and can't be opened", run this in Terminal,
    then open it again:
    ```sh
-   xattr -dr com.apple.quarantine /Applications/aip.app
+   xattr -d com.apple.quarantine /Applications/aip.app
    ```
 
 **Linux:** the AppImage (any distribution), or the `.deb` / `.rpm` package.

@@ -21,7 +21,7 @@ aip's own updater keep working.
    again:
 
    ```sh
-   xattr -dr com.apple.quarantine /Applications/aip.app
+   xattr -d com.apple.quarantine /Applications/aip.app
    ```
 
 The same steps are on the `.dmg` window's background and in each release's
