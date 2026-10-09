@@ -34,7 +34,7 @@ describe('first run', () => {
 
   it('without 0.x there is no import offer; clone needs a URL', async () => {
     const core = fakeCore({
-      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: null, v0_remote: null, v0_install: false }),
+      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: null, v0_remote: null, v0_converted: false, v0_install: false }),
     });
     render(FirstRun, { notify: vi.fn(), ondone: vi.fn() });
     await tick();
@@ -49,12 +49,22 @@ describe('first run', () => {
 
   it('local profiles without a remote are imported', async () => {
     fakeCore({
-      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: '/h/agent-profiles', v0_remote: null, v0_install: false }),
+      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: '/h/agent-profiles', v0_remote: null, v0_converted: false, v0_install: false }),
     });
     render(FirstRun, { notify: vi.fn(), ondone: vi.fn() });
     await tick();
     expect(screen.getByText('Import aip 0.x profiles…')).toBeTruthy();
     expect(screen.getByTestId('v0').textContent).not.toContain('remove aip 0.x');
+  });
+
+  it('profiles whose remote is already converted are cloned', async () => {
+    fakeCore({
+      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: '/h/agent-profiles', v0_remote: 'git@example.com:me/p.git', v0_converted: true, v0_install: false }),
+    });
+    render(FirstRun, { notify: vi.fn(), ondone: vi.fn() });
+    await tick();
+    expect(screen.getByText('Clone your personas…')).toBeTruthy();
+    expect(screen.getByTestId('v0').textContent).toContain('already converted');
   });
 
   it('cloning a 0.x repository goes straight to converting it', async () => {
@@ -64,7 +74,7 @@ describe('first run', () => {
         cloned = true;
         return null;
       },
-      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: cloned, v0_profiles: null, v0_remote: null, v0_install: false }),
+      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: cloned, v0_profiles: null, v0_remote: null, v0_converted: false, v0_install: false }),
     });
     const ondone = vi.fn();
     render(FirstRun, { notify: vi.fn(), ondone });
@@ -84,7 +94,7 @@ describe('first run', () => {
 
   it('offers to remove a 0.x install when there is nothing to convert', async () => {
     fakeCore({
-      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: null, v0_remote: null, v0_install: true }),
+      first_run: () => ({ harnesses: [], root: '/h/agent-personas', root_exists: false, v0_repo: false, v0_profiles: null, v0_remote: null, v0_converted: false, v0_install: true }),
     });
     render(FirstRun, { notify: vi.fn(), ondone: vi.fn() });
     await tick();

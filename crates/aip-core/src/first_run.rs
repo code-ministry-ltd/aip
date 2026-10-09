@@ -25,6 +25,9 @@ pub struct FirstRun {
     pub v0_profiles: Option<PathBuf>,
     /// Their Git remote: converting pushes the personas there.
     pub v0_remote: Option<String>,
+    /// Another machine has already converted that remote: bringing 0.x over
+    /// clones it instead.
+    pub v0_converted: bool,
     /// Some of aip 0.x is installed (hook, install folder, npm package).
     pub v0_install: bool,
 }
@@ -39,6 +42,8 @@ impl FirstRun {
 pub fn state(root: &Path) -> FirstRun {
     let home = paths::home();
     let v0 = import_v0::default_v0_root(&home);
+    let root_exists = root.join("personas").is_dir();
+    let v0_profiles = (!import_v0::profiles(&v0).is_empty()).then_some(v0.clone());
     FirstRun {
         harnesses: Harness::ALL
             .iter()
@@ -48,10 +53,12 @@ pub fn state(root: &Path) -> FirstRun {
             })
             .collect(),
         root: root.to_path_buf(),
-        root_exists: root.join("personas").is_dir(),
+        root_exists,
         v0_repo: migrate_v0::is_v0_repo(root),
         v0_remote: migrate_v0::origin(&v0),
-        v0_profiles: (!import_v0::profiles(&v0).is_empty()).then_some(v0),
+        // Fetches, so only when first run will offer it.
+        v0_converted: !root_exists && v0_profiles.is_some() && migrate_v0::remote_converted(&v0),
+        v0_profiles,
         v0_install: migrate_v0::find_install(&home).found(),
     }
 }
