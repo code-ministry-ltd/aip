@@ -94,6 +94,9 @@ fn launch_runs_the_harness_with_generated_files() {
     let plugin = h.dir.path().join("cache/personas/writer/claude/plugin");
     assert!(plugin.join(".claude-plugin/plugin.json").is_file());
     assert!(plugin.join("skills/prose/SKILL.md").is_file());
+    assert!(fs::read_to_string(plugin.join("hooks/aip-status.mjs"))
+        .unwrap()
+        .contains("const PERSONA = \"writer\";"));
     let launches = fs::read_to_string(h.dir.path().join("state/launches.json")).unwrap();
     assert!(launches.contains("\"persona\": \"writer\""));
 }

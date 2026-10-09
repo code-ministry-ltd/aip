@@ -1,0 +1,6 @@
+{
+  "name": "aip-example",
+  "version": "0.1.0",
+  "description": "aip persona: example. aip generates one per persona launch; this copy is for `claude plugin test`.",
+  "author": { "name": "aip" }
+}
