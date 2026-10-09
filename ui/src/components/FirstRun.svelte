@@ -57,7 +57,7 @@
   const step = (n) => (fr?.v0_profiles || fr?.v0_install ? n + 1 : n);
 
   async function importV0() {
-    const r = await change((c) => api.importV0(c), { notify, onchange: ondone, confirmLabel: fr.v0_repo || fr.v0_remote ? 'Convert' : fr.v0_profiles ? 'Import' : 'Remove',
+    const r = await change((c) => api.importV0(c), { notify, onchange: ondone, confirmLabel: fr.v0_converted ? 'Clone' : fr.v0_repo || fr.v0_remote ? 'Convert' : fr.v0_profiles ? 'Import' : 'Remove',
     });
     if (r?.kind === 'done') ondone?.();
   }
@@ -100,7 +100,10 @@
         <h2>2. Bring over aip 0.x</h2>
         <p>
           You have aip 0.x profiles in <span class="mono">{tilde(fr.v0_profiles)}</span>.
-          {#if fr.v0_remote}
+          {#if fr.v0_converted}
+            Another machine has already converted <span class="mono">{fr.v0_remote}</span> to personas, so aip can clone
+            it here{removing}.
+          {:else if fr.v0_remote}
             aip can convert them into personas and push them to <span class="mono">{fr.v0_remote}</span>, so your other
             machines get them too{removing}.
           {:else}
@@ -109,7 +112,7 @@
           You will see exactly what changes first.
         </p>
         <button class="primary" disabled={busy} onclick={importV0}
-          >{fr.v0_remote ? 'Convert and push…' : 'Import aip 0.x profiles…'}</button
+          >{fr.v0_converted ? 'Clone your personas…' : fr.v0_remote ? 'Convert and push…' : 'Import aip 0.x profiles…'}</button
         >
       </section>
     {:else if fr.v0_install}

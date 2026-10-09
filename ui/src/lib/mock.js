@@ -291,6 +291,7 @@ export function mock(cmd, args) {
         v0_repo: false,
         v0_profiles: `${H}/agent-profiles`,
         v0_remote: 'git@github.com:you/agent-profiles.git',
+        v0_converted: false,
         v0_install: true,
       });
     case 'create_root':

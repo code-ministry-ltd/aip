@@ -7,6 +7,8 @@
 //! - **From a local checkout:** `~/agent-profiles` with a remote is cloned to
 //!   the personas root and converted there, so the converted personas go
 //!   back to the same remote with history intact.
+//! - **Join:** when another machine has already converted that remote, it
+//!   is cloned as it is; the 0.x checkout is left alone.
 //! - **Uninstall:** the shell hook, the install folder and the npm package.
 
 use crate::import_v0::{self, Hook, Report};
@@ -98,6 +100,26 @@ pub fn origin(v0_root: &Path) -> Option<String> {
     sync::git(v0_root, &["remote", "get-url", "origin"])
         .ok()
         .filter(|u| !u.is_empty())
+}
+
+/// Whether the remote of a 0.x checkout has already been converted to
+/// personas (by another machine). Fetches; an unreachable remote counts as
+/// not converted, so converting reports the problem.
+pub fn remote_converted(v0_root: &Path) -> bool {
+    origin(v0_root).is_some()
+        && sync::ok(v0_root, &["fetch", "-q", "origin"])
+        && ["@{upstream}", "origin/HEAD"]
+            .iter()
+            .any(|r| sync::ok(v0_root, &["cat-file", "-e", &format!("{r}:personas")]))
+}
+
+/// Whether a 0.x checkout has work its remote doesn't: changes to tracked
+/// files, or commits it hasn't pushed.
+fn unpushed(v0_root: &Path) -> bool {
+    !sync::ok(v0_root, &["diff", "HEAD", "--quiet"])
+        || sync::git(v0_root, &["rev-list", "--count", "@{upstream}..HEAD"])
+            .map(|n| n != "0")
+            .unwrap_or(false)
 }
 
 /// Commit changes to files the checkout already tracks. Never untracked
@@ -259,6 +281,9 @@ pub enum Mode {
     Repo,
     /// Local profiles with a remote (the URL): clone, convert, push.
     Local(String),
+    /// Local profiles whose remote (the URL) another machine has already
+    /// converted: clone it as it is.
+    Join(String),
     /// Local profiles without one: import into a new repository.
     Import,
     /// Nothing to convert, only 0.x to remove.
@@ -291,7 +316,11 @@ pub fn plan(root: &Path, from: &Path, home: &Path, uninstall: bool) -> Result<Mi
     let mode = if is_v0_repo(root) {
         Mode::Repo
     } else if let (true, true, Some(url)) = (has_profiles, fresh, origin(from)) {
-        Mode::Local(url)
+        if remote_converted(from) {
+            Mode::Join(url)
+        } else {
+            Mode::Local(url)
+        }
     } else if has_profiles {
         Mode::Import
     } else if install.found() {
@@ -325,6 +354,24 @@ pub fn plan(root: &Path, from: &Path, home: &Path, uninstall: bool) -> Result<Mi
                 report.personas.len()
             );
             p
+        }
+        Mode::Join(url) => {
+            let mut preview = vec![
+                format!("{url} already has personas (converted on another machine)"),
+                format!("clone it to {}", root.display()),
+            ];
+            if unpushed(from) {
+                preview.push(format!(
+                    "{} has changes {url} doesn't; they are not carried over and stay in that \
+                     folder",
+                    from.display()
+                ));
+            }
+            OpPlan {
+                summary: "clone your personas".into(),
+                preview,
+                steps: Vec::new(),
+            }
         }
         Mode::Import => {
             let (mut p, report) = import_v0::plan_import(from, root)?;
@@ -392,6 +439,16 @@ pub fn run(m: &Migration) -> Result<Vec<String>> {
                 Ok(sync::Outcome::NoRemote { .. }) => {}
                 Ok(o) => done.push(format!("not pushed ({o:?}); sync to push them")),
                 Err(e) => done.push(format!("not pushed: {e:#}")),
+            }
+        }
+        Mode::Join(url) => {
+            sync::clone(url, &m.root)?;
+            done.push(format!("cloned your personas from {url}"));
+            if remove.steps.is_empty() {
+                let _ = crate::integrations::refresh();
+            } else {
+                ops::execute(&remove)?;
+                done.push("removed aip 0.x".into());
             }
         }
         Mode::Import => {
@@ -610,6 +667,46 @@ mod tests {
         let e = clone_local(&t.path().join("agent-profiles"), &root).unwrap_err();
         assert!(e.to_string().contains("this machine doesn't"), "{e}");
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn a_remote_another_machine_converted_is_cloned_not_converted_again() {
+        let t = tempfile::tempdir().unwrap();
+        let _g = env(t.path());
+        let (origin_dir, v0) = remote_and_checkout(t.path());
+        // Another machine converts the remote and pushes.
+        let other = t.path().join("other");
+        let st = Command::new("git")
+            .args(["clone", "-q"])
+            .arg(&origin_dir)
+            .arg(&other)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        identity(&other);
+        apply_convert(&other, &plan_convert(&other).unwrap()).unwrap();
+        git(&other, &["push", "-q"]);
+        // This machine has a change it never pushed.
+        fs::write(v0.join("work/AGENTS.md"), "Be work, locally.\n").unwrap();
+
+        let root = t.path().join("agent-personas");
+        let m = plan(&root, &v0, t.path(), false).unwrap();
+        let url = origin_dir.to_string_lossy().to_string();
+        assert_eq!(m.mode, Mode::Join(url));
+        assert!(m
+            .preview
+            .preview
+            .iter()
+            .any(|l| l.contains("not carried over")));
+
+        run(&m).unwrap();
+        assert!(root.join("personas/work.toml").is_file());
+        assert!(!is_v0_repo(&root));
+        // The 0.x checkout is left as it was.
+        assert_eq!(
+            fs::read_to_string(v0.join("work/AGENTS.md")).unwrap(),
+            "Be work, locally.\n"
+        );
     }
 
     #[test]
