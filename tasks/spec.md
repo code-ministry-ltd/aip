@@ -514,6 +514,15 @@ this repository, its name, URL, issues and history.
 1. **Skills for Claude ride in a generated inline plugin in launch mode**
    (`aip-<persona>:<skill>` names), and in `.claude/skills` in project mode.
    Symlinking into `~/.claude/skills` was rejected: it is global.
+   - The same plugin carries a Claude Code mod (2026-10-09,
+     `crates/aip-core/assets/claude-mod`) that draws `aip: <persona>` in a
+     line above the prompt, so every persona launch gets the plugin, skills
+     or not. `$.ui.status` was tried first, but Claude shows it as
+     `⚠ aip-<persona>: …`, which reads as a warning.
+   - Pi launches load a generated extension with `-e`
+     (`crates/aip-core/assets/pi-extension`) that puts `aip: <persona>` in
+     Pi's footer. The 0.x `extensions/aip-status.ts` reads
+     `AIP_ACTIVE_PROFILE`, which aip 2 never sets.
 2. **Personas are additive (2026-10-01).** A persona adds skills, plugins,
    MCP servers and instructions; it never hides anything.
    - Global skills are the user's "always" set and stay on in every persona.
