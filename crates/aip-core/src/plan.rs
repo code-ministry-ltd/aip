@@ -76,6 +76,20 @@ fn link_ops(dir: &Path, persona: &Persona, library_dir: &Path, skip_foreign: boo
     ops
 }
 
+/// The Claude Code mod in each persona plugin (`assets/claude-mod`, which
+/// `claude plugin test` runs as it is) and the Pi extension each persona
+/// launch loads. Both name the persona.
+const CLAUDE_MOD_HOOKS: &str = include_str!("../assets/claude-mod/hooks/hooks.json");
+const CLAUDE_STATUS_MOD: &str = include_str!("../assets/claude-mod/hooks/aip-status.mjs");
+const PI_STATUS_EXTENSION: &str = include_str!("../assets/pi-extension/aip-status.ts");
+const EXAMPLE_PERSONA: &str = "const PERSONA = \"example\";";
+
+/// A status script with `persona` in place of the example's name.
+fn with_persona(script: &str, persona: &str) -> String {
+    let name = serde_json::to_string(persona).unwrap_or_default();
+    script.replacen(EXAMPLE_PERSONA, &format!("const PERSONA = {name};"), 1)
+}
+
 fn json_file(value: &serde_json::Value) -> String {
     format!(
         "{}\n",
@@ -104,7 +118,7 @@ pub fn plan_launch(
         Harness::Claude => {
             plan_claude_launch(p, &gen_dir.join(&p.name).join("claude"), library_dir)
         }
-        Harness::Pi => plan_pi_launch(p),
+        Harness::Pi => plan_pi_launch(p, &gen_dir.join(&p.name).join("pi")),
     }
 }
 
@@ -113,21 +127,28 @@ fn plan_claude_launch(p: &Persona, base: &Path, library_dir: &Path) -> Plan {
     let mut args = Vec::new();
     let mut notes = Vec::new();
 
-    // Persona skills ride in a generated inline plugin; Claude shows them as
-    // aip-<persona>:<skill>.
-    if !p.skills.is_empty() {
-        let plugin = base.join("plugin");
-        ops.push(Op::Write {
-            path: plugin.join(".claude-plugin/plugin.json"),
-            content: json_file(&serde_json::json!({
-                "name": plugin_name(p),
-                "description": format!("aip persona: {}", p.name),
-            })),
-        });
-        ops.extend(link_ops(&plugin.join("skills"), p, library_dir, false));
-        args.push("--plugin-dir".into());
-        args.push(plugin.display().to_string());
-    }
+    // A generated inline plugin carries the persona's skills, which Claude
+    // shows as aip-<persona>:<skill>, and a mod that names the persona under
+    // the prompt.
+    let plugin = base.join("plugin");
+    ops.push(Op::Write {
+        path: plugin.join(".claude-plugin/plugin.json"),
+        content: json_file(&serde_json::json!({
+            "name": plugin_name(p),
+            "description": format!("aip persona: {}", p.name),
+        })),
+    });
+    ops.push(Op::Write {
+        path: plugin.join("hooks/hooks.json"),
+        content: CLAUDE_MOD_HOOKS.into(),
+    });
+    ops.push(Op::Write {
+        path: plugin.join("hooks/aip-status.mjs"),
+        content: with_persona(CLAUDE_STATUS_MOD, &p.name),
+    });
+    ops.extend(link_ops(&plugin.join("skills"), p, library_dir, false));
+    args.push("--plugin-dir".into());
+    args.push(plugin.display().to_string());
     if !p.claude_settings.is_empty() {
         let path = base.join("settings.json");
         ops.push(Op::Write {
@@ -159,9 +180,15 @@ fn plan_claude_launch(p: &Persona, base: &Path, library_dir: &Path) -> Plan {
     }
 }
 
-fn plan_pi_launch(p: &Persona) -> Plan {
-    let mut args = Vec::new();
+fn plan_pi_launch(p: &Persona, base: &Path) -> Plan {
     let mut notes = Vec::new();
+    // An extension that names the persona in Pi's footer.
+    let extension = base.join("aip-status.ts");
+    let ops = vec![Op::Write {
+        path: extension.clone(),
+        content: with_persona(PI_STATUS_EXTENSION, &p.name),
+    }];
+    let mut args = vec!["-e".to_string(), extension.display().to_string()];
     for s in &p.skills {
         args.push("--skill".into());
         args.push(s.dir.display().to_string());
@@ -179,7 +206,7 @@ fn plan_pi_launch(p: &Persona) -> Plan {
     Plan {
         command: "pi".into(),
         args,
-        ops: Vec::new(),
+        ops,
         notes,
     }
 }
@@ -303,6 +330,31 @@ mod tests {
         assert!(!all.contains("skillOverrides") && !all.contains("disableBundledSkills"));
     }
 
+    fn written(plan: &Plan, name: &str) -> Option<String> {
+        plan.ops.iter().find_map(|o| match o {
+            Op::Write { path, content } if path.ends_with(name) => Some(content.clone()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn claude_launch_names_the_persona_under_the_prompt() {
+        let (_t, mut p, lib) = writer();
+        // Even a persona without skills gets the plugin, for the mod.
+        p.skills.clear();
+        let plan = plan_launch(Harness::Claude, Some(&p), Path::new("/gen"), &lib);
+        assert!(plan
+            .args
+            .join(" ")
+            .contains("--plugin-dir /gen/writer/claude/plugin"));
+        assert!(written(&plan, "hooks/hooks.json")
+            .unwrap()
+            .contains("./aip-status.mjs"));
+        let module = written(&plan, "hooks/aip-status.mjs").unwrap();
+        assert!(module.contains("const PERSONA = \"writer\";"));
+        assert!(!module.contains("example"));
+    }
+
     #[test]
     fn pi_launch_adds_skills_without_hiding_globals() {
         let (_t, p, _lib) = writer();
@@ -313,6 +365,18 @@ mod tests {
             .args
             .ends_with(&["--thinking".to_string(), "high".to_string()]));
         assert!(plan.notes.iter().any(|n| n.contains("no built-in MCP")));
+    }
+
+    #[test]
+    fn pi_launch_names_the_persona_in_the_footer() {
+        let (_t, p, _lib) = writer();
+        let plan = plan_launch(Harness::Pi, Some(&p), Path::new("/gen"), Path::new("/lib"));
+        assert!(plan
+            .args
+            .starts_with(&["-e".to_string(), "/gen/writer/pi/aip-status.ts".to_string()]));
+        let extension = written(&plan, "pi/aip-status.ts").unwrap();
+        assert!(extension.contains("const PERSONA = \"writer\";"));
+        assert!(!extension.contains("example"));
     }
 
     #[test]
