@@ -1,0 +1,18 @@
+<!-- Source for dmg-background.png, the .dmg window behind the app and the
+     Applications folder (660x420, see tauri.macos.conf.json). Regenerate with:
+     rsvg-convert dmg-background.svg -o dmg-background.png
+     The text needs DejaVu Sans and DejaVu Sans Mono installed. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="420" viewBox="0 0 660 420">
+  <rect width="660" height="420" fill="#fbf6ec"/>
+  <line x1="235" y1="150" x2="416" y2="150" stroke="#e0661b" stroke-width="5"/>
+  <polygon points="413,135 444,150 413,165" fill="#e0661b"/>
+  <g font-family="DejaVu Sans">
+    <text x="40" y="280" font-size="17" font-weight="bold" fill="#111827">First open (aip is not signed yet):</text>
+    <g font-size="14.2" fill="#4b5563">
+      <text x="40" y="307">1. Drag aip to Applications, open it once. macOS blocks it.</text>
+      <text x="40" y="332">2. System Settings ▸ Privacy &amp; Security ▸ "Open Anyway", then "Open".</text>
+      <text x="40" y="357">3. If it says aip "is damaged", run in Terminal:</text>
+    </g>
+    <text x="60" y="383" font-family="DejaVu Sans Mono" font-size="11.7" fill="#1f2937">xattr -d com.apple.quarantine /Applications/aip.app</text>
+  </g>
+</svg>

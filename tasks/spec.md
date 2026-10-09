@@ -73,7 +73,7 @@ OSS). Reasons for deferring:
     Gatekeeper. The route is System Settings → Privacy & Security →
     "Open Anyway", then confirm.
   - Some apps are reported as "damaged" instead, which only
-    `xattr -dr com.apple.quarantine` clears.
+    `xattr -d com.apple.quarantine` clears.
   - Since 2026-09-01, Homebrew disables official casks that fail Gatekeeper
     and has removed `--no-quarantine`, so Homebrew no longer helps unsigned
     apps.
@@ -382,7 +382,7 @@ background:
 2. Open System Settings → Privacy & Security, click "Open Anyway" next to the
    aip message, and confirm with "Open".
 3. If macOS says the app "is damaged and can't be opened", run
-   `xattr -dr com.apple.quarantine /Applications/aip.app` in Terminal, then
+   `xattr -d com.apple.quarantine /Applications/aip.app` in Terminal, then
    open it again.
 
 - **Record how aip was installed.** Every channel writes an install-method
