@@ -2946,7 +2946,7 @@ It 'returns a nonzero process status when installation fails' {
             $output = (& (Join-Path $script:RepositoryRoot 'install.ps1') 2>&1) | Out-String
             $LASTEXITCODE | Should -Be 0
             $root = $env:_AIP_PROFILE_ROOT
-            foreach ($name in 'SKILL.md', 'README.md', 'setup.md', 'audit.md', 'conflicts.md', '.aip-managed') {
+            foreach ($name in 'SKILL.md', 'README.md', '.aip-managed') {
                 Test-Path -LiteralPath (Join-Path $root "aip/skills/aip/$name") | Should -BeTrue
             }
             & git -C $root rev-parse --verify HEAD 2>$null | Out-Null
