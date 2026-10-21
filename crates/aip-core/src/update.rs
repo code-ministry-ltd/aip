@@ -115,7 +115,7 @@ pub fn advice(c: &Channel) -> String {
     match path_for(c) {
         UpdatePath::SelfUpdate => "run `aip self-update`".into(),
         UpdatePath::Updater => {
-            "the app offers the update when it starts (or use This machine ▸ Check for updates)"
+            "the app offers the update when it starts (or use Settings ▸ Check for updates)"
                 .into()
         }
         UpdatePath::Download { url } => format!("download the new package from {url}"),

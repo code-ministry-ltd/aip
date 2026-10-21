@@ -29,7 +29,7 @@ notes.
 
 ## The `aip` command
 
-In the app, open **This machine → Command-line tool → Install command-line
+In the app, open **Settings → Command-line tool → Install command-line
 tool**. It links `aip` into `~/.local/bin`; add that folder to your PATH if
 it is not there already (the app tells you).
 
@@ -43,12 +43,12 @@ curl -fsSL https://github.com/code-ministry-ltd/aip/releases/latest/download/ins
 ## Updates
 
 The app checks for a new stable release when it starts (turn this off in
-**This machine**) and installs it when you agree. Command-line-only installs
+**Settings**) and installs it when you agree. Command-line-only installs
 update with `aip self-update`.
 
 ## Uninstall
 
-Turn off the Finder menu first (This machine → File manager, or
+Turn off the Finder menu first (Settings → File manager, or
 `aip integrations disable all`), then drag aip from Applications to the
 Trash and delete `~/.local/bin/aip` if you linked it. Your personas
 repository (`~/agent-personas`) is yours to keep or delete.

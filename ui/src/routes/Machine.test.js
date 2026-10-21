@@ -4,7 +4,7 @@ import Machine from './Machine.svelte';
 import { answer } from '../lib/dialog.svelte.js';
 import { fakeCore, overview, tick } from '../test/fake.js';
 
-describe('This machine', () => {
+describe('Settings', () => {
   it('turns file-manager menus on and off through the core', async () => {
     const core = fakeCore();
     const notify = vi.fn();
@@ -42,7 +42,7 @@ describe('This machine', () => {
   });
 });
 
-describe('This machine: updates and the command-line tool', () => {
+describe('Settings: updates and the command-line tool', () => {
   it('checks for updates and offers the updater when it can install', async () => {
     const core = fakeCore();
     render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
