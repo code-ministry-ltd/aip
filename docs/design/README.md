@@ -46,7 +46,7 @@ been told to trust.
 "Resolve…" on a flagged row lists the actions for each copy: compare, copy
 into the library, add to or remove from a persona, reveal, delete. Every change
 shows exactly what will happen and applies only on confirmation; Undo (bottom
-left, or This machine ▸ Recent changes) reverses it.
+left, or Settings ▸ Recent changes) reverses it.
 
 ## Personas
 
@@ -74,9 +74,9 @@ the form as one-click buttons (right-click to edit, rename or delete), come
 first in a folder's right-click menu, take F1–F9 in the picker, and run from
 a terminal with `aip launch --favourite NAME`. They are stored per machine.
 
-## This machine
+## Settings
 
-![This machine](machine.png)
+![Settings](machine.png)
 
 Harness versions, the update-check setting, workspace folders, sync (with an
 opt-in timer and a side-by-side conflict view), the history of changes with

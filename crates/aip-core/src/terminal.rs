@@ -136,7 +136,7 @@ pub fn terminal_plan(
             });
         }
     }
-    bail!("no terminal found; choose one under This machine ▸ Terminal")
+    bail!("no terminal found; choose one under Settings ▸ Terminal")
 }
 
 /// Whether `program` is on PATH.

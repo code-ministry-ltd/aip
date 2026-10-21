@@ -96,7 +96,7 @@
     const id = setInterval(async () => {
       try {
         const r = await api.syncNow();
-        if (r.outcome === 'conflict') notify('Sync needs you: open This machine ▸ Sync', 'bad');
+        if (r.outcome === 'conflict') notify('Sync needs you: open Settings ▸ Sync', 'bad');
         else if (r.outcome === 'pulled' || r.outcome === 'merged') refresh();
       } catch (e) {
         notify(`Sync failed: ${e}`, 'bad');
@@ -109,7 +109,7 @@
     { path: '/', label: 'Skills', icon: 'M4 5h16M4 12h16M4 19h10' },
     { path: '/personas', label: 'Personas', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0' },
     { path: '/launch', label: 'Launch', icon: 'M5 19 19 5M9 5h10v10' },
-    { path: '/machine', label: 'This machine', icon: 'M4 6h16v10H4zM8 20h8M12 16v4' },
+    { path: '/machine', label: 'Settings', icon: 'M4 6h16v10H4zM8 20h8M12 16v4' },
   ];
 </script>
 
