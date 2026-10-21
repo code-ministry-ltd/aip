@@ -92,6 +92,7 @@ pub fn create_root(root: &Path) -> Result<bool> {
         fs::create_dir_all(p.parent().unwrap())?;
         fs::write(&p, text).with_context(|| format!("writing {}", p.display()))?;
     }
+    aip_core::aip_skill::install(root)?;
     aip_core::sync::ensure_repo(root)?;
     Ok(aip_core::sync::commit_local(root, "aip init").unwrap_or(false))
 }
