@@ -61,3 +61,26 @@ describe('Personas', () => {
   });
 });
 
+describe('Personas: unsent changes', () => {
+  it('offers Sync now only while there are changes to send', async () => {
+    fakeCore();
+    render(Personas, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    expect(screen.queryByText('Sync now')).toBeNull();
+  });
+
+  it('syncs and refreshes', async () => {
+    const core = fakeCore({ sync_now: () => ({ outcome: 'pushed' }) });
+    const notify = vi.fn();
+    const onchange = vi.fn();
+    const o = overview();
+    o.sync.pending = true;
+    render(Personas, { overview: o, notify, onchange });
+    await tick();
+    await fireEvent.click(screen.getByText('Sync now'));
+    await tick();
+    expect(core.named('sync_now')).toHaveLength(1);
+    expect(notify).toHaveBeenCalledWith('Sent this machine’s changes.', 'good');
+    expect(onchange).toHaveBeenCalled();
+  });
+});

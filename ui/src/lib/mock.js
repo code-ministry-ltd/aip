@@ -66,6 +66,7 @@ export const fixtures = {
       { dir: `${H}/Documents/obsidian-md/research/career`, target: 'pi', persona: 'writer' },
     ],
     settings: { workspaces: [`${H}/code`], update_checks: true },
+    sync: { remote: true, pending: false },
   },
 };
 
