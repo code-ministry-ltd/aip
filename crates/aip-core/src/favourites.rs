@@ -21,7 +21,9 @@ pub struct Favourite {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona: Option<String>,
     /// Extra arguments for the harness (not used for Claude desktop).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Always written, even when empty: the app reads `args` on every
+    /// favourite. Files from 2.0.0 and the rcs may leave it out.
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
@@ -179,6 +181,24 @@ mod tests {
         remove("Shop Pi").unwrap();
         assert!(remove("Shop Pi").is_err());
         assert_eq!(list().len(), 1);
+    }
+
+    #[test]
+    fn favourites_without_args_read_and_always_carry_args() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = tempfile::tempdir().unwrap();
+        std::env::set_var("AIP_STATE_DIR", t.path());
+        // As 2.0.0 saved a favourite with no extra arguments.
+        fs::write(
+            file(),
+            r#"[{"name": "aip", "dir": "/w/aip", "target": "claude", "persona": "coding"}]"#,
+        )
+        .unwrap();
+        let all = list();
+        assert_eq!(all.len(), 1);
+        assert!(all[0].args.is_empty());
+        let sent = serde_json::to_value(&all[0]).unwrap();
+        assert_eq!(sent["args"], serde_json::json!([]));
     }
 
     #[test]
