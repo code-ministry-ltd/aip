@@ -97,15 +97,6 @@
     runSync({ notify, onchange: refresh, quiet: true });
   }
 
-  // The opt-in sync timer (spec SC7), while the app is open. Conflicts wait
-  // for Settings ▸ Sync.
-  $effect(() => {
-    const minutes = overview?.settings.sync_interval_minutes;
-    if (!minutes || !overview?.sync?.remote || route.path === '/pick') return;
-    const id = setInterval(() => runSync({ notify, onchange: refresh, quiet: true }), minutes * 60_000);
-    return () => clearInterval(id);
-  });
-
   const nav = [
     { path: '/', label: 'Skills', icon: 'M4 5h16M4 12h16M4 19h10' },
     { path: '/personas', label: 'Personas', icon: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0' },

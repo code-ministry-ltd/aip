@@ -1,5 +1,5 @@
 // Syncing the personas repository from anywhere in the app: the Sync now
-// button, the sync when aip opens and the timer.
+// button and the sync when aip opens.
 import { api } from './api.js';
 
 export const syncText = {
