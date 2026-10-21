@@ -459,6 +459,20 @@ pub fn sync_resolve(choices: Vec<(String, Side)>) -> Res<sync::Outcome> {
     sync::resolve(&root(), &choices).map_err(err)
 }
 
+/// The sync remote's URL, with any credentials hidden.
+#[tauri::command(async)]
+pub fn sync_remote() -> Res<Option<String>> {
+    Ok(sync::remote_url(&root())
+        .map_err(err)?
+        .map(|u| sync::redact_url(&u)))
+}
+
+#[tauri::command(async)]
+pub fn set_sync_remote(url: Option<String>) -> Res<()> {
+    let _g = changing();
+    sync::set_remote(&root(), url.as_deref()).map_err(err)
+}
+
 #[derive(Serialize)]
 pub struct PickContext {
     pub dir: PathBuf,
