@@ -189,6 +189,7 @@ fn main() {
             commands::project_clear,
             commands::set_workspaces,
             commands::set_update_checks,
+            commands::set_sync_on_open,
             commands::terminal_status,
             commands::set_terminal,
             commands::terminal_test,

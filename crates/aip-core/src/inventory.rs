@@ -229,6 +229,10 @@ pub struct Settings {
     /// The app's opt-in sync timer (spec SC7); `None` means manual sync only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_interval_minutes: Option<u32>,
+    /// Sync when the app opens, so other machines' changes arrive before
+    /// any edits here.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub sync_on_open: bool,
     /// Check for app updates on start (direct-download builds; spec decision 7).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub update_checks: bool,
@@ -257,6 +261,7 @@ impl Settings {
             .and_then(|t| toml::from_str(&t).ok())
             .unwrap_or_else(|| Settings {
                 update_checks: true,
+                sync_on_open: true,
                 ..Default::default()
             })
     }

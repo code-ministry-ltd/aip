@@ -8,6 +8,7 @@
   import { tilde, last, sourceLabel, harnessLabel, tokens } from '../lib/format.js';
   import Menu from '../components/Menu.svelte';
   import FolderView from '../components/FolderView.svelte';
+  import SyncButton from '../components/SyncButton.svelte';
 
   let { overview, notify, onchange } = $props();
 
@@ -123,7 +124,11 @@
 </script>
 
 <header class="page">
-  <h1>Skills</h1>
+  <div class="row">
+    <h1>Skills</h1>
+    <span class="spacer"></span>
+    <SyncButton {overview} {notify} {onchange} />
+  </div>
   <div class="tabs" role="tablist">
     <button role="tab" class:on={tab === 'map'} aria-selected={tab === 'map'} onclick={() => (tab = 'map')}>Where they apply</button>
     <button role="tab" class:on={tab === 'all'} aria-selected={tab === 'all'} onclick={() => (tab = 'all')}>All skills</button>

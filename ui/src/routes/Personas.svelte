@@ -5,6 +5,7 @@
   import { api } from '../lib/api.js';
   import { change } from '../lib/actions.js';
   import { harnessLabel, tilde, tokens } from '../lib/format.js';
+  import SyncButton from '../components/SyncButton.svelte';
 
   let { overview, notify, onchange } = $props();
 
@@ -110,6 +111,7 @@
 <header class="page row">
   <h1>Personas</h1>
   <span class="spacer"></span>
+  <SyncButton {overview} {notify} {onchange} />
   <button class="primary" onclick={() => (creating = !creating)}>New persona</button>
 </header>
 <p class="muted lead">

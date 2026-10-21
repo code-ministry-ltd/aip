@@ -97,6 +97,7 @@ pub struct Overview {
     pub library: Vec<Skill>,
     pub recent: Vec<Recent>,
     pub settings: Settings,
+    pub sync: sync::State,
 }
 
 #[tauri::command(async)]
@@ -146,6 +147,7 @@ pub fn overview() -> Res<Overview> {
             })
             .collect(),
         settings: Settings::load(&paths::state_dir()),
+        sync: timed("overview: sync state", || sync::state(&root)).unwrap_or_default(),
         home: paths::home(),
         root,
     })
@@ -402,6 +404,15 @@ pub fn set_update_checks(enabled: bool) -> Res<()> {
     let dir = paths::state_dir();
     let mut s = Settings::load(&dir);
     s.update_checks = enabled;
+    s.save(&dir).map_err(err)
+}
+
+#[tauri::command(async)]
+pub fn set_sync_on_open(enabled: bool) -> Res<()> {
+    let _g = changing();
+    let dir = paths::state_dir();
+    let mut s = Settings::load(&dir);
+    s.sync_on_open = enabled;
     s.save(&dir).map_err(err)
 }
 

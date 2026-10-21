@@ -5,6 +5,7 @@
   import { api, chooseFolder } from '../lib/api.js';
   import { ask } from '../lib/dialog.svelte.js';
   import { harnessLabel, tilde } from '../lib/format.js';
+  import { syncText } from '../lib/sync.js';
 
   let { overview, notify, onchange } = $props();
 
@@ -27,6 +28,7 @@
 
   const settings = $derived(overview.settings);
   const updateChecks = $derived(settings.update_checks !== false);
+  const syncOnOpen = $derived(settings.sync_on_open !== false);
 
   async function load() {
     try {
@@ -140,13 +142,14 @@
     }
   }
 
-  const syncText = {
-    no_remote: 'This personas repository has no remote, so changes stay on this machine.',
-    up_to_date: 'Up to date.',
-    pushed: 'Sent this machine’s changes.',
-    pulled: 'Fetched changes from your other machines.',
-    merged: 'Merged changes from both sides.',
-  };
+  async function toggleSyncOnOpen() {
+    try {
+      await api.setSyncOnOpen(!syncOnOpen);
+      onchange?.();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
 
   async function saveRemote() {
     try {
@@ -155,6 +158,7 @@
       editingRemote = false;
       remoteInput = '';
       notify('Remote saved. Sync now to send and fetch changes.', 'good');
+      onchange?.();
     } catch (e) {
       notify(String(e), 'bad');
     }
@@ -174,6 +178,7 @@
       remote = null;
       sync = null;
       notify('Remote removed. Changes now stay on this machine.', 'good');
+      onchange?.();
     } catch (e) {
       notify(String(e), 'bad');
     }
@@ -347,7 +352,11 @@
       <h2>Sync</h2>
       <span class="spacer"></span>
       <label class="row check small">
-        Sync automatically
+        <input type="checkbox" checked={syncOnOpen} onchange={toggleSyncOnOpen} />
+        When aip opens
+      </label>
+      <label class="row check small">
+        While open
         <select value={settings.sync_interval_minutes ?? ''} onchange={(e) => setInterval_(e.currentTarget.value)} aria-label="Sync interval">
           <option value="">never</option>
           <option value="15">every 15 minutes</option>

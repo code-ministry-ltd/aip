@@ -50,6 +50,7 @@ export const api = {
   setWorkspaces: (workspaces, syncIntervalMinutes) =>
     call('set_workspaces', { workspaces, syncIntervalMinutes: syncIntervalMinutes ?? null }),
   setUpdateChecks: (enabled) => call('set_update_checks', { enabled }),
+  setSyncOnOpen: (enabled) => call('set_sync_on_open', { enabled }),
   syncNow: () => call('sync_now'),
   syncResolve: (choices) => call('sync_resolve', { choices }),
   syncRemote: () => call('sync_remote'),
