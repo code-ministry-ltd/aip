@@ -294,7 +294,10 @@ fn enable_refresh_disable_touch_only_aips_files() {
     assert_eq!(listing(&nemo_dir).len(), 4 + 1);
     let dolphin = home.join(".local/share/kio/servicemenus/aip.desktop");
     assert!(!fs::read_to_string(&dolphin).unwrap().contains("writer"));
-    assert!(status().iter().any(|s| s.name == "nemo" && s.enabled));
+    // macOS lists only Finder; the files above are the same everywhere.
+    if cfg!(not(target_os = "macos")) {
+        assert!(status().iter().any(|s| s.name == "nemo" && s.enabled));
+    }
 
     // A new persona appears after a refresh; a removed one goes.
     fs::write(
