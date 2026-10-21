@@ -47,8 +47,7 @@ export const api = {
   favouriteRemove: (name) => call('favourite_remove', { name }),
   trustPi: (folder) => call('trust_pi', { folder }),
   projectClear: (folder) => call('project_clear', { folder }),
-  setWorkspaces: (workspaces, syncIntervalMinutes) =>
-    call('set_workspaces', { workspaces, syncIntervalMinutes: syncIntervalMinutes ?? null }),
+  setWorkspaces: (workspaces) => call('set_workspaces', { workspaces }),
   setUpdateChecks: (enabled) => call('set_update_checks', { enabled }),
   setSyncOnOpen: (enabled) => call('set_sync_on_open', { enabled }),
   syncNow: () => call('sync_now'),

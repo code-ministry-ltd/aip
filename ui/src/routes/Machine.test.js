@@ -62,7 +62,7 @@ describe('Settings: the sync remote', () => {
     const core = fakeCore();
     render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
     await tick();
-    const box = screen.getByLabelText('When aip opens');
+    const box = screen.getByLabelText('Sync when aip opens');
     expect(box.checked).toBe(true);
     await fireEvent.click(box);
     await tick();
