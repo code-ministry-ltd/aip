@@ -735,7 +735,7 @@ pub struct Copy {
     pub location: Location,
     pub loads: bool,
     /// The name the harness shows when this copy loads (`plugin:skill` for
-    /// plugins and persona plugins).
+    /// plugins, persona plugins and claude.ai account skills).
     pub loaded_as: String,
 }
 
@@ -892,10 +892,13 @@ pub fn stack(
 
     match harness {
         Harness::Claude => {
-            // Personal (user, account) first, then project nearest first; plugin
-            // and persona copies are namespaced and always load.
-            for l in global_for(&|l| matches!(l.source, Source::User | Source::Account)) {
+            // Personal first, then project nearest first; account, plugin and
+            // persona copies are namespaced and always load.
+            for l in global_for(&|l| matches!(l.source, Source::User)) {
                 copies.push((0, l, false));
+            }
+            for l in global_for(&|l| matches!(l.source, Source::Account)) {
+                copies.push((0, l, true));
             }
             copies.extend(project_copies);
             for l in global_for(&|l| matches!(l.source, Source::Plugin { enabled: true, .. })) {
@@ -962,6 +965,9 @@ pub fn stack(
                     (Source::Plugin { id, .. }, _) => {
                         id.split('@').next().unwrap_or(id).to_string()
                     }
+                    // Claude Code 2.1.286 and later load synced claude.ai
+                    // skills as `anthropic-skills:<name>`.
+                    (Source::Account, _) => "anthropic-skills".to_string(),
                     (_, LayerKind::Persona { name }) => format!("aip-{name}"),
                     _ => String::new(),
                 };
@@ -1254,6 +1260,23 @@ mod tests {
         assert_eq!(row(&s, "lint").copies[0].loaded_as, "tools:lint");
         assert!(review.outcome(&s.layers).contains("BOTH load"));
         assert!(deploy.outcome(&s.layers).contains("project copy ignored"));
+    }
+
+    #[test]
+    fn claude_account_skills_load_namespaced_beside_a_personal_copy() {
+        let fx = fixture();
+        write(
+            &fx.d.claude_home.join("skills/docx/SKILL.md"),
+            &skill_md("docx", "My Word files."),
+        );
+        let g = global_locations(&fx.d);
+        let home = real(&fx, "/Users/jim");
+        let s = stack(&fx.d, &g, &home, Harness::Claude, None, true);
+        let docx = row(&s, "docx");
+        let names: Vec<&str> = docx.copies.iter().map(|c| c.loaded_as.as_str()).collect();
+        assert_eq!(names, ["docx", "anthropic-skills:docx"]);
+        assert!(docx.copies.iter().all(|c| c.loads));
+        assert!(docx.loads_twice && !docx.shadowed);
     }
 
     #[test]
