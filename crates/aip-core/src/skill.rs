@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Sidecar files aip writes next to a skill; excluded from its content hash.
-pub const SIDECARS: &[&str] = &[".aip-source"];
+pub const SIDECARS: &[&str] = &[".aip-source", crate::aip_skill::MARKER];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Skill {

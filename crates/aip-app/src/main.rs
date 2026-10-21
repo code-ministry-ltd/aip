@@ -251,6 +251,8 @@ fn main() {
             });
             // Personas may have changed by hand or by another machine's sync.
             std::thread::spawn(|| {
+                // A newer aip brings a newer aip skill; sync then shares it.
+                let _ = aip_core::aip_skill::refresh(&aip_core::paths::default_root());
                 if let Err(e) = aip_core::integrations::refresh() {
                     debug(format_args!("refreshing file-manager menus: {e:#}"));
                 }
