@@ -160,8 +160,30 @@ impl Ord for Version {
                 (None, None) => std::cmp::Ordering::Equal,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (Some(_), None) => std::cmp::Ordering::Less,
-                (Some(a), Some(b)) => a.cmp(b),
+                (Some(a), Some(b)) => cmp_pre(a, b),
             })
+    }
+}
+
+/// Pre-release labels compare part by part, numbers as numbers (semver), so
+/// `rc.10` is after `rc.9`.
+fn cmp_pre(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (a.split('.'), b.split('.'));
+    loop {
+        let o = match (a.next(), b.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(x), Some(y)) => match (x.parse::<u64>(), y.parse::<u64>()) {
+                (Ok(x), Ok(y)) => x.cmp(&y),
+                (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+                (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+                (Err(_), Err(_)) => x.cmp(y),
+            },
+        };
+        if o != std::cmp::Ordering::Equal {
+            return o;
+        }
     }
 }
 
@@ -416,6 +438,10 @@ mod tests {
         assert!(!is_newer("2.0.0", "2.0.0"));
         assert!(!is_newer("0.10.0", "2.0.0-dev.0"));
         assert!(!is_newer("garbage", "2.0.0"));
+        assert!(is_newer("2.0.0-rc.10", "2.0.0-rc.9"));
+        assert!(is_newer("2.0.0-rc.1", "2.0.0-beta.3"));
+        assert!(is_newer("2.0.0-rc.1.1", "2.0.0-rc.1"));
+        assert!(!is_newer("2.0.0-rc.9", "2.0.0-rc.10"));
     }
 
     /// Files made by `tauri signer generate` and `tauri signer sign` (the
