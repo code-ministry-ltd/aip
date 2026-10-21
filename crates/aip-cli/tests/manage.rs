@@ -231,7 +231,10 @@ fn integrations_follow_personas_and_disable_cleanly() {
     h.ok(&["integrations", "enable", "nemo"]);
     // The command-line binary has no picker: (none, coder, writer) × 2 targets.
     assert_eq!(count(), 6);
-    assert!(h.ok(&["integrations"]).contains("on   nemo"));
+    // macOS lists only Finder; the files above are the same everywhere.
+    if cfg!(not(target_os = "macos")) {
+        assert!(h.ok(&["integrations"]).contains("on   nemo"));
+    }
 
     // A persona added by hand appears on refresh...
     h.write(
