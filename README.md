@@ -189,7 +189,7 @@ OpenCode configuration are listed, not carried over.
 release, 0.9.5, is on npm. To install it:
 
 ```sh
-npx -y '@code-ministry/aip@^0' install
+npx -y @code-ministry/aip@0 install
 ```
 
 `aip update` keeps a 0.x install on 0.x. The 0.x documentation is in the

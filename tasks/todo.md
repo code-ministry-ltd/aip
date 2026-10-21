@@ -14,11 +14,11 @@ Spec: `tasks/spec.md` ("persona overlays and a desktop app (aip 2.0)") · Plan:
 
 ## T32 — POSIX `aip update` stays on 0.x and points at 2.0
 
-Pin the npm fetch to `@code-ministry/aip@^0` (`aip.sh:34`) and add a one-line
+Pin the npm fetch to `@code-ministry/aip@0` (`aip.sh:34`) and add a one-line
 notice to `aip`, `aip update` and `aip doctor` ("aip 2 is coming: …", with the
 2.0 install page and `aip import-v0`). See the spec, "Transition from 0.x".
 
-- [x] The fake `npx` receives `@code-ministry/aip@^0 update`, never `@latest`.
+- [x] The fake `npx` receives `@code-ministry/aip@0 update`, never `@latest`.
   Update the existing `@latest` assertion in `tests/posix/npm.bats:66`.
 - [x] Each of the three commands prints the notice exactly once; other
   commands and harness wrappers print nothing new.

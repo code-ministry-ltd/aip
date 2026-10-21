@@ -43,7 +43,7 @@ _aip_update() {
     local neutral update_status
     neutral=$(command mktemp -d "${TMPDIR:-/tmp}/aip-update.XXXXXX") || return 1
     cd "$neutral" || { command rm -rf "$neutral"; return 1; }
-    command npx --yes '@code-ministry/aip@^0' update
+    command npx --yes '@code-ministry/aip@0' update
     update_status=$?
     cd / && command rm -rf "$neutral"
     return "$update_status"

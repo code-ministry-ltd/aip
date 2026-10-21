@@ -158,7 +158,7 @@ daily, CLI first:
 ### Phase 0 — 0.10.0 bridge release (on `main`, shell)
 
 1. **0.x users are pointed at 2.0 and can never be moved onto it by npm**
-   - `aip update` fetches `@code-ministry/aip@^0` instead of `@latest`
+   - `aip update` fetches `@code-ministry/aip@0` instead of `@latest`
      (`aip.sh:34`, `aip.ps1:2959`).
    - `aip`, `aip update` and `aip doctor` print one notice line naming the 2.0
      install page and `aip import-v0`, worded so it reads correctly before 2.0

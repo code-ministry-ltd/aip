@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **`aip update` stays on 0.x.** It now fetches `@code-ministry/aip@^0`
+- **`aip update` stays on 0.x.** It now fetches `@code-ministry/aip@0`
   instead of `@latest`, so no future npm publish can move a 0.x install onto
   something else. aip 2 will not be distributed through npm. npx runs from an
   empty temporary directory, so a local package, such as an aip checkout, can

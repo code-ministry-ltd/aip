@@ -65,7 +65,7 @@ setup() {
   [ "$status" -eq 0 ]
   grep -qx 'harness=npx' "$FAKE_CAPTURE"
   grep -qx 'arg=--yes' "$FAKE_CAPTURE"
-  grep -qx 'arg=@code-ministry/aip@^0' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip@0' "$FAKE_CAPTURE"
   ! grep -q '@latest' "$FAKE_CAPTURE"
   grep -qx 'arg=update' "$FAKE_CAPTURE"
 }
@@ -90,7 +90,7 @@ FAKE
   [ "$status" -eq 0 ]
   ! grep -qx "cwd=$(cd "$project" && pwd -P)" "$FAKE_CAPTURE"
   ! grep -q 'package.json=present' "$FAKE_CAPTURE"
-  grep -qx 'arg=@code-ministry/aip@^0' "$FAKE_CAPTURE"
+  grep -qx 'arg=@code-ministry/aip@0' "$FAKE_CAPTURE"
   # The temporary directory is removed and the caller's directory is kept.
   local ran_in
   ran_in=$(sed -n 's/^cwd=//p' "$FAKE_CAPTURE")

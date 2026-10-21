@@ -181,7 +181,7 @@ It 'update delegates to the npm package update command' {
         $lines = Get-Content -LiteralPath $script:FakeCapture
         $lines | Should -Contain 'harness=npx'
         $lines | Should -Contain 'arg=--yes'
-        $lines | Should -Contain 'arg=@code-ministry/aip@^0'
+        $lines | Should -Contain 'arg=@code-ministry/aip@0'
         $lines | Should -Not -Contain 'arg=@code-ministry/aip@latest'
         $lines | Should -Contain 'arg=update'
     }
@@ -213,7 +213,7 @@ exit "${FAKE_EXIT_STATUS:-0}"
         $ranIn = ($lines | Where-Object { $_ -like 'cwd=*' }) -replace '^cwd=', ''
         $ranIn | Should -Not -Be (Resolve-Path -LiteralPath $project).ProviderPath
         $lines | Should -Not -Contain 'package.json=present'
-        $lines | Should -Contain 'arg=@code-ministry/aip@^0'
+        $lines | Should -Contain 'arg=@code-ministry/aip@0'
         Test-Path -LiteralPath $ranIn | Should -BeFalse
         (Get-Location).ProviderPath | Should -Be (Resolve-Path -LiteralPath $project).ProviderPath
         $env:FAKE_EXIT_STATUS = '3'
