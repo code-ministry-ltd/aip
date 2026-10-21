@@ -230,6 +230,9 @@ pub struct Settings {
     /// any edits here.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub sync_on_open: bool,
+    /// Sync once the personas repository has changes and they have settled.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub sync_on_changes: bool,
     /// Check for app updates on start (direct-download builds; spec decision 7).
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub update_checks: bool,
@@ -259,6 +262,7 @@ impl Settings {
             .unwrap_or_else(|| Settings {
                 update_checks: true,
                 sync_on_open: true,
+                sync_on_changes: true,
                 ..Default::default()
             })
     }

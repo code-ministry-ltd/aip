@@ -1,5 +1,5 @@
 // Syncing the personas repository from anywhere in the app: the Sync now
-// button and the sync when aip opens.
+// button, the sync when aip opens and the sync on changes.
 import { api } from './api.js';
 
 export const syncText = {
@@ -23,4 +23,28 @@ export async function runSync({ notify, onchange, quiet = false }) {
     notify(`Sync failed: ${e}`, 'bad');
     return null;
   }
+}
+
+/** How long changes must stay unchanged before sync on changes sends them. */
+export const QUIET_MS = 2 * 60_000;
+
+/**
+ * Sync on changes: feed it each sync state as it is read, and it says when
+ * changes have settled for `quietMs` and are due a sync. Each settled state
+ * is tried once, so a failed sync (offline, a conflict) is not repeated
+ * until something changes again.
+ */
+export function changeWatcher(quietMs = QUIET_MS) {
+  let seen = null;
+  let since = 0;
+  let tried = null;
+  return (state, now) => {
+    if (state.fingerprint !== seen) {
+      seen = state.fingerprint;
+      since = now;
+    }
+    if (!state.remote || !state.pending || tried === seen || now - since < quietMs) return false;
+    tried = seen;
+    return true;
+  };
 }
