@@ -430,6 +430,8 @@ pub fn run(m: &Migration) -> Result<Vec<String>> {
             let mut c = plan_convert(&m.root)?;
             c.plan.steps.extend(remove.steps);
             apply_convert(&m.root, &c)?;
+            // Replace 0.x's aip skill before the push, so it goes out once.
+            let _ = crate::aip_skill::refresh(&m.root);
             done.push(format!(
                 "converted {} profile(s) to personas",
                 c.report.personas.len()
@@ -443,6 +445,7 @@ pub fn run(m: &Migration) -> Result<Vec<String>> {
         }
         Mode::Join(url) => {
             sync::clone(url, &m.root)?;
+            let _ = crate::aip_skill::refresh(&m.root);
             done.push(format!("cloned your personas from {url}"));
             if remove.steps.is_empty() {
                 let _ = crate::integrations::refresh();
@@ -457,6 +460,7 @@ pub fn run(m: &Migration) -> Result<Vec<String>> {
             let (mut plan, _) = import_v0::plan_import(&m.from, &m.root)?;
             plan.steps.extend(remove.steps);
             let e = ops::execute(&plan)?;
+            let _ = crate::aip_skill::install(&m.root);
             // On first run the import is the repository's first content.
             sync::ensure_repo(&m.root)?;
             let _ = sync::commit_local(&m.root, "aip import-v0");

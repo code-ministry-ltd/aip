@@ -277,6 +277,7 @@ pub fn sync_cmd(root: &Path, a: SyncArgs) -> Result<i32> {
 pub fn clone_cmd(root: &Path, url: &str, dir: Option<PathBuf>) -> Result<i32> {
     let dest = dir.unwrap_or_else(|| root.to_path_buf());
     sync::clone(url, &dest)?;
+    let _ = aip_core::aip_skill::refresh(&dest);
     println!("cloned into {}", tilde(&dest));
     if migrate_v0::is_v0_repo(&dest) {
         println!(

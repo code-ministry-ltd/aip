@@ -1,6 +1,7 @@
 //! aip core: personas over one skill library, applied on top of each
 //! harness's normal home (see `tasks/spec.md`, "aip 2.0").
 
+pub mod aip_skill;
 pub mod apply;
 pub mod decode;
 pub mod favourites;

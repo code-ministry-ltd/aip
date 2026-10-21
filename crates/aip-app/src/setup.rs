@@ -36,6 +36,7 @@ pub fn clone_root(url: String) -> Res<()> {
         return Err("enter the URL of your personas repository".into());
     }
     aip_core::sync::clone(url, &paths::default_root()).map_err(err)?;
+    let _ = aip_core::aip_skill::refresh(&paths::default_root());
     let _ = aip_core::integrations::refresh();
     Ok(())
 }
