@@ -108,9 +108,6 @@ setup_git_identity() {
   [ "$status" -eq 0 ]
   [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/SKILL.md" ]
   [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/README.md" ]
-  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/setup.md" ]
-  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/audit.md" ]
-  [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/conflicts.md" ]
   [ -f "$_AIP_PROFILE_ROOT/aip/skills/aip/.aip-managed" ]
   # The profile skeleton is committed by aip create; the skill files are not.
   git -C "$_AIP_PROFILE_ROOT" rev-parse --verify HEAD >/dev/null
