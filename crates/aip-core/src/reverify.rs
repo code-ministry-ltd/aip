@@ -234,6 +234,19 @@ sleep 2
         );
         fs::write(bin.join("pi"), script).unwrap();
         fs::set_permissions(bin.join("pi"), fs::Permissions::from_mode(0o755)).unwrap();
+        // A process another test starts while the file is open for writing
+        // briefly holds it open too, and running it then fails with "Text
+        // file busy". Wait until it runs, so the test sees what aip sees.
+        for _ in 0..100 {
+            if Command::new(bin.join("pi"))
+                .arg("--version")
+                .output()
+                .is_ok()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn setup(t: &Path) -> std::path::PathBuf {
