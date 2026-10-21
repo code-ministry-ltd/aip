@@ -58,6 +58,17 @@ describe('Settings: the sync remote', () => {
     expect(core.named('set_sync_remote')).toEqual([{ url: 'git@example.com:me/p.git' }]);
   });
 
+  it('turns sync when aip opens off', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    const box = screen.getByLabelText('When aip opens');
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    await tick();
+    expect(core.named('set_sync_on_open')).toEqual([{ enabled: false }]);
+  });
+
   it('removes the remote after asking', async () => {
     const core = fakeCore();
     render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });

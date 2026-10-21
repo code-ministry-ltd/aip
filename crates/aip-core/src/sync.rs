@@ -273,6 +273,33 @@ fn has_origin(root: &Path) -> Result<bool> {
     Ok(git(root, &["remote"])?.lines().any(|r| r == "origin"))
 }
 
+/// Whether there is a remote and whether this machine has changes it has not
+/// sent there. Uses what was last fetched; it never contacts the remote.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+pub struct State {
+    pub remote: bool,
+    pub pending: bool,
+}
+
+pub fn state(root: &Path) -> Result<State> {
+    if !root.join(".git").exists() || !has_origin(root)? {
+        return Ok(State::default());
+    }
+    let dirty = !git(root, &["status", "--porcelain"])?.is_empty();
+    let pending = dirty || {
+        let remote_ref = format!("origin/{}", branch(root)?);
+        !ok(root, &["rev-parse", "--verify", "-q", &remote_ref])
+            || git(
+                root,
+                &["rev-list", "--count", &format!("{remote_ref}..HEAD")],
+            )? != "0"
+    };
+    Ok(State {
+        remote: true,
+        pending,
+    })
+}
+
 /// Point `origin` at `url`, or remove it with `None`. A changed URL starts
 /// afresh, so nothing fetched from the old remote is taken for the new one.
 pub fn set_remote(root: &Path, url: Option<&str>) -> Result<()> {
@@ -387,6 +414,27 @@ mod tests {
         assert_eq!(remote_url(&a).unwrap(), None);
         assert!(matches!(sync(&a).unwrap(), Outcome::NoRemote { .. }));
         set_remote(&a, None).unwrap();
+    }
+
+    #[test]
+    fn unsent_changes_are_pending_until_synced() {
+        let (_t, a, b) = machines();
+        let clean = State {
+            remote: true,
+            pending: false,
+        };
+        assert_eq!(state(&a).unwrap(), clean);
+        fs::write(a.join("personas/coder.toml"), "format = 1\n").unwrap();
+        assert!(state(&a).unwrap().pending, "an edit");
+        commit_local(&a, "edit").unwrap();
+        assert!(state(&a).unwrap().pending, "a commit not yet pushed");
+        sync(&a).unwrap();
+        assert_eq!(state(&a).unwrap(), clean);
+        // The other machine is behind, not ahead: nothing to send.
+        sync(&b).unwrap();
+        assert_eq!(state(&b).unwrap(), clean);
+        set_remote(&a, None).unwrap();
+        assert_eq!(state(&a).unwrap(), State::default());
     }
 
     #[test]

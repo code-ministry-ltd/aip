@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api, onEvent } from './lib/api.js';
+  import { runSync } from './lib/sync.js';
   import { setHome, tilde } from './lib/format.js';
   import Skills from './routes/Skills.svelte';
   import Personas from './routes/Personas.svelte';
@@ -59,6 +60,7 @@
     refresh().then(() => {
       api.ready();
       checkForUpdate();
+      syncOnOpen();
     });
     let unlisten = () => {};
     onEvent('reverify', (problems) => (broken = problems)).then((u) => (unlisten = u));
@@ -89,19 +91,18 @@
     }
   }
 
-  // The opt-in sync timer (spec SC7). Conflicts wait for the Machine screen.
+  /** Fetch other machines' changes before any edits here can conflict with them. */
+  function syncOnOpen() {
+    if (route.path === '/pick' || !overview?.sync?.remote || overview.settings.sync_on_open === false) return;
+    runSync({ notify, onchange: refresh, quiet: true });
+  }
+
+  // The opt-in sync timer (spec SC7), while the app is open. Conflicts wait
+  // for Settings ▸ Sync.
   $effect(() => {
     const minutes = overview?.settings.sync_interval_minutes;
-    if (!minutes || route.path === '/pick') return;
-    const id = setInterval(async () => {
-      try {
-        const r = await api.syncNow();
-        if (r.outcome === 'conflict') notify('Sync needs you: open Settings ▸ Sync', 'bad');
-        else if (r.outcome === 'pulled' || r.outcome === 'merged') refresh();
-      } catch (e) {
-        notify(`Sync failed: ${e}`, 'bad');
-      }
-    }, minutes * 60_000);
+    if (!minutes || !overview?.sync?.remote || route.path === '/pick') return;
+    const id = setInterval(() => runSync({ notify, onchange: refresh, quiet: true }), minutes * 60_000);
     return () => clearInterval(id);
   });
 
