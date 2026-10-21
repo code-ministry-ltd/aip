@@ -69,6 +69,17 @@ describe('Settings: the sync remote', () => {
     expect(core.named('set_sync_on_open')).toEqual([{ enabled: false }]);
   });
 
+  it('turns sync on changes off', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    const box = screen.getByLabelText('Sync on changes');
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    await tick();
+    expect(core.named('set_sync_on_changes')).toEqual([{ enabled: false }]);
+  });
+
   it('removes the remote after asking', async () => {
     const core = fakeCore();
     render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });

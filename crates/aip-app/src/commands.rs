@@ -415,6 +415,21 @@ pub fn set_sync_on_open(enabled: bool) -> Res<()> {
     s.save(&dir).map_err(err)
 }
 
+#[tauri::command(async)]
+pub fn set_sync_on_changes(enabled: bool) -> Res<()> {
+    let _g = changing();
+    let dir = paths::state_dir();
+    let mut s = Settings::load(&dir);
+    s.sync_on_changes = enabled;
+    s.save(&dir).map_err(err)
+}
+
+/// The repository's sync state, read locally (the app checks it often).
+#[tauri::command(async)]
+pub fn sync_state() -> Res<sync::State> {
+    sync::state(&root()).map_err(err)
+}
+
 #[derive(Serialize)]
 pub struct TerminalStatus {
     /// Terminals installed here.

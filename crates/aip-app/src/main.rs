@@ -190,6 +190,8 @@ fn main() {
             commands::set_workspaces,
             commands::set_update_checks,
             commands::set_sync_on_open,
+            commands::set_sync_on_changes,
+            commands::sync_state,
             commands::terminal_status,
             commands::set_terminal,
             commands::terminal_test,
