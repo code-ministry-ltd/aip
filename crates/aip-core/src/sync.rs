@@ -275,18 +275,32 @@ fn has_origin(root: &Path) -> Result<bool> {
 
 /// Whether there is a remote and whether this machine has changes it has not
 /// sent there. Uses what was last fetched; it never contacts the remote.
-#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct State {
     pub remote: bool,
     pub pending: bool,
+    /// Changes whenever the repository does (a commit, or any edit to a
+    /// changed file), so the app can wait for edits to settle before syncing.
+    pub fingerprint: String,
 }
 
 pub fn state(root: &Path) -> Result<State> {
     if !root.join(".git").exists() || !has_origin(root)? {
         return Ok(State::default());
     }
-    let dirty = !git(root, &["status", "--porcelain"])?.is_empty();
-    let pending = dirty || {
+    // Untrimmed: each entry starts with a two-letter code, often a space.
+    let out = git_raw(
+        root,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    )?;
+    if !out.status.success() {
+        bail!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    let status = String::from_utf8_lossy(&out.stdout).to_string();
+    let pending = !status.is_empty() || {
         let remote_ref = format!("origin/{}", branch(root)?);
         !ok(root, &["rev-parse", "--verify", "-q", &remote_ref])
             || git(
@@ -294,9 +308,19 @@ pub fn state(root: &Path) -> Result<State> {
                 &["rev-list", "--count", &format!("{remote_ref}..HEAD")],
             )? != "0"
     };
+    // Status alone misses a second edit to a file that is already changed.
+    let newest = status
+        .split('\0')
+        .filter_map(|e| e.get(3..))
+        .filter_map(|p| fs::metadata(root.join(p)).and_then(|m| m.modified()).ok())
+        .max()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    let head = git(root, &["rev-parse", "-q", "--verify", "HEAD"]).unwrap_or_default();
     Ok(State {
         remote: true,
         pending,
+        fingerprint: format!("{head} {newest} {status}"),
     })
 }
 
@@ -419,22 +443,47 @@ mod tests {
     #[test]
     fn unsent_changes_are_pending_until_synced() {
         let (_t, a, b) = machines();
-        let clean = State {
-            remote: true,
-            pending: false,
-        };
-        assert_eq!(state(&a).unwrap(), clean);
+        let pending = |r: &Path| state(r).unwrap().pending;
+        assert!(state(&a).unwrap().remote && !pending(&a));
         fs::write(a.join("personas/coder.toml"), "format = 1\n").unwrap();
-        assert!(state(&a).unwrap().pending, "an edit");
+        assert!(pending(&a), "an edit");
         commit_local(&a, "edit").unwrap();
-        assert!(state(&a).unwrap().pending, "a commit not yet pushed");
+        assert!(pending(&a), "a commit not yet pushed");
         sync(&a).unwrap();
-        assert_eq!(state(&a).unwrap(), clean);
+        assert!(!pending(&a));
         // The other machine is behind, not ahead: nothing to send.
         sync(&b).unwrap();
-        assert_eq!(state(&b).unwrap(), clean);
+        assert!(!pending(&b));
         set_remote(&a, None).unwrap();
         assert_eq!(state(&a).unwrap(), State::default());
+    }
+
+    #[test]
+    fn the_fingerprint_follows_every_edit() {
+        let (_t, a, _b) = machines();
+        let clean = state(&a).unwrap().fingerprint;
+        assert_eq!(
+            state(&a).unwrap().fingerprint,
+            clean,
+            "stable while unchanged"
+        );
+        let f = a.join("personas/writer.toml");
+        fs::write(&f, "format = 1\ndescription = \"x\"\n").unwrap();
+        let first = state(&a).unwrap().fingerprint;
+        assert_ne!(first, clean);
+        // The same file again: status reads the same, the fingerprint does not.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::write(&f, "format = 1\ndescription = \"y\"\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_ne!(state(&a).unwrap().fingerprint, first);
+        let edited = state(&a).unwrap().fingerprint;
+        commit_local(&a, "edit").unwrap();
+        assert_ne!(state(&a).unwrap().fingerprint, edited, "a commit");
     }
 
     #[test]

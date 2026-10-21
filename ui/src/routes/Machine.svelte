@@ -29,6 +29,7 @@
   const settings = $derived(overview.settings);
   const updateChecks = $derived(settings.update_checks !== false);
   const syncOnOpen = $derived(settings.sync_on_open !== false);
+  const syncOnChanges = $derived(settings.sync_on_changes !== false);
 
   async function load() {
     try {
@@ -132,6 +133,15 @@
   async function toggleUpdates() {
     try {
       await api.setUpdateChecks(!updateChecks);
+      onchange?.();
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  async function toggleSyncOnChanges() {
+    try {
+      await api.setSyncOnChanges(!syncOnChanges);
       onchange?.();
     } catch (e) {
       notify(String(e), 'bad');
@@ -350,6 +360,10 @@
       <label class="row check small">
         <input type="checkbox" checked={syncOnOpen} onchange={toggleSyncOnOpen} />
         Sync when aip opens
+      </label>
+      <label class="row check small" title="Two minutes after the last change, while aip is open">
+        <input type="checkbox" checked={syncOnChanges} onchange={toggleSyncOnChanges} />
+        Sync on changes
       </label>
       <button class="primary" onclick={syncNow} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</button>
     </div>

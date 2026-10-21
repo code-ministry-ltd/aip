@@ -1,7 +1,8 @@
 <script>
   import { onMount } from 'svelte';
   import { api, onEvent } from './lib/api.js';
-  import { runSync } from './lib/sync.js';
+  import { runSync, changeWatcher } from './lib/sync.js';
+  import SyncButton from './components/SyncButton.svelte';
   import { setHome, tilde } from './lib/format.js';
   import Skills from './routes/Skills.svelte';
   import Personas from './routes/Personas.svelte';
@@ -19,6 +20,8 @@
   let toast = $state(null);
   let update = $state(null);
   let broken = $state([]);
+  /** The unsynced-changes banner was dismissed; it returns after the next sync. */
+  let unsyncedHidden = $state(false);
   let updating = $state(false);
 
   function parseHash() {
@@ -64,8 +67,12 @@
     });
     let unlisten = () => {};
     onEvent('reverify', (problems) => (broken = problems)).then((u) => (unlisten = u));
+    const check = setInterval(checkSync, 30_000);
+    window.addEventListener('focus', checkSync);
     return () => {
       window.removeEventListener('hashchange', onHash);
+      window.removeEventListener('focus', checkSync);
+      clearInterval(check);
       unlisten();
     };
   });
@@ -88,6 +95,28 @@
     } catch (e) {
       notify(String(e), 'bad');
       updating = false;
+    }
+  }
+
+  // Changes can come from anywhere (an agent editing a library skill, the
+  // CLI, a hand edit), so the repository is checked locally every 30s and
+  // when the window comes back.
+  const settled = changeWatcher();
+  let checking = false;
+  async function checkSync() {
+    if (checking || !overview?.root_exists || route.path === '/pick') return;
+    checking = true;
+    try {
+      const s = await api.syncState();
+      overview.sync = s;
+      if (!s.pending) unsyncedHidden = false;
+      if (settled(s, Date.now()) && overview.settings.sync_on_changes !== false) {
+        await runSync({ notify, onchange: refresh, quiet: true });
+      }
+    } catch {
+      // Unreadable now; the next check tries again.
+    } finally {
+      checking = false;
     }
   }
 
@@ -153,6 +182,14 @@
               <span class="muted">To update, {update.advice}.</span>
             {/if}
             <button class="ghost" onclick={() => (update = null)} aria-label="Dismiss">✕</button>
+          </div>
+        {/if}
+        {#if overview.sync?.pending && overview.settings.sync_on_changes === false && !unsyncedHidden}
+          <div class="card banner warn" data-testid="unsynced">
+            <span>This machine has changes your other machines have not received.</span>
+            <span class="spacer"></span>
+            <SyncButton {overview} {notify} onchange={refresh} />
+            <button class="ghost" onclick={() => (unsyncedHidden = true)} aria-label="Dismiss">✕</button>
           </div>
         {/if}
         {#if broken.length}
