@@ -1,5 +1,5 @@
 <script>
-  // This machine: harness versions, workspace folders, the terminal, sync,
+  // Settings: harness versions, workspace folders, the terminal, sync,
   // change history and file-manager integrations (T57).
   import { onMount } from 'svelte';
   import { api, chooseFolder } from '../lib/api.js';
@@ -202,7 +202,7 @@
   }
 </script>
 
-<header class="page"><h1>This machine</h1></header>
+<header class="page"><h1>Settings</h1></header>
 
 <div class="grid">
   <section class="card">
