@@ -31,7 +31,8 @@
 
   async function loadFavs() {
     try {
-      favs = (await api.favourites()) ?? [];
+      // aip 2.0.0 left `args` out of favourites without extra arguments.
+      favs = ((await api.favourites()) ?? []).map((f) => ({ ...f, args: f.args ?? [] }));
     } catch {
       favs = [];
     }

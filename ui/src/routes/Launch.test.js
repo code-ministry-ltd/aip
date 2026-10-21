@@ -106,6 +106,23 @@ describe('Launch favourites', () => {
     expect(core.named('launch')).toHaveLength(1);
   });
 
+  it('shows and launches favourites saved without arguments (aip 2.0.0)', async () => {
+    const core = fakeCore({
+      favourites_list: () => [
+        { name: 'aip · Claude Code · coding', dir: '/Users/jim/code/aip', target: 'claude', persona: 'coding' },
+        { name: 'aip · Pi · designing', dir: '/Users/jim/code/aip', target: 'pi', persona: 'coding' },
+      ],
+    });
+    render(Launch, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    const panel = screen.getByRole('region', { name: 'Favourites' });
+    expect(panel.textContent).toContain('★ aip · Claude Code · coding');
+    expect(panel.textContent).toContain('★ aip · Pi · designing');
+    await fireEvent.click(screen.getByText('★ aip · Pi · designing'));
+    await tick();
+    expect(core.named('launch')).toEqual([{ folder: '/Users/jim/code/aip', target: 'pi', persona: 'coding', args: null }]);
+  });
+
   it('says how to add a favourite when there are none', async () => {
     fakeCore({ favourites_list: () => [] });
     render(Launch, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
