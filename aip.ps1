@@ -2969,7 +2969,7 @@ function Invoke-AipUpdate {
     New-Item -ItemType Directory -Path $neutral -Force | Out-Null
     Push-Location -LiteralPath $neutral
     try {
-        & npx --yes '@code-ministry/aip@^0' update
+        & npx --yes '@code-ministry/aip@0' update
         $script:AipCommandStatus = $LASTEXITCODE
     }
     finally {

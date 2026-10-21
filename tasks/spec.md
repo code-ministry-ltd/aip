@@ -409,7 +409,7 @@ this repository, its name, URL, issues and history.
 - **CI and releases.** Workflows are replaced at the switch. GitHub Releases
   carry the app and binaries from 2.0.0 on; the 0.x releases stay listed.
 - **Final 0.x release (0.10.0).**
-  - `aip update` pins its npm fetch to `@code-ministry/aip@^0`, not `@latest`
+  - `aip update` pins its npm fetch to `@code-ministry/aip@0`, not `@latest`
     (`aip.sh:34`, `aip.ps1:2959`), so no future publish can move a 0.x user
     onto something else.
   - `aip`, `aip update` and `aip doctor` print a one-line notice pointing to
