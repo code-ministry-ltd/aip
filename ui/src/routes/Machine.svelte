@@ -115,9 +115,9 @@
 
   onMount(load);
 
-  async function saveWorkspaces(list, interval = settings.sync_interval_minutes ?? null) {
+  async function saveWorkspaces(list) {
     try {
-      await api.setWorkspaces(list, interval);
+      await api.setWorkspaces(list);
       onchange?.();
     } catch (e) {
       notify(String(e), 'bad');
@@ -127,10 +127,6 @@
   async function addWorkspace() {
     const f = await chooseFolder('Add a folder that holds your projects');
     if (f && !settings.workspaces.includes(f)) saveWorkspaces([...settings.workspaces, f]);
-  }
-
-  function setInterval_(v) {
-    saveWorkspaces(settings.workspaces, v ? Number(v) : null);
   }
 
   async function toggleUpdates() {
@@ -353,16 +349,7 @@
       <span class="spacer"></span>
       <label class="row check small">
         <input type="checkbox" checked={syncOnOpen} onchange={toggleSyncOnOpen} />
-        When aip opens
-      </label>
-      <label class="row check small">
-        While open
-        <select value={settings.sync_interval_minutes ?? ''} onchange={(e) => setInterval_(e.currentTarget.value)} aria-label="Sync interval">
-          <option value="">never</option>
-          <option value="15">every 15 minutes</option>
-          <option value="60">every hour</option>
-          <option value="240">every 4 hours</option>
-        </select>
+        Sync when aip opens
       </label>
       <button class="primary" onclick={syncNow} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</button>
     </div>

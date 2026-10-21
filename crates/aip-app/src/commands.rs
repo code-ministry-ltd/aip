@@ -389,12 +389,11 @@ pub fn project_clear(folder: PathBuf) -> Res<Vec<String>> {
 }
 
 #[tauri::command(async)]
-pub fn set_workspaces(workspaces: Vec<PathBuf>, sync_interval_minutes: Option<u32>) -> Res<()> {
+pub fn set_workspaces(workspaces: Vec<PathBuf>) -> Res<()> {
     let _g = changing();
     let dir = paths::state_dir();
     let mut s = Settings::load(&dir);
     s.workspaces = workspaces;
-    s.sync_interval_minutes = sync_interval_minutes;
     s.save(&dir).map_err(err)
 }
 

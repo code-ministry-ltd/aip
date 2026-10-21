@@ -78,8 +78,8 @@ a terminal with `aip launch --favourite NAME`. They are stored per machine.
 
 ![Settings](machine.png)
 
-Harness versions, the update-check setting, workspace folders, sync (with an
-opt-in timer and a side-by-side conflict view), the history of changes with
+Harness versions, the update-check setting, workspace folders, sync (on open,
+with a side-by-side conflict view), the history of changes with
 Undo, and the file-manager integrations from Phase 6.
 
 ## The picker

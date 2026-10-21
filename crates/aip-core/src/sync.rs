@@ -1,6 +1,6 @@
 //! Keeping the personas repository in step across machines (spec SC7).
-//! Plain Git, run only when asked (or on the app's opt-in timer), never
-//! inside a launch. A conflict never leaves the repository mid-merge: aip
+//! Plain Git, run only when asked (or when the app opens), never inside a
+//! launch. A conflict never leaves the repository mid-merge: aip
 //! reports both sides of each file and restores the pre-sync state.
 
 use crate::library::FORMAT;
