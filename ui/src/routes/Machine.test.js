@@ -42,6 +42,36 @@ describe('Settings', () => {
   });
 });
 
+describe('Settings: the sync remote', () => {
+  it('shows the remote and changes it', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    expect(screen.getByTestId('remote').textContent).toContain('git@github.com:you/agent-personas.git');
+    await fireEvent.click(screen.getByText('Change'));
+    await tick();
+    const save = screen.getByText('Save', { selector: '[data-testid="remote"] button' });
+    expect(save.disabled).toBe(true);
+    await fireEvent.input(screen.getByLabelText('Remote URL'), { target: { value: ' git@example.com:me/p.git ' } });
+    await fireEvent.click(save);
+    await tick();
+    expect(core.named('set_sync_remote')).toEqual([{ url: 'git@example.com:me/p.git' }]);
+  });
+
+  it('removes the remote after asking', async () => {
+    const core = fakeCore();
+    render(Machine, { overview: overview(), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    await fireEvent.click(screen.getByText('Remove', { selector: '[data-testid="remote"] button' }));
+    await tick();
+    answer(true);
+    await tick();
+    expect(core.named('set_sync_remote')).toEqual([{ url: null }]);
+    expect(screen.getByTestId('remote').textContent).toContain('none');
+    expect(screen.getByText('Set remote')).toBeTruthy();
+  });
+});
+
 describe('Settings: updates and the command-line tool', () => {
   it('checks for updates and offers the updater when it can install', async () => {
     const core = fakeCore();
