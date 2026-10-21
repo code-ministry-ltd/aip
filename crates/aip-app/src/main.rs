@@ -194,6 +194,8 @@ fn main() {
             commands::terminal_test,
             commands::sync_now,
             commands::sync_resolve,
+            commands::sync_remote,
+            commands::set_sync_remote,
             commands::pick_context,
             commands::reveal,
             commands::integrations,

@@ -261,6 +261,55 @@ fn resolve_conflict(root: &Path, choices: &[(String, Side)]) -> Result<Outcome> 
     Ok(Outcome::Merged)
 }
 
+/// The URL of `origin`, or `None` when there is no remote (or no repository).
+pub fn remote_url(root: &Path) -> Result<Option<String>> {
+    if !root.join(".git").exists() || !has_origin(root)? {
+        return Ok(None);
+    }
+    git(root, &["remote", "get-url", "origin"]).map(Some)
+}
+
+fn has_origin(root: &Path) -> Result<bool> {
+    Ok(git(root, &["remote"])?.lines().any(|r| r == "origin"))
+}
+
+/// Point `origin` at `url`, or remove it with `None`. A changed URL starts
+/// afresh, so nothing fetched from the old remote is taken for the new one.
+pub fn set_remote(root: &Path, url: Option<&str>) -> Result<()> {
+    if !root.join(".git").exists() {
+        bail!(
+            "{} is not a Git repository; run 'aip init' first",
+            root.display()
+        );
+    }
+    let url = url.map(str::trim);
+    if url == Some("") {
+        bail!("enter the remote's URL");
+    }
+    if has_origin(root)? {
+        if url.is_some() && remote_url(root)?.as_deref() == url {
+            return Ok(());
+        }
+        git(root, &["remote", "remove", "origin"])?;
+    }
+    if let Some(url) = url {
+        git(root, &["remote", "add", "origin", url])?;
+    }
+    Ok(())
+}
+
+/// `url` with any user name and password hidden, for showing on screen.
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://***@{host}{}", &rest[authority.len()..]),
+        None => url.to_string(),
+    }
+}
+
 /// Set up a second machine from an existing personas repository.
 pub fn clone(url: &str, dest: &Path) -> Result<PathBuf> {
     if dest.exists() && fs::read_dir(dest)?.next().is_some() {
@@ -313,6 +362,47 @@ mod tests {
         clone(origin.to_str().unwrap(), &b).unwrap();
         identity(&b);
         (t, a, b)
+    }
+
+    #[test]
+    fn the_remote_can_be_set_changed_and_removed() {
+        let (t, a, _b) = machines();
+        assert_eq!(
+            remote_url(&a).unwrap().as_deref(),
+            t.path().join("origin.git").to_str()
+        );
+        let other = t.path().join("other.git");
+        Command::new("git")
+            .args(["init", "-q", "--bare", "-b", "main"])
+            .arg(&other)
+            .status()
+            .unwrap();
+        set_remote(&a, Some(other.to_str().unwrap())).unwrap();
+        assert_eq!(remote_url(&a).unwrap().as_deref(), other.to_str());
+        // Nothing fetched from the old remote carries over.
+        assert!(!ok(&a, &["rev-parse", "--verify", "-q", "origin/main"]));
+        assert_eq!(sync(&a).unwrap(), Outcome::Pushed);
+        assert!(set_remote(&a, Some("  ")).is_err());
+        set_remote(&a, None).unwrap();
+        assert_eq!(remote_url(&a).unwrap(), None);
+        assert!(matches!(sync(&a).unwrap(), Outcome::NoRemote { .. }));
+        set_remote(&a, None).unwrap();
+    }
+
+    #[test]
+    fn credentials_in_a_remote_url_are_hidden() {
+        assert_eq!(
+            redact_url("https://jim:tok@github.com/you/personas.git"),
+            "https://***@github.com/you/personas.git"
+        );
+        assert_eq!(
+            redact_url("https://github.com/you/personas.git"),
+            "https://github.com/you/personas.git"
+        );
+        assert_eq!(
+            redact_url("git@github.com:you/personas.git"),
+            "git@github.com:you/personas.git"
+        );
     }
 
     #[test]

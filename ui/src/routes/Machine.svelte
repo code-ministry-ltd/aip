@@ -13,6 +13,10 @@
   let sync = $state(null);
   let syncing = $state(false);
   let choices = $state({});
+  /** The sync remote's URL (credentials hidden), or null when there is none. */
+  let remote = $state(null);
+  let editingRemote = $state(false);
+  let remoteInput = $state('');
   let cli = $state(null);
   let upd = $state(null);
   let checking = $state(false);
@@ -34,6 +38,11 @@
       integrations = (await api.integrations()) ?? [];
     } catch {
       integrations = [];
+    }
+    try {
+      remote = await api.syncRemote();
+    } catch {
+      remote = null;
     }
     try {
       cli = await api.cliStatus();
@@ -138,6 +147,37 @@
     pulled: 'Fetched changes from your other machines.',
     merged: 'Merged changes from both sides.',
   };
+
+  async function saveRemote() {
+    try {
+      await api.setSyncRemote(remoteInput.trim());
+      remote = await api.syncRemote();
+      editingRemote = false;
+      remoteInput = '';
+      notify('Remote saved. Sync now to send and fetch changes.', 'good');
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
+
+  async function removeRemote() {
+    const ok = await ask({
+      title: 'Remove the sync remote?',
+      lines: [remote, 'Your personas stay on this machine. Nothing is deleted from the remote.'],
+      confirmLabel: 'Remove',
+      danger: true,
+      note: '',
+    });
+    if (!ok) return;
+    try {
+      await api.setSyncRemote(null);
+      remote = null;
+      sync = null;
+      notify('Remote removed. Changes now stay on this machine.', 'good');
+    } catch (e) {
+      notify(String(e), 'bad');
+    }
+  }
 
   async function syncNow() {
     syncing = true;
@@ -317,6 +357,28 @@
       </label>
       <button class="primary" onclick={syncNow} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</button>
     </div>
+    {#if editingRemote}
+      <form
+        class="row"
+        data-testid="remote"
+        onsubmit={(e) => {
+          e.preventDefault();
+          saveRemote();
+        }}
+      >
+        <input class="mono" bind:value={remoteInput} aria-label="Remote URL" placeholder="git@github.com:you/agent-personas.git" />
+        <button class="primary" type="submit" disabled={!remoteInput.trim()}>Save</button>
+        <button type="button" onclick={() => (editingRemote = false)}>Cancel</button>
+      </form>
+    {:else}
+      <div class="row" data-testid="remote">
+        <span>Remote:</span>
+        {#if remote}<span class="mono">{remote}</span>{:else}<span class="muted">none, so changes stay on this machine</span>{/if}
+        <span class="spacer"></span>
+        <button onclick={() => (editingRemote = true)}>{remote ? 'Change' : 'Set remote'}</button>
+        {#if remote}<button onclick={removeRemote}>Remove</button>{/if}
+      </div>
+    {/if}
     {#if sync?.outcome === 'conflict'}
       <p class="warn">Both machines changed the same files. Choose which version of each to keep.</p>
       {#each sync.files as f (f.path)}

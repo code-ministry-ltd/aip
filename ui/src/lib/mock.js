@@ -280,6 +280,10 @@ export function mock(cmd, args) {
       });
     case 'sync_now':
       return Promise.resolve({ outcome: 'up_to_date', committed: false });
+    case 'sync_remote':
+      return Promise.resolve('git@github.com:you/agent-personas.git');
+    case 'set_sync_remote':
+      return Promise.resolve(null);
     case 'first_run':
       return Promise.resolve({
         harnesses: [
