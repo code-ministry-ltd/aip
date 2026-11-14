@@ -31,6 +31,7 @@ export const api = {
   personaEdit: (persona, skill, add, confirm) => call('persona_edit', { persona, skill, add, confirm }),
   personaSet: (persona, skills, confirm) => call('persona_set', { persona, skills, confirm }),
   personaCreate: (name, description, confirm) => call('persona_create', { name, description, confirm }),
+  personaDropMissing: (name, confirm) => call('persona_drop_missing', { name, confirm }),
   personaDelete: (name, confirm) => call('persona_delete', { name, confirm }),
   terminalStatus: () => call('terminal_status'),
   setTerminal: (terminal) => call('set_terminal', { terminal: terminal || null }),

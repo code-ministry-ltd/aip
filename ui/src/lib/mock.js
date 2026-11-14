@@ -250,6 +250,7 @@ export function mock(cmd, args) {
             },
       );
     case 'persona_create':
+    case 'persona_drop_missing':
     case 'persona_delete':
     case 'skill_rm':
     case 'skill_cp':

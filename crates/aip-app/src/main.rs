@@ -175,6 +175,7 @@ fn main() {
             commands::persona_edit,
             commands::persona_set,
             commands::persona_create,
+            commands::persona_drop_missing,
             commands::persona_delete,
             commands::skill_rm,
             commands::skill_cp,
