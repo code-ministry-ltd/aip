@@ -16,7 +16,7 @@ The 0.x `publish.yml` only fires on `v0.*` tags, so a `v2.*` tag builds the
 | Workflow | Purpose | Secrets |
 |---|---|---|
 | `rust.yml` | UI tests and build; fmt, clippy and tests for the Rust workspace on Ubuntu and macOS; on Linux, the app smoke test, CLI passthrough and `aip://` hand-over under Xvfb (`ci/scripts/app-smoke.sh`) | none |
-| `release.yml` | on a `v2.*` tag (or by hand with a tag, e.g. `v0.0.0-test` on a fork): a draft release with the `.dmg`s, AppImage, `.deb`, `.rpm`, CLI tarballs, `latest.json`, `install.sh`, `SHA256SUMS` and its signature. Publish the draft by hand | environment `release` (tags `v2.*`) with `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; repository variable `AIP_UPDATE_PUBKEY` |
+| `release.yml` | on a `v2.*` tag (or by hand with a tag, e.g. `v0.0.0-test` on a fork): a draft release with the `.dmg`s, AppImage, `.deb`, `.rpm`, CLI tarballs, `latest.json`, `install.sh`, `SHA256SUMS` and its signature, published once every asset is up (a tag with a hyphen, e.g. `v2.1.0-rc.1`, as a pre-release) | environment `release` (tags `v2.*`) with `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; repository variable `AIP_UPDATE_PUBKEY` |
 | `harness-drift.yml` | nightly: latest Claude Code and Pi against aip's checks; opens an issue on failure | `ANTHROPIC_API_KEY` (optional, with a spending cap; without it only the Pi checks run) |
 
 ## The release signing key (once)
@@ -44,10 +44,15 @@ npx @tauri-apps/cli@2 signer generate -w ~/.tauri/aip.key
 - Keep a backup of the private key somewhere safe: without it, installed
   copies can no longer be updated automatically.
 
-## Checking a release before publishing
+## Checking a release
 
-1. Download the `.dmg` on a Mac and the AppImage on Linux from the draft and
-   run the first-open steps (`docs/install-macos.md`).
-2. Run `AIP_RELEASES_URL=… install.sh` against the draft's download URL, or
-   wait for publishing: `releases/latest` only sees published releases.
-3. Publish. The updater, `install.sh` and `aip self-update` pick it up.
+Releases publish themselves, so the updater, `install.sh` and
+`aip self-update` pick up a stable tag as soon as the workflow finishes. To
+try a build before it reaches users, tag a release candidate first
+(`v2.1.0-rc.1`): it is published as a pre-release, which `releases/latest`
+ignores.
+
+1. Download the `.dmg` on a Mac and the AppImage on Linux from the
+   pre-release and run the first-open steps (`docs/install-macos.md`).
+2. Run `AIP_RELEASES_URL=… install.sh` against the pre-release's download URL.
+3. Tag the stable version.
