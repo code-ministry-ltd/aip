@@ -61,6 +61,54 @@ describe('Personas', () => {
   });
 });
 
+describe('Personas: a persona that cannot be read', () => {
+  const broken = (missing) => {
+    const o = overview();
+    o.personas.unshift({
+      name: 'thinking',
+      description: '',
+      skills: [],
+      always_on_tokens: 0,
+      warnings: [],
+      error: "personas/thinking.toml: skill 'creative-thinking' is not in the library",
+      missing_skills: missing,
+    });
+    return o;
+  };
+
+  it('offers to remove a missing skill instead of only deleting', async () => {
+    const core = fakeCore();
+    const onchange = vi.fn();
+    render(Personas, { overview: broken(['creative-thinking']), notify: vi.fn(), onchange });
+    await tick();
+    await fireEvent.click(screen.getByText('Remove creative-thinking from thinking…'));
+    await tick();
+    answer(true);
+    await tick();
+    expect(core.named('persona_drop_missing')).toEqual([
+      { name: 'thinking', confirm: false },
+      { name: 'thinking', confirm: true },
+    ]);
+    expect(core.named('persona_delete')).toEqual([]);
+    expect(onchange).toHaveBeenCalledOnce();
+  });
+
+  it('counts several missing skills', async () => {
+    fakeCore();
+    render(Personas, { overview: broken(['a', 'b']), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    expect(screen.getByText('Remove 2 missing skills from thinking…')).toBeTruthy();
+  });
+
+  it('offers only Delete when nothing is missing (some other error)', async () => {
+    fakeCore();
+    render(Personas, { overview: broken([]), notify: vi.fn(), onchange: vi.fn() });
+    await tick();
+    expect(screen.queryByText(/^Remove /)).toBeNull();
+    expect(screen.getByText('Delete persona…')).toBeTruthy();
+  });
+});
+
 describe('Personas: unsent changes', () => {
   it('offers Sync now only while there are changes to send', async () => {
     fakeCore();

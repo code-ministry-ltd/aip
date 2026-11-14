@@ -96,6 +96,10 @@
     if (r?.kind === 'done') selected = overview.personas.find((p) => p.name !== name)?.name ?? '';
   }
 
+  async function dropMissing() {
+    await change((c) => api.personaDropMissing(selected, c), { notify, onchange });
+  }
+
   async function create() {
     const name = newName.trim();
     const r = await change((c) => api.personaCreate(name, newDescription.trim(), c), { notify, onchange });
@@ -149,7 +153,14 @@
       {#if persona.error}
         <div class="card pad bad">
           {persona.error}
-          <div class="row tools"><button class="danger" onclick={remove}>Delete persona…</button></div>
+          <div class="row tools">
+            {#if persona.missing_skills?.length}
+              <button class="primary" onclick={dropMissing}>
+                Remove {persona.missing_skills.length === 1 ? persona.missing_skills[0] : `${persona.missing_skills.length} missing skills`} from {persona.name}…
+              </button>
+            {/if}
+            <button class="danger" onclick={remove}>Delete persona…</button>
+          </div>
         </div>
       {:else}
         <div class="card budget">

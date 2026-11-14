@@ -99,6 +99,22 @@ pub fn persona_file(root: &Path, name: &str) -> PathBuf {
     personas_dir(root).join(format!("{name}.toml"))
 }
 
+/// The skill names a persona file lists, read without checking them against
+/// the library, so a persona that no longer loads can still be repaired.
+/// `None` when the file is missing, is not TOML, or has no usable list.
+pub fn listed_skills(file: &Path) -> Option<Vec<String>> {
+    let t: toml::Table = fs::read_to_string(file).ok()?.parse().ok()?;
+    match t.get("skills") {
+        None => Some(Vec::new()),
+        Some(v) => Some(
+            v.as_array()?
+                .iter()
+                .filter_map(|i| i.as_str().map(str::to_string))
+                .collect(),
+        ),
+    }
+}
+
 fn toml_to_json(v: &toml::Value) -> serde_json::Value {
     serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
 }
@@ -157,7 +173,11 @@ pub fn load_persona(root: &Path, name: &str, library: &BTreeMap<String, Skill>) 
                 .ok_or_else(|| at("skills must be a list of library skill names".into()))?;
             let skill = library
                 .get(s)
-                .ok_or_else(|| at(format!("skill '{s}' is not in the library")))?;
+                .ok_or_else(|| {
+                    at(format!(
+                        "skill '{s}' is not in the library; remove it with 'aip persona remove {name} {s}'"
+                    ))
+                })?;
             if skills.iter().any(|k: &Skill| k.name == s) {
                 return Err(at(format!("skill '{s}' is listed twice")));
             }
@@ -303,6 +323,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn listed_skills_reads_a_persona_that_does_not_load() {
+        let t = fixture_root();
+        let r = t.path();
+        write(
+            &r.join("personas/p.toml"),
+            "format = 1\nskills = [\"prose\", \"gone\"]\n",
+        );
+        assert!(load_persona(r, "p", &load_library(r).unwrap()).is_err());
+        assert_eq!(
+            listed_skills(&persona_file(r, "p")).unwrap(),
+            ["prose", "gone"]
+        );
+        write(&r.join("personas/p.toml"), "format = 1\n");
+        assert_eq!(
+            listed_skills(&persona_file(r, "p")).unwrap(),
+            Vec::<String>::new()
+        );
+        write(&r.join("personas/p.toml"), "not toml [");
+        assert!(listed_skills(&persona_file(r, "p")).is_none());
+    }
+
+    #[test]
     fn errors_name_the_file_and_problem() {
         let t = fixture_root();
         let r = t.path();
@@ -313,6 +355,7 @@ pub(crate) mod tests {
         assert!(
             msg("format = 1\nskills = [\"nope\"]\n").contains("skill 'nope' is not in the library")
         );
+        assert!(msg("format = 1\nskills = [\"nope\"]\n").contains("aip persona remove p nope"));
         assert!(msg("format = 1\ninstructions = \"missing.md\"\n").contains("does not exist"));
         assert!(
             msg("format = 1\n[claude]\nsetings = {}\n").contains("unknown key 'claude.setings'")

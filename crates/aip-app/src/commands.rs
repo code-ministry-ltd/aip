@@ -77,6 +77,9 @@ pub struct PersonaSummary {
     pub always_on_tokens: usize,
     pub warnings: Vec<String>,
     pub error: Option<String>,
+    /// Skills the persona lists that the library no longer has; the app
+    /// offers to remove them when the persona cannot be read.
+    pub missing_skills: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -114,9 +117,15 @@ pub fn overview() -> Res<Overview> {
                 description: p.description,
                 warnings: p.warnings,
                 error: None,
+                missing_skills: vec![],
                 name,
             },
             Err(e) => PersonaSummary {
+                missing_skills: library::listed_skills(&library::persona_file(&root, &name))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|s| !lib.contains_key(s))
+                    .collect(),
                 name,
                 description: String::new(),
                 skills: vec![],
@@ -280,6 +289,15 @@ pub fn persona_create(name: String, description: String, confirm: bool) -> Res<C
                 content,
             }],
         },
+        confirm,
+    )
+}
+
+#[tauri::command(async)]
+pub fn persona_drop_missing(name: String, confirm: bool) -> Res<Change> {
+    let _g = changing();
+    preview_or_apply(
+        ops::plan_persona_drop_missing(&root(), &name).map_err(err)?,
         confirm,
     )
 }

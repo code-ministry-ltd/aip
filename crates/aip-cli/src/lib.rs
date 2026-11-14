@@ -237,7 +237,8 @@ pub struct OpenArgs {
 pub enum SkillsCommand {
     /// List every skill on the machine, or what loads in one folder
     Ls(LsArgs),
-    /// Move one copy of a skill to the Trash (undoable)
+    /// Move one copy of a skill to the Trash (undoable); a library skill also
+    /// leaves every persona that lists it
     Rm {
         skill: String,
         #[arg(long)]

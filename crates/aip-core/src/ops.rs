@@ -3,7 +3,7 @@
 //! remove it. Every operation is planned, previewed, journalled and only
 //! then applied; `undo` replays the journal backwards.
 
-use crate::inventory::{Inventory, Location};
+use crate::inventory::{Inventory, Location, Source};
 use crate::library;
 use crate::paths;
 use crate::skill::{self, hash_dir};
@@ -132,13 +132,69 @@ pub fn plan_rm(inv: &Inventory, dir: &Path) -> Result<OpPlan> {
             loc.source.label()
         );
     }
+    let mut preview = vec![format!("move {} to the Trash", loc.skill.dir.display())];
+    let mut steps = vec![Step::Trash {
+        path: loc.skill.dir.clone(),
+    }];
+    // A library skill leaves every persona that lists it, in the same
+    // undoable change, so no persona is left pointing at nothing.
+    if loc.source == Source::Library {
+        if let Some(root) = personas_root_of(&loc.root) {
+            let name = std::slice::from_ref(&loc.skill.name);
+            for persona in library::list_personas(&root)? {
+                let file = library::persona_file(&root, &persona);
+                if let Some(content) = without_skills(&file, name)? {
+                    preview.push(format!(
+                        "remove \"{}\" from persona {persona} ({})",
+                        loc.skill.name,
+                        file.display()
+                    ));
+                    steps.push(Step::WriteFile {
+                        path: file,
+                        content,
+                    });
+                }
+            }
+        }
+    }
     Ok(OpPlan {
         summary: format!("delete {} ({})", loc.skill.name, loc.source.label()),
-        preview: vec![format!("move {} to the Trash", loc.skill.dir.display())],
-        steps: vec![Step::Trash {
-            path: loc.skill.dir.clone(),
-        }],
+        preview,
+        steps,
     })
+}
+
+/// The personas repository a library folder (`<root>/library/skills`) is in.
+fn personas_root_of(library: &Path) -> Option<PathBuf> {
+    let root = library.parent()?.parent()?;
+    (library::library_dir(root) == library).then(|| root.to_path_buf())
+}
+
+/// A persona file with `names` taken out of its skills list, keeping comments
+/// and layout; `None` when it lists none of them. A file that is not valid
+/// TOML is left alone (`None`): there is nothing safe to rewrite.
+fn without_skills(file: &Path, names: &[String]) -> Result<Option<String>> {
+    let Ok(text) = fs::read_to_string(file) else {
+        return Ok(None);
+    };
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return Ok(None);
+    };
+    let Some(arr) = doc.get_mut("skills").and_then(|v| v.as_array_mut()) else {
+        return Ok(None);
+    };
+    let mut changed = false;
+    let mut i = 0;
+    while i < arr.len() {
+        match arr.get(i).and_then(|v| v.as_str()) {
+            Some(n) if names.iter().any(|r| r == n) => {
+                remove_keeping_comments(arr, i);
+                changed = true;
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(changed.then(|| doc.to_string()))
 }
 
 /// Plan copying a skill into the library, optionally under a new name.
@@ -234,9 +290,7 @@ pub fn plan_persona_edit(
         (true, Some(_)) => bail!("{persona} already has {skill_name}"),
         (false, None) => bail!("{persona} does not have {skill_name}"),
         (true, None) => arr.push(skill_name),
-        (false, Some(i)) => {
-            arr.remove(i);
-        }
+        (false, Some(i)) => remove_keeping_comments(arr, i),
     }
     Ok(OpPlan {
         summary: format!(
@@ -257,9 +311,41 @@ pub fn plan_persona_edit(
     })
 }
 
-/// Plan setting a persona's whole skill list at once (the app's editor saves
-/// this way, as one undoable change). Skills already listed keep their place
-/// and formatting; new ones are appended in the order given.
+/// Plan taking out of a persona every skill it lists that the library no
+/// longer has (removed outside aip, or before aip cleaned up personas), so a
+/// persona that no longer loads can be repaired rather than deleted.
+pub fn plan_persona_drop_missing(root: &Path, persona: &str) -> Result<OpPlan> {
+    let file = library::persona_file(root, persona);
+    if !file.is_file() {
+        bail!("no persona '{persona}'");
+    }
+    let lib = library::load_library(root)?;
+    let missing: Vec<String> = library::listed_skills(&file)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| !lib.contains_key(s))
+        .collect();
+    let Some(content) = without_skills(&file, &missing)? else {
+        bail!("persona {persona} lists no missing skills");
+    };
+    Ok(OpPlan {
+        summary: format!("persona {persona}: remove missing {}", missing.join(", ")),
+        preview: missing
+            .iter()
+            .map(|m| {
+                format!(
+                    "remove \"{m}\" (no longer in the library) from the skills list in {}",
+                    file.display()
+                )
+            })
+            .collect(),
+        steps: vec![Step::WriteFile {
+            path: file,
+            content,
+        }],
+    })
+}
+
 /// Plan deleting a persona: its file, and its instructions file unless
 /// another persona uses that too. Favourites that launch with it are named.
 pub fn plan_persona_delete(root: &Path, persona: &str) -> Result<OpPlan> {
@@ -302,6 +388,9 @@ pub fn plan_persona_delete(root: &Path, persona: &str) -> Result<OpPlan> {
     })
 }
 
+/// Plan setting a persona's whole skill list at once (the app's editor saves
+/// this way, as one undoable change). Skills already listed keep their place
+/// and formatting; new ones are appended in the order given.
 pub fn plan_persona_set(root: &Path, persona: &str, skills: &[String]) -> Result<OpPlan> {
     let file = library::persona_file(root, persona);
     let text = fs::read_to_string(&file).with_context(|| format!("no persona '{persona}'"))?;
@@ -843,6 +932,112 @@ mod tests {
         assert_eq!(lib["prose-proj"].description, "Different prose.");
         undo_last().unwrap();
         assert!(!library::library_dir(fx.path()).join("prose-proj").exists());
+    }
+
+    #[test]
+    fn rm_from_library_takes_the_skill_out_of_personas_and_undo_restores() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        let r = fx.path();
+        env(r);
+        let editor = "format = 1\n# Editing.\nskills = [\n  \"prose\",  # the main one\n]\n";
+        write(&library::persona_file(r, "editor"), editor);
+        write(
+            &library::persona_file(r, "other"),
+            "format = 1\nskills = [\"citations\"]\n",
+        );
+        write(&library::persona_file(r, "broken"), "not toml [");
+        let writer_before = fs::read_to_string(library::persona_file(r, "writer")).unwrap();
+        let other_before = fs::read_to_string(library::persona_file(r, "other")).unwrap();
+        let prose = library::library_dir(r).join("prose");
+
+        let plan = plan_rm(&inv_with(&prose, Source::Library), &prose).unwrap();
+        let preview = plan.preview.join("\n");
+        assert!(preview.contains("from persona editor"), "{preview}");
+        assert!(preview.contains("from persona writer"), "{preview}");
+        assert!(
+            !preview.contains("other") && !preview.contains("broken"),
+            "{preview}"
+        );
+        execute(&plan).unwrap();
+
+        let lib = library::load_library(r).unwrap();
+        assert!(!lib.contains_key("prose"));
+        let writer = library::load_persona(r, "writer", &lib).unwrap();
+        assert_eq!(
+            writer.skills.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            ["citations"]
+        );
+        assert!(library::load_persona(r, "editor", &lib)
+            .unwrap()
+            .skills
+            .is_empty());
+        let editor_after = fs::read_to_string(library::persona_file(r, "editor")).unwrap();
+        assert!(
+            editor_after.contains("# Editing.") && !editor_after.contains("prose"),
+            "{editor_after}"
+        );
+        assert_eq!(
+            fs::read_to_string(library::persona_file(r, "other")).unwrap(),
+            other_before
+        );
+
+        undo_last().unwrap();
+        assert!(prose.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(library::persona_file(r, "writer")).unwrap(),
+            writer_before
+        );
+        assert_eq!(
+            fs::read_to_string(library::persona_file(r, "editor")).unwrap(),
+            editor
+        );
+    }
+
+    #[test]
+    fn rm_outside_the_library_leaves_personas_alone() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        let r = fx.path();
+        env(r);
+        let proj = r.join("proj/.claude/skills/prose");
+        write(&proj.join("SKILL.md"), &skill_md("prose", "Edit prose."));
+        let plan = plan_rm(&inv_with(&proj, Source::Project), &proj).unwrap();
+        assert_eq!(plan.steps.len(), 1);
+    }
+
+    #[test]
+    fn drop_missing_repairs_a_persona_that_no_longer_loads() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let fx = fixture_root();
+        let r = fx.path();
+        env(r);
+        // Removed outside aip: the persona still lists it.
+        fs::remove_dir_all(library::library_dir(r).join("prose")).unwrap();
+        let file = library::persona_file(r, "writer");
+        let before = fs::read_to_string(&file).unwrap();
+        let lib = library::load_library(r).unwrap();
+        assert!(library::load_persona(r, "writer", &lib).is_err());
+
+        let plan = plan_persona_drop_missing(r, "writer").unwrap();
+        assert_eq!(plan.summary, "persona writer: remove missing prose");
+        execute(&plan).unwrap();
+        let p = library::load_persona(r, "writer", &lib).unwrap();
+        assert_eq!(
+            p.skills.iter().map(|s| &s.name).collect::<Vec<_>>(),
+            ["citations"]
+        );
+        assert_eq!(
+            p.claude_settings["model"], "opus",
+            "the rest of the file is kept"
+        );
+        assert!(plan_persona_drop_missing(r, "writer")
+            .unwrap_err()
+            .to_string()
+            .contains("no missing skills"));
+
+        undo_last().unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), before);
     }
 
     #[test]
