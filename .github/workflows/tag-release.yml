@@ -1,0 +1,52 @@
+name: Tag release
+
+# When main's workspace version (Cargo.toml) has no v<version> tag yet, create
+# the tag and start release.yml on it. Merging a "release: X.Y.Z" PR is then
+# the whole release: the build publishes itself once every asset is up.
+#
+# A tag created with GITHUB_TOKEN does not trigger `on: push: tags`, so this
+# starts release.yml with workflow_dispatch, which GITHUB_TOKEN may trigger.
+# Running it on the tag ref keeps the "release" environment's v2.* tag rule.
+# A tag pushed by hand still triggers release.yml as before.
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the new version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Tag and start the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          tag="v$version"
+          case $tag in
+            v2.*) ;;
+            *) echo "::error::workspace version '$version' is not a v2.* release"; exit 1 ;;
+          esac
+          if gh api "repos/$REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "$tag already exists; nothing to release."
+            exit 0
+          fi
+          gh api "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" >/dev/null
+          echo "Tagged $GITHUB_SHA as $tag."
+          gh workflow run release.yml --repo "$REPO" --ref "$tag" -f "tag=$tag"
+          echo "Started the release for $tag."

@@ -1,10 +1,12 @@
 name: Release
 
-# On a v2.* tag: build every channel into a draft GitHub release, then add
-# SHA256SUMS (signed with the updater key), install.sh and latest.json. A
-# maintainer reviews the draft and publishes it; `releases/latest` (what the
-# updater, install.sh and self-update use) only sees published, non-pre-release
-# releases.
+# On a v2.* tag: build every channel into a draft GitHub release, add
+# SHA256SUMS (signed with the updater key), install.sh and latest.json, then
+# publish it. It stays a draft until every asset is uploaded, so nobody sees a
+# half-built release. A tag with a hyphen (v2.1.0-rc.1) is published as a
+# pre-release; anything else becomes `releases/latest`, which the updater,
+# install.sh and self-update use. tag-release.yml creates the tag and starts
+# this (workflow_dispatch on the tag) when a version bump reaches main.
 #
 # Needs (see ci/README.md):
 #   environment "release", limited to v2.* tags, holding the secrets
@@ -163,4 +165,12 @@ jobs:
           npx --yes @tauri-apps/cli@2 signer sign SHA256SUMS
           test -s SHA256SUMS.sig
           gh release upload "$TAG" SHA256SUMS SHA256SUMS.sig install.sh --clobber
-          echo "Draft ready: review it, then publish."
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case $TAG in
+            *-*) gh release edit "$TAG" --draft=false --prerelease --latest=false ;;
+            *) gh release edit "$TAG" --draft=false --latest ;;
+          esac
+          gh release view "$TAG" --json url,isPrerelease -q '"Published \(.url) (pre-release: \(.isPrerelease))"'
