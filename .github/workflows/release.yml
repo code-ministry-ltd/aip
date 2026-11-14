@@ -5,7 +5,8 @@ name: Release
 # publish it. It stays a draft until every asset is uploaded, so nobody sees a
 # half-built release. A tag with a hyphen (v2.1.0-rc.1) is published as a
 # pre-release; anything else becomes `releases/latest`, which the updater,
-# install.sh and self-update use.
+# install.sh and self-update use. tag-release.yml creates the tag and starts
+# this (workflow_dispatch on the tag) when a version bump reaches main.
 #
 # Needs (see ci/README.md):
 #   environment "release", limited to v2.* tags, holding the secrets
