@@ -9,6 +9,11 @@
 //! an older aip elsewhere never puts its own version back. A marker from aip
 //! 0.x has no hash; 0.x overwrote edits to its managed copy, and so does
 //! this.
+//!
+//! A copy whose content already matches this aip's is left alone, marker
+//! included, so a release that does not change the skill does not change the
+//! repository either (a version-only marker edit on two machines would
+//! otherwise conflict in `aip sync`).
 
 use crate::skill;
 use crate::update::Version;
@@ -39,6 +44,27 @@ fn dir(root: &Path) -> PathBuf {
     crate::library::library_dir(root).join(NAME)
 }
 
+/// The version and content hash a marker records. A 0.x marker has a
+/// version but no hash.
+pub(crate) fn parse_marker(text: &str) -> (Option<Version>, Option<String>) {
+    let version = text.split_whitespace().nth(1).and_then(Version::parse);
+    let hash = text
+        .lines()
+        .find_map(|l| l.strip_prefix("hash "))
+        .map(|h| h.trim().to_string());
+    (version, hash)
+}
+
+/// The hash of the skill as this aip bundles it, as `skill::hash_dir` would
+/// compute it for a copy on disk.
+fn bundled_hash() -> Result<String> {
+    let t = tempfile::tempdir()?;
+    for (rel, text) in FILES {
+        fs::write(t.path().join(rel), text)?;
+    }
+    skill::hash_dir(t.path())
+}
+
 /// Add the skill to the library if it is missing, else as [`refresh`].
 pub fn install(root: &Path) -> Result<Outcome> {
     if dir(root).exists() {
@@ -58,19 +84,20 @@ pub fn refresh(root: &Path) -> Result<Outcome> {
     let Ok(marker) = fs::read_to_string(d.join(MARKER)) else {
         return Ok(Outcome::Kept);
     };
-    let mut words = marker.split_whitespace();
-    let version = words.nth(1).and_then(Version::parse);
-    let hash = marker
-        .lines()
-        .find_map(|l| l.strip_prefix("hash "))
-        .map(str::trim);
+    let (version, hash) = parse_marker(&marker);
     let ours = Version::parse(crate::VERSION);
     match (ours, version) {
         (Some(ours), Some(theirs)) if ours > theirs => {}
         _ => return Ok(Outcome::Current),
     }
+    let on_disk = skill::hash_dir(&d)?;
+    if hash.is_some() && on_disk == bundled_hash()? {
+        // Already this version's content: rewriting would only change the
+        // version in the marker.
+        return Ok(Outcome::Current);
+    }
     if let Some(hash) = hash {
-        if skill::hash_dir(&d)? != hash {
+        if on_disk != hash {
             return Ok(Outcome::Kept);
         }
     }
@@ -144,6 +171,31 @@ mod tests {
         fs::remove_file(dir(t.path()).join(MARKER)).unwrap();
         fs::remove_file(dir(t.path()).join("notes.md")).unwrap();
         assert_eq!(refresh(t.path()).unwrap(), Outcome::Kept);
+    }
+
+    #[test]
+    fn a_release_that_does_not_change_the_skill_leaves_the_copy_alone() {
+        let t = tempfile::tempdir().unwrap();
+        install(t.path()).unwrap();
+        let h = skill::hash_dir(&dir(t.path())).unwrap();
+        let old = format!("aip 2.0.0 keeps this skill up to date.\nhash {h}\n");
+        marker(t.path(), &old);
+        assert_eq!(refresh(t.path()).unwrap(), Outcome::Current);
+        assert_eq!(
+            fs::read_to_string(dir(t.path()).join(MARKER)).unwrap(),
+            old,
+            "the marker is not rewritten just to bump its version"
+        );
+    }
+
+    #[test]
+    fn markers_parse() {
+        let (v, h) = parse_marker("aip 2.0.1 keeps this skill up to date.\nhash abc\n");
+        assert_eq!(v, Version::parse("2.0.1"));
+        assert_eq!(h.as_deref(), Some("abc"));
+        let (v, h) = parse_marker("aip 0.9.5 — installed by the aip installer\n");
+        assert_eq!(v, Version::parse("0.9.5"));
+        assert_eq!(h, None);
     }
 
     #[test]

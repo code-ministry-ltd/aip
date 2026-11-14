@@ -128,6 +128,86 @@ fn show(root: &Path, spec: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// The managed aip skill, relative to the repository root.
+const AIP_SKILL: &str = "library/skills/aip";
+
+/// The managed aip skill's folder as it is at `rev`, written to a temporary
+/// folder; `None` when `rev` has no copy.
+fn skill_at(root: &Path, rev: &str) -> Result<Option<tempfile::TempDir>> {
+    let files = git(
+        root,
+        &["ls-tree", "-r", "--name-only", rev, "--", AIP_SKILL],
+    )?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let t = tempfile::tempdir()?;
+    for f in files.lines() {
+        let rel = f
+            .strip_prefix(AIP_SKILL)
+            .unwrap_or(f)
+            .trim_start_matches('/');
+        let out = git_raw(root, &["show", &format!("{rev}:{f}")])?;
+        if !out.status.success() {
+            bail!("reading {f} at {rev}");
+        }
+        let dest = t.path().join(rel);
+        fs::create_dir_all(dest.parent().unwrap())?;
+        fs::write(dest, out.stdout)?;
+    }
+    Ok(Some(t))
+}
+
+/// The aip version that wrote the managed skill at `rev`, if that copy is
+/// unedited (its content still matches the hash its marker records).
+fn unedited_skill_version(root: &Path, rev: &str) -> Result<Option<crate::update::Version>> {
+    let Some(t) = skill_at(root, rev)? else {
+        return Ok(None);
+    };
+    let Ok(marker) = fs::read_to_string(t.path().join(crate::aip_skill::MARKER)) else {
+        return Ok(None);
+    };
+    let (version, hash) = crate::aip_skill::parse_marker(&marker);
+    match (version, hash) {
+        (Some(v), Some(h)) if crate::skill::hash_dir(t.path())? == h => Ok(Some(v)),
+        _ => Ok(None),
+    }
+}
+
+/// During a conflicted merge with `remote_ref`: when the managed aip skill is
+/// in conflict and neither side has edited it, take the whole folder from
+/// the side a newer aip wrote. Two machines on different aip versions then
+/// never block a sync over a copy aip maintains. An edited copy is the
+/// user's, so it is left for them to choose.
+fn take_newer_aip_skill(root: &Path, remote_ref: &str) -> Result<()> {
+    let conflicted = git(root, &["diff", "--name-only", "--diff-filter=U"])?;
+    let prefix = format!("{AIP_SKILL}/");
+    if !conflicted.lines().any(|p| p.starts_with(&prefix)) {
+        return Ok(());
+    }
+    let (Some(ours), Some(theirs)) = (
+        unedited_skill_version(root, "HEAD")?,
+        unedited_skill_version(root, remote_ref)?,
+    ) else {
+        return Ok(());
+    };
+    let winner = if ours > theirs { "HEAD" } else { remote_ref };
+    let keep = git(
+        root,
+        &["ls-tree", "-r", "--name-only", winner, "--", AIP_SKILL],
+    )?;
+    let present = git(root, &["ls-files", "--", AIP_SKILL])?;
+    for f in present.lines().filter(|f| !keep.lines().any(|k| k == *f)) {
+        git(root, &["rm", "-q", "-f", "--", f])?;
+    }
+    git(root, &["checkout", winner, "--", AIP_SKILL])?;
+    Ok(())
+}
+
+fn no_conflicts_left(root: &Path) -> Result<bool> {
+    Ok(git(root, &["diff", "--name-only", "--diff-filter=U"])?.is_empty())
+}
+
 /// Commit local changes, then integrate with `origin` and push.
 pub fn sync(root: &Path) -> Result<Outcome> {
     let o = sync_repo(root)?;
@@ -194,6 +274,12 @@ fn sync_repo(root: &Path) -> Result<Outcome> {
         git(root, &["push", "-q", "origin", &b])?;
         return Ok(Outcome::Merged);
     }
+    take_newer_aip_skill(root, &remote_ref)?;
+    if no_conflicts_left(root)? {
+        git(root, &["commit", "-q", "--no-edit"])?;
+        git(root, &["push", "-q", "origin", &b])?;
+        return Ok(Outcome::Merged);
+    }
     let names = git(root, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
     let files = names
         .lines()
@@ -233,6 +319,7 @@ fn resolve_conflict(root: &Path, choices: &[(String, Side)]) -> Result<Outcome> 
         git(root, &["push", "-q", "origin", &b])?;
         return Ok(Outcome::Merged);
     }
+    take_newer_aip_skill(root, &remote_ref)?;
     let conflicted: Vec<String> = git(root, &["diff", "--name-only", "--diff-filter=U"])?
         .lines()
         .map(str::to_string)
@@ -549,6 +636,130 @@ mod tests {
         assert!(fs::read_to_string(b.join("personas/writer.toml"))
             .unwrap()
             .contains("from a"));
+    }
+
+    /// Write a managed aip skill copy, as `version` of aip would.
+    fn managed_skill(root: &Path, body: &str, version: &str) {
+        let d = root.join(AIP_SKILL);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("SKILL.md"),
+            format!("---\nname: aip\ndescription: d\n---\n{body}\n"),
+        )
+        .unwrap();
+        let h = crate::skill::hash_dir(&d).unwrap();
+        fs::write(
+            d.join(crate::aip_skill::MARKER),
+            format!("aip {version} keeps this skill up to date.\nhash {h}\n"),
+        )
+        .unwrap();
+    }
+
+    fn marker_of(root: &Path) -> String {
+        fs::read_to_string(root.join(AIP_SKILL).join(crate::aip_skill::MARKER)).unwrap()
+    }
+
+    /// Both machines start from the same managed copy.
+    fn machines_with_skill() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let (t, a, b) = machines();
+        managed_skill(&a, "same", "2.0.0");
+        sync(&a).unwrap();
+        assert_eq!(sync(&b).unwrap(), Outcome::Pulled);
+        (t, a, b)
+    }
+
+    #[test]
+    fn a_version_only_marker_change_on_both_machines_merges() {
+        let (_t, a, b) = machines_with_skill();
+        managed_skill(&a, "same", "2.0.2");
+        sync(&a).unwrap();
+        managed_skill(&b, "same", "2.0.1");
+        commit_local(&b, "refresh").unwrap();
+        assert_eq!(sync(&b).unwrap(), Outcome::Merged);
+        assert!(
+            marker_of(&b).starts_with("aip 2.0.2 "),
+            "the newer side wins"
+        );
+        assert!(!b.join(".git/MERGE_HEAD").exists());
+        assert_eq!(sync(&a).unwrap(), Outcome::Pulled);
+    }
+
+    #[test]
+    fn the_newer_aip_skill_wins_whichever_side_it_is_on() {
+        let (_t, a, b) = machines_with_skill();
+        managed_skill(&a, "old content", "2.0.1");
+        fs::write(a.join(AIP_SKILL).join("extra.md"), "only in 2.0.1\n").unwrap();
+        // extra.md is not in the marker's hash yet: rewrite it to include it.
+        let d = a.join(AIP_SKILL);
+        let h = crate::skill::hash_dir(&d).unwrap();
+        fs::write(
+            d.join(crate::aip_skill::MARKER),
+            format!("aip 2.0.1 keeps this skill up to date.\nhash {h}\n"),
+        )
+        .unwrap();
+        sync(&a).unwrap();
+        managed_skill(&b, "new content", "2.0.3");
+        commit_local(&b, "refresh").unwrap();
+        assert_eq!(sync(&b).unwrap(), Outcome::Merged);
+        let md = fs::read_to_string(b.join(AIP_SKILL).join("SKILL.md")).unwrap();
+        assert!(md.contains("new content"), "{md}");
+        assert!(marker_of(&b).starts_with("aip 2.0.3 "));
+        assert!(
+            !b.join(AIP_SKILL).join("extra.md").exists(),
+            "the folder is taken whole, not file by file"
+        );
+    }
+
+    #[test]
+    fn an_edited_aip_skill_is_still_the_users_choice() {
+        let (_t, a, b) = machines_with_skill();
+        managed_skill(&a, "same", "2.0.2");
+        sync(&a).unwrap();
+        managed_skill(&b, "same", "2.0.1");
+        // An edit after aip wrote it: the content no longer matches the hash.
+        fs::write(
+            b.join(AIP_SKILL).join("SKILL.md"),
+            "---\nname: aip\ndescription: mine\n---\n",
+        )
+        .unwrap();
+        commit_local(&b, "my edit").unwrap();
+        let Outcome::Conflict { files } = sync(&b).unwrap() else {
+            panic!("expected a conflict")
+        };
+        assert!(files.iter().any(|f| f.path.ends_with(".aip-managed")));
+        assert!(!b.join(".git/MERGE_HEAD").exists());
+    }
+
+    #[test]
+    fn resolving_another_conflict_needs_no_choice_for_the_aip_skill() {
+        let (_t, a, b) = machines_with_skill();
+        managed_skill(&a, "same", "2.0.2");
+        fs::write(
+            a.join("personas/writer.toml"),
+            "format = 1\ndescription = \"from a\"\n",
+        )
+        .unwrap();
+        sync(&a).unwrap();
+        managed_skill(&b, "same", "2.0.1");
+        fs::write(
+            b.join("personas/writer.toml"),
+            "format = 1\ndescription = \"from b\"\n",
+        )
+        .unwrap();
+        commit_local(&b, "local").unwrap();
+        let Outcome::Conflict { files } = sync(&b).unwrap() else {
+            panic!("expected a conflict")
+        };
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["personas/writer.toml"],
+            "only the user's file is reported"
+        );
+        assert_eq!(
+            resolve(&b, &[("personas/writer.toml".into(), Side::Ours)]).unwrap(),
+            Outcome::Merged
+        );
+        assert!(marker_of(&b).starts_with("aip 2.0.2 "));
     }
 
     #[test]
